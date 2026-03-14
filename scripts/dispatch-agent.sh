@@ -21,9 +21,62 @@ source "$SCRIPT_DIR/lib/validators.sh"
 source "$SCRIPT_DIR/lib/tmux-helpers.sh"
 
 STATE_DIR="$CFG_STATE_DIR"
-CODEX_BIN="${CODEX_BIN:-$HOME/.local/bin/codex}"
+GRID_STATE="$STATE_DIR/grid/grid-state.json"
+LOCK_FILE="$STATE_DIR/grid/grid-state.lock"
+CODEX_BIN="${CODEX_BIN:-}"
+if [[ -z "$CODEX_BIN" ]]; then
+  CODEX_BIN="$(command -v codex 2>/dev/null || true)"
+  [[ -n "$CODEX_BIN" ]] || CODEX_BIN="$HOME/.local/bin/codex"
+fi
+
+PROMPT_FILE=""
+LAUNCHER=""
+RESERVATION_ACTIVE=0
+DISPATCH_COMMITTED=0
 
 die() { echo "ERROR: $*" >&2; exit 1; }
+
+_dispatch_cleanup() {
+  rm -f "${PROMPT_FILE:-}" "${LAUNCHER:-}" 2>/dev/null || true
+}
+
+_release_pane_reservation() {
+  [[ "${RESERVATION_ACTIVE:-0}" -eq 1 ]] || return 0
+  [[ -f "${GRID_STATE:-}" ]] || return 0
+  [[ -n "${PANE_INDEX:-}" ]] || return 0
+
+  exec 8>"$LOCK_FILE" 2>/dev/null || return 0
+  if flock -w 2 8 2>/dev/null; then
+    local temp_file
+    temp_file=$(mktemp "$STATE_DIR/grid/grid-state.XXXXXX" 2>/dev/null || true)
+    if [[ -n "$temp_file" ]]; then
+      if jq --argjson idx "$PANE_INDEX" \
+        '(.panes[] | select(.index == $idx)) |= {index: .index, pane_id: .pane_id, status: "available"}' \
+        "$GRID_STATE" > "$temp_file" 2>/dev/null && [[ -s "$temp_file" ]]; then
+        mv "$temp_file" "$GRID_STATE"
+        RESERVATION_ACTIVE=0
+      else
+        rm -f "$temp_file"
+      fi
+    fi
+  fi
+  exec 8>&- 2>/dev/null || true
+}
+
+_dispatch_teardown() {
+  local exit_code="${1:-1}"
+  trap - EXIT INT TERM
+  exec 9>&- 2>/dev/null || true
+  if [[ "${DISPATCH_COMMITTED:-0}" -eq 0 ]]; then
+    _release_pane_reservation
+    _dispatch_cleanup
+  fi
+  exit "$exit_code"
+}
+
+trap '_dispatch_teardown "$?"' EXIT
+trap '_dispatch_teardown 130' INT
+trap '_dispatch_teardown 143' TERM
 
 # Parse arguments
 ROLE="" PROMPT="" PANE_INDEX="" WORKING_DIR="" AGENT_ID="" TASK_ID="" DB_PATH=""
@@ -130,13 +183,7 @@ chmod 700 "$LAUNCHER"
 PANE_TARGET="$SESSION_NAME:0.$PANE_INDEX"
 GRID_STATE="$STATE_DIR/grid/grid-state.json"
 
-# Cleanup function for rollback on failure
-_dispatch_cleanup() {
-  rm -f "$PROMPT_FILE" "$LAUNCHER" 2>/dev/null || true
-}
-
 if [[ -f "$GRID_STATE" ]]; then
-  LOCK_FILE="$STATE_DIR/grid/grid-state.lock"
   exec 9>"$LOCK_FILE"
   if ! flock -w 5 9; then
     _dispatch_cleanup
@@ -160,6 +207,7 @@ if [[ -f "$GRID_STATE" ]]; then
     '(.panes[] | select(.index == $idx)) |= . + {status: "reserved", role: $role, agent_id: $aid}' \
     "$GRID_STATE" > "$_temp" && [[ -s "$_temp" ]]; then
     mv "$_temp" "$GRID_STATE"
+    RESERVATION_ACTIVE=1
   else
     rm -f "$_temp"
     exec 9>&-
@@ -199,6 +247,7 @@ if ! tmux send-keys -t "$PANE_TARGET" "bash '$LAUNCHER'" Enter 2>/dev/null; then
   _dispatch_cleanup
   die "Failed to send launch command to pane $PANE_INDEX — tmux session may be dead"
 fi
+DISPATCH_COMMITTED=1
 
 # Trust prompt auto-accept — narrow check to exact pane only
 ATTEMPTS=$((CFG_TRUST_SECONDS / 2))
