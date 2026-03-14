@@ -29,13 +29,15 @@ tmup is a [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/pl
 
 ### The numbers
 
-| Resource | Per agent | 8 workers + 1 lead |
-|----------|-----------|-------------------|
-| Context window | 200K tokens (Codex) / 200K tokens (Claude) | **1.8M tokens** of combined context |
-| Tool access | Full filesystem, shell, git | 9 agents with full tool access |
-| Coordination | Via shared SQLite DAG | Lock-free reads, serialized writes |
+Context windows depend on your model configuration. Some real combinations:
 
-That's almost 2 million tokens of combined context window working on your codebase simultaneously. Each agent has full tool access. The lead sees everything. The workers are autonomous within their task scope.
+| Configuration | Lead | Workers (x8) | Combined context |
+|--------------|------|-------------|-----------------|
+| Claude Opus 4.6 (1M) + Codex GPT-5.4 (1M) | 1M tokens | 8M tokens | **9M tokens** |
+| Claude Sonnet 4.6 (200K) + Codex GPT-4.1 (200K) | 200K tokens | 1.6M tokens | **1.8M tokens** |
+| Claude Opus 4.6 (1M) + Codex GPT-4.1 (200K) | 1M tokens | 1.6M tokens | **2.6M tokens** |
+
+That's up to **9 million tokens** of combined context window working on your codebase simultaneously. Each agent has full tool access. The lead sees everything. The workers are autonomous within their task scope.
 
 Is this a good idea? Probably not. Does it work? Yes, disturbingly well.
 
@@ -299,7 +301,7 @@ Skipping step 2 means Claude runs stale code. Skipping step 3 means the old MCP 
 
 ### Test coverage
 
-621 tests across 24 files covering:
+631 tests across 24 files covering:
 - Task DAG operations and dependency resolution
 - Cycle detection
 - Task lifecycle state machine
@@ -318,7 +320,7 @@ Skipping step 2 means Claude runs stale code. Skipping step 3 means the old MCP 
 Yes. Claude Code is the lead (orchestrator). Codex CLI workers do the actual coding in tmux panes. They're different products from different companies working together through a shared database. It's beautiful and slightly unhinged.
 
 **Q: How many workers can I run?**
-The default grid is 2x4 (8 panes). You can change this in `config/policy.yaml`. Each worker is a Codex CLI process with its own 200K context window. More workers = more parallelism = more SQLite contention = more fun.
+The default grid is 2x4 (8 panes). You can change this in `config/policy.yaml`. Each worker is a Codex CLI process with its own context window (up to 1M tokens with GPT-5.4). More workers = more parallelism = more SQLite contention = more fun.
 
 **Q: What happens if a worker crashes?**
 The lead detects stale claims via heartbeat timeouts and can reassign the work. Retriable failures (crash, timeout) auto-retry with exponential backoff. Non-retriable failures (logic errors) escalate to `needs_review` for the lead to handle.
