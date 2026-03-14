@@ -33,7 +33,7 @@ Skipping step 2 means Claude runs stale code from the cache. Skipping step 3 mea
 
 ## Test coverage
 
-631 tests across 24 files. Every test creates a fresh temp SQLite database, runs the operation, and asserts the result. No shared state between tests. No flaky tests. No "works on my machine." The tests are the best part of this project and we will fight anyone who says otherwise.
+631 tests across 24 files. Every test creates a fresh temp SQLite database, runs the operation, and asserts the result. No shared state between tests. Minimal flakiness. We spent more time on the tests than on several of the features they test, which is either good engineering or misplaced priorities depending on who you ask.
 
 Coverage includes:
 - Task DAG operations and dependency resolution (including cycle detection)
