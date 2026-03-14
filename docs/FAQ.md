@@ -20,11 +20,11 @@ No. tmux is the grid. Without it, where would the agents live? In your heart? Th
 
 **Q: Is this production ready?**
 
-It works. It has 631 tests. It handles concurrent database access, dead workers, dependency cascades, and retry backoff. It dogfooded itself -- we used tmup to review tmup, and the workers found 12 real bugs and wrote 8 new tests. Whether you should deploy this to manage your production infrastructure is a question for your therapist, not your tech lead.
+Define "production." It has 631 tests, which is more than some things that are in production. It handles concurrent database access, dead workers, dependency cascades, and retry backoff. We used it to review its own codebase and the workers found real bugs, which is either a testament to its usefulness or a damning indictment of the code they were reviewing. We're not sure which. Should you bet your company on it? No. Should you use it to parallelize a refactoring task on a Saturday? Probably. Maybe. We're not liable.
 
 **Q: Why SQLite and not Redis/Postgres/a real database?**
 
-SQLite IS a real database. It runs on more devices than any other database engine in human history. Your phone has multiple SQLite databases right now. Your browser has one. Your car probably has one. WAL mode gives you concurrent read/write from a single file with zero infrastructure. No server. No connection strings. No Docker compose. No managed database service charging you $50/month to host a file. Just a `.db` file that 9 AI agents share like a family dinner table. WAL mode means readers never block writers and writers never block readers. It's perfect for this use case and it will outlive us all.
+Because it's one file and it works. We didn't want to run a database server. We didn't want connection strings. We didn't want Docker. We wanted a file that multiple processes could read and write simultaneously without corrupting each other's data. SQLite WAL mode does that. Is it the "right" choice for multi-agent coordination? Probably not. Did we look at alternatives? Briefly. Did we go back to SQLite because it was already working? Yes. We are not above path dependence.
 
 **Q: Why Bash for the scripts?**
 

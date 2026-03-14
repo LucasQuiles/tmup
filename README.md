@@ -2,7 +2,7 @@
 
 **tmux + team up = tmup**
 
-Claude Code and Codex CLI. Together. In a tmux grid. Talking to each other through a shared SQLite database while you watch them argue about your codebase in real time.
+Claude Code and Codex CLI, duct-taped together with bash scripts and a SQLite database, arranged in a tmux grid so you can watch them all work at the same time. It's like a group project where everyone is an AI and nobody is slacking because they literally can't.
 
 ```
   Claude Code (lead)         tmux 2x4 grid
@@ -16,103 +16,94 @@ Claude Code and Codex CLI. Together. In a tmux grid. Talking to each other throu
                (shared brain)
 ```
 
-One Claude Code session orchestrates. Up to 8 Codex CLI workers execute. They coordinate through a task DAG backed by SQLite WAL mode. Dependencies cascade. Failed tasks retry. Dead workers get their claims recovered. You get to lean back and watch a small army of AI agents build your project in parallel.
+One Claude Code session makes the plan. Up to 8 Codex CLI workers try to execute it. They coordinate through a task DAG backed by SQLite WAL mode, which is a fancy way of saying they all read and write to the same file on disk and somehow this doesn't end in tears. Dependencies cascade. Failed tasks retry. Dead workers get their claims recovered. You get to sit there and watch, which is either supervisory oversight or voyeurism depending on your perspective.
 
 ## Documentation
 
 | | |
 |---|---|
-| **[Architecture](docs/ARCHITECTURE.md)** | How it works: task DAG, lifecycle state machine, agent roles, concurrency model, dead claim recovery, inter-agent messaging |
-| **[API Reference](docs/API.md)** | All 18 MCP tools + 9 CLI commands with input/output examples |
+| **[Architecture](docs/ARCHITECTURE.md)** | How it actually works under the hood |
+| **[API Reference](docs/API.md)** | All 18 MCP tools + 9 CLI commands |
 | **[Configuration](docs/CONFIGURATION.md)** | Grid layout, DAG behavior, autonomy tiers, project structure |
-| **[Development](docs/DEVELOPMENT.md)** | Dev workflow, cache sync, test coverage (631 tests) |
-| **[FAQ & Limitations](docs/FAQ.md)** | Answers to questions you haven't asked yet, and honest limitations |
-| **[SYSTEM-INVENTORY.md](SYSTEM-INVENTORY.md)** | The full 46 KB engineering manual. Everything is in there. |
+| **[Development](docs/DEVELOPMENT.md)** | Dev workflow, the cache sync thing that will absolutely trip you up |
+| **[FAQ & Limitations](docs/FAQ.md)** | Honest answers and honest limitations |
+| **[SYSTEM-INVENTORY.md](SYSTEM-INVENTORY.md)** | 46 KB of engineering notes. You probably don't need this. |
 
 ---
 
 ## What is this
 
-tmup is a [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) that turns your terminal into a multi-agent war room:
+tmup is a [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) that lets you coordinate multiple AI coding agents from a single session:
 
-- **Claude Code** is the lead. It plans the work, creates a task DAG, dispatches workers, monitors progress, and harvests results. It is the adult in the room. It signed the lease.
-- **Codex CLI** workers run in tmux panes. Each one claims tasks, writes code, checkpoints progress, and reports back. They are the interns. Talented, tireless, occasionally confused interns with 1M token context windows.
-- **SQLite WAL** is the shared brain. One writer, many readers. No network. No API. Just a file on disk that 9 AI agents hammer concurrently. It has never once complained.
-- **tmux** is the grid. You can see every agent working in real time. You can watch them read your code, judge your architecture, and silently disagree with your variable names. You can watch them. They cannot watch you. This is the correct power dynamic.
+- **Claude Code** is the lead. It decides what needs doing, breaks it into tasks, and dispatches workers. Occasionally it makes questionable prioritization decisions, just like a real manager.
+- **Codex CLI** workers run in tmux panes. They claim tasks, write code, and report back. They're good at this. They're also good at confidently doing the wrong thing and then explaining why it's actually correct. Just like real interns.
+- **SQLite WAL** is the coordination layer. Every agent reads and writes to the same `.db` file. This should not work as well as it does. We have stopped asking why.
+- **tmux** is the grid. You can watch the agents work in real time. You cannot make them go faster by watching. We've tried.
 
 ## Why this exists
 
-You know that feeling when you're staring at a 47-task implementation plan and you think "I wish I had eight of me"? And then you realize that you kind of do, except they're made of math and they don't need coffee?
+We wanted to parallelize coding tasks across multiple AI agents without building a distributed system. So we didn't build a distributed system. We just put a bunch of AI processes in tmux panes and gave them a SQLite file to share. The bar was on the floor and we are proud to report that we cleared it.
 
 tmup exists because:
 
-1. **Claude Code is an incredible orchestrator** but it works alone. One session. One thread. One very smart entity doing one thing at a time.
-2. **Codex CLI is an incredible worker** but it has no idea what anyone else is doing. It's just a guy in a room with a terminal.
-3. **tmux gives you the rooms.** Eight rooms, to be precise. Arranged in a grid. With labels.
-4. **SQLite gives them a shared brain.** One file. WAL mode. ACID transactions. The most boring, reliable piece of technology in the entire stack.
+1. **Claude Code works alone.** One session. One thread. It can do a lot, but it can only do one thing at a time.
+2. **Codex CLI also works alone.** It has no idea what anyone else is doing. It's just a process in a terminal.
+3. **tmux can hold multiple terminals.** This is not a breakthrough in computer science. tmux has been doing this since 2007.
+4. **SQLite can be shared.** WAL mode lets multiple processes read and write to the same file. This is also not a breakthrough. SQLite has been doing this since 2010.
 
-Put them together and you get a multi-agent system where the planning happens in one AI, the execution happens in eight other AIs, and the coordination happens through a database file that was originally designed for embedded devices. It's held together by bash scripts and optimism and it works disturbingly well.
-
-This is not a framework. This is not a platform. This is a Claude Code plugin that spawns Codex processes into tmux panes and gives them a SQLite database to argue through. The fact that it produces working software is, frankly, an accident of engineering that we have chosen not to question.
+We connected these four things with bash scripts. That's the whole innovation. The fact that the result is genuinely useful is a surprise to everyone, including us.
 
 ### It's agents all the way down
 
-Here's where it gets properly unhinged. Claude Code can spawn **sub-agents** -- background workers that handle research, code review, exploration. Codex can also spawn sub-agents within its own sessions. So what you actually have is:
+Here's where it gets silly. Claude Code can spawn **sub-agents** for research, code review, exploration. Codex can also spawn sub-agents within its own sessions. So the actual topology looks something like:
 
 ```
-You (human, allegedly)
- +-- Claude Code (lead, 1M context)
-      +-- Claude sub-agent: research     (200K context)
-      +-- Claude sub-agent: code review  (200K context)
-      +-- tmux pane 0: Codex worker      (1M context)
-      |    +-- Codex sub-agent: explore   (nested)
-      |    +-- Codex sub-agent: test      (nested)
-      +-- tmux pane 1: Codex worker      (1M context)
-      |    +-- Codex sub-agent: refactor  (nested)
-      +-- tmux pane 2: Codex worker      (1M context)
-      |    +-- ...
-      +-- ... (8 panes, each with potential sub-agents)
+You (human, allegedly in charge)
+ +-- Claude Code (lead, up to 1M context)
+      +-- Claude sub-agent: research
+      +-- Claude sub-agent: code review
+      +-- tmux pane 0: Codex worker
+      |    +-- Codex sub-agent: explore
+      |    +-- Codex sub-agent: test
+      +-- tmux pane 1: Codex worker
+      |    +-- Codex sub-agent: refactor
+      +-- ... (8 panes, each potentially nesting more)
 ```
 
-Russian nesting dolls of AI agents. The lead spawns workers. The workers spawn sub-workers. The sub-workers could theoretically spawn sub-sub-workers but at that point you're just running a small civilization on your laptop and your electricity bill will reflect that.
+Russian nesting dolls of AI agents. We didn't plan this. Each Codex worker is a full Codex session with its own context window and tool access, so when it needs to explore a codebase before editing, it just... spawns another agent to do the reading. The workers delegate. The delegates might delegate. At some point your laptop fan turns on and that's how you know it's working.
 
-Each Codex worker is a full Codex session, not a toy. It has its own context window, its own tool access, its own ability to read files, run commands, and make decisions. When a worker needs to explore a codebase before modifying it, it can spawn an exploration sub-agent. When it needs to run and debug tests, it can spawn a test sub-agent. The workers are not just executors -- they're autonomous problem-solvers with delegation abilities.
+We're not going to pretend this is a carefully designed agent hierarchy. It's more like a bacterial colony with a task list.
 
 ### The numbers
 
-| Configuration | Lead | Workers (x8) | Combined context |
-|--------------|------|-------------|-----------------|
-| Claude Opus 4.6 (1M) + Codex GPT-5.4 (1M) | 1M tokens | 8M tokens | **9M tokens** |
-| Claude Sonnet 4.6 (200K) + Codex GPT-4.1 (200K) | 200K tokens | 1.6M tokens | **1.8M tokens** |
-| Claude Opus 4.6 (1M) + Codex GPT-4.1 (200K) | 1M tokens | 1.6M tokens | **2.6M tokens** |
+Context windows vary by model. Here's what you might end up with:
 
-Up to **9 million tokens** of combined context. That's roughly 7 million words. Twelve copies of War and Peace. You could also just build software. We recommend the second option but we're not your parents.
+| Configuration | Lead | Workers (x8) | Combined |
+|--------------|------|-------------|----------|
+| Opus 4.6 (1M) + GPT-5.4 (1M) | 1M | 8M | **9M tokens** |
+| Sonnet 4.6 (200K) + GPT-4.1 (200K) | 200K | 1.6M | **1.8M tokens** |
+| Opus 4.6 (1M) + GPT-4.1 (200K) | 1M | 1.6M | **2.6M tokens** |
+
+That's a lot of context. Whether any of it is being used well is a separate question that we are choosing not to investigate.
 
 ---
 
 ## Prerequisites
 
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (CLI) - the adult in charge
-- [Codex CLI](https://github.com/openai/codex) (`~/.local/bin/codex` or in PATH) - the workforce
-- [tmux](https://github.com/tmux/tmux) >= 3.0 - the office building
-- Node.js >= 20 - because everything is JavaScript eventually
-- jq - because parsing JSON with grep is a war crime
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (CLI)
+- [Codex CLI](https://github.com/openai/codex) (`~/.local/bin/codex` or in PATH)
+- [tmux](https://github.com/tmux/tmux) >= 3.0
+- Node.js >= 20
+- jq
 
 ## Installation
 
 ```bash
-# Clone this repo into your Claude Code plugins directory
 git clone https://github.com/LucasQuiles/tmup.git ~/.claude/plugins/tmup
-
-# Install dependencies and build
 cd ~/.claude/plugins/tmup
 npm install && npm run build
-
-# Install the plugin into Claude Code
 claude plugin install tmup@tmup-dev
 ```
-
-That's three commands. If you can't handle three commands you are not ready for nine concurrent AI agents.
 
 <details>
 <summary>Manual registration (if <code>plugin install</code> doesn't work)</summary>
@@ -132,14 +123,14 @@ Add to `~/.claude/settings.json`:
 }
 ```
 
-Then restart Claude Code.
+Then restart Claude Code. Yes, you have to restart. No, there is no hot-reload.
 
 </details>
 
 <details>
 <summary>Permissions for <code>dontAsk</code> mode</summary>
 
-If you run Claude Code with `defaultMode: "dontAsk"`, the tmup MCP tools need explicit permission. The `mcp__*` wildcard does **not** override an explicit allow list in `settings.local.json`. Add to `~/.claude/settings.local.json`:
+If you run Claude Code with `defaultMode: "dontAsk"`, the tmup MCP tools need explicit permission. The `mcp__*` wildcard does **not** override an explicit allow list in `settings.local.json`. We learned this the hard way. Add to `~/.claude/settings.local.json`:
 
 ```json
 {
@@ -182,21 +173,21 @@ Inside a Claude Code session:
 > /tmup
 ```
 
-That's it. Claude will initialize a session, create a tmux grid, ask what you want built, break it into a task DAG, dispatch Codex workers, and coordinate the whole thing. One command. You go get coffee. You come back and there's a PR.
+Claude will set up a session, create a tmux grid, ask what you want done, build a task DAG, and start dispatching workers. Sometimes this goes smoothly. Sometimes a worker gets confused and reviews the wrong file. It's a process.
 
 ### What it looks like
 
-Empty grid after `grid-setup.sh` -- 8 panes, waiting for dispatch:
+Empty grid after setup -- 8 panes, nothing happening yet:
 
 ![Empty tmup grid -- 8 panes ready for dispatch](docs/images/grid-empty.png)
 
-Full grid with 8 Codex workers running reviews, tests, audits, and documentation in parallel:
+Same grid a few minutes later with 8 Codex workers doing things. Whether they're doing the *right* things is for the lead to figure out:
 
 ![Full tmup grid -- 8 Codex workers running in parallel](docs/images/grid-full.png)
 
 ### What the backend looks like
 
-Real output from a tmup session where we used tmup to review tmup:
+Real output from a tmup session where we used tmup to review tmup (yes, really):
 
 ```json
 {
@@ -223,41 +214,37 @@ Real output from a tmup session where we used tmup to review tmup:
 }
 ```
 
-Real messages from workers to the lead:
+Real messages from workers:
 
 ```json
 {
-  "ok": true,
   "messages": [
     {
-      "from": "a6ddcc67-d1f2-4a66-84eb-409d63e2c8db",
-      "type": "checkpoint", "task_id": "002",
-      "payload_framed": "[WORKER MESSAGE from a6ddcc67, type=checkpoint, task=002]:\nTester checkpoint: fresh npm test completed successfully with 24/24 files and 631/631 tests passing in 20.91s; recording evidence artifact and closing task 002.\n[END WORKER MESSAGE]"
+      "from": "a6ddcc67-...", "type": "checkpoint", "task_id": "002",
+      "payload_framed": "[WORKER MESSAGE from a6ddcc67, type=checkpoint, task=002]:\nTester checkpoint: fresh npm test completed successfully with 24/24 files and 631/631 tests passing in 20.91s\n[END WORKER MESSAGE]"
     },
     {
-      "from": "e1c5dc3e-f5a7-4299-a6e1-5a47c105a984",
-      "type": "finding",
+      "from": "e1c5dc3e-...", "type": "finding",
       "payload_framed": "[WORKER MESSAGE from e1c5dc3e, type=finding]:\nDispatch-path finding: mcp-server marks the agent shutdown on launch failure, but dead-claim recovery only scans status='active'. The task remains claimed by the shutdown agent, so the current cleanup does not actually make the task recoverable.\n[END WORKER MESSAGE]"
     },
     {
-      "from": "549cefe9-1a1c-4602-939a-bd026ee2d691",
-      "type": "checkpoint", "task_id": "005",
-      "payload_framed": "[WORKER MESSAGE from 549cefe9, type=checkpoint, task=005]:\nLaunched two nested Codex sub-agents: one auditing task lifecycle and dependency resolution, one auditing session and agent operations. I am tracing supporting call paths locally while they read the target modules.\n[END WORKER MESSAGE]"
+      "from": "549cefe9-...", "type": "checkpoint", "task_id": "005",
+      "payload_framed": "[WORKER MESSAGE from 549cefe9, type=checkpoint, task=005]:\nLaunched two nested Codex sub-agents: one auditing task lifecycle and dependency resolution, one auditing session and agent operations.\n[END WORKER MESSAGE]"
     }
   ]
 }
 ```
 
-That last message is the nesting in action. A Codex worker dispatched by tmup spawned its own sub-agents to parallelize an audit. Agents spawning agents, coordinating through a shared SQLite file, reporting back to a lead that's running in a completely different AI system.
+That last message is a Codex worker spawning its own sub-agents to parallelize work. We didn't tell it to do that. It just did. We're choosing to interpret this as a feature.
 
 ---
 
 ## License
 
-[MIT](LICENSE). Do whatever you want. Give it to your friends. Give it to your enemies. Fork it and rename it "smux" (please don't actually do this).
+[MIT](LICENSE).
 
 ## Credits
 
-Built with unreasonable enthusiasm by [@LucasQuiles](https://github.com/LucasQuiles) and a mass of AI agents who, at one point, were deployed to review the very system that deployed them. They found bugs. They were not disturbed by the recursion. We were.
+Built by [@LucasQuiles](https://github.com/LucasQuiles) and a fluctuating number of AI agents, at least some of whom were, at one point, deployed to review the very system that deployed them. They found bugs. They did not find this concerning. We did.
 
 Powered by [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [Codex CLI](https://github.com/openai/codex).

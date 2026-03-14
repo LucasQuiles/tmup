@@ -122,7 +122,7 @@ Not all agents are created equal. Some are trusted to talk to anyone. Others can
 
 ## The concurrency model
 
-A love letter to SQLite, briefly.
+We could have used Redis. We could have used Postgres. We could have built a proper message broker with pub/sub and acknowledgment semantics. Instead, we used SQLite. Not because it's the best tool for multi-agent coordination -- it's arguably the worst -- but because it's a single file with zero infrastructure and WAL mode makes it work well enough that we never had a reason to upgrade.
 
 SQLite WAL (Write-Ahead Logging) mode. One writer at a time, unlimited concurrent readers. All writes use `IMMEDIATE` transactions to serialize at the start rather than failing at commit. `busy_timeout=8000ms` handles contention -- if the database is locked, the writer waits up to 8 seconds before giving up.
 
@@ -133,13 +133,13 @@ In practice, 8 agents hammering the same DB file works fine because:
 3. **Task claims are naturally serialized** -- only one agent can claim a given task, and the claim is an atomic UPDATE with a WHERE clause
 4. WAL mode means **readers never block writers and writers never block readers**
 
-No Redis. No Postgres. No connection pooling. No Docker. No Kubernetes. No distributed consensus algorithm. Just a file on disk and the most battle-tested database engine in human history. SQLite runs in your phone, your browser, your car, and apparently also in your AI agent coordination layer. It doesn't care. It never has.
+Will this scale to 100 agents? No. Absolutely not. Will it handle 8? It hasn't complained yet. SQLite runs in your phone, your browser, your car, and now apparently also in your AI agent coordination layer. It was designed for embedded devices and we are using it to coordinate a small army of language models. Dr. Hipp, if you're reading this, we're sorry.
 
-The database lives at `~/.local/state/tmup/<session-id>/tmup.db`. It contains 16 tables (8 operational, 8 for future planning/evidence features that are implemented but not yet wired in because we believe in shipping things incrementally and also in confusing future maintainers).
+The database lives at `~/.local/state/tmup/<session-id>/tmup.db`. It contains 16 tables (8 operational, 8 for future planning/evidence features that are implemented but not yet wired in because we shipped them early and then forgot to connect them).
 
 ## Dead claim recovery
 
-Workers run Codex CLI processes. Codex processes crash sometimes. Panes get killed. Laptops overheat. The heat death of the universe is technically possible, though unlikely during a single tmup session.
+Workers crash. Not often, but often enough that we had to build a recovery system. Codex runs out of context, the pane gets killed, the laptop overheats, you accidentally type `tmux kill-pane` in the wrong terminal. Life is full of small disasters.
 
 When this happens:
 
@@ -163,4 +163,4 @@ Message types:
 - **`blocker`** -- Something is preventing progress. "I can't access the database."
 - **`shutdown`** -- Sent by the lead when pausing or tearing down. "Save your work."
 
-Messages are **content-framed** for prompt injection defense. When a message from a worker is delivered to another agent, it's wrapped in `[WORKER MESSAGE from <id>, type=<type>]...[END WORKER MESSAGE]` markers. This prevents a compromised worker from injecting instructions that other agents would follow. It's not bulletproof, but it's a lot better than "here's some raw text from another AI, good luck."
+Messages are **content-framed** for prompt injection defense. When a message from a worker is delivered to another agent, it's wrapped in `[WORKER MESSAGE from <id>, type=<type>]...[END WORKER MESSAGE]` markers. This is supposed to prevent a compromised worker from injecting instructions that other agents would follow. Is it bulletproof? No. Is it better than raw text? Yes. Is the gap between those two things keeping us up at night? Also yes.
