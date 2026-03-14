@@ -390,6 +390,55 @@ describe('task lifecycle', () => {
       const task = db.prepare('SELECT status FROM tasks WHERE id = ?').get(id) as TaskRow;
       expect(task.status).toBe('claimed');
     });
+
+    it('rolls back multi-artifact completion when a later artifact is undeclared', () => {
+      const id = createTask(db, { subject: 'Build pair', produces: ['alpha.txt', 'beta.txt'] });
+      claimTask(db, 'agent-1');
+
+      const alphaPath = path.join(tmpDir, 'alpha.txt');
+      const roguePath = path.join(tmpDir, 'rogue.txt');
+      fs.writeFileSync(alphaPath, 'alpha');
+      fs.writeFileSync(roguePath, 'rogue');
+
+      const artifactState = db.prepare(`
+        SELECT a.name, a.status, a.path, a.checksum
+        FROM artifacts a
+        JOIN task_artifacts ta ON a.id = ta.artifact_id
+        WHERE ta.task_id = ? AND ta.direction = 'produces'
+        ORDER BY a.name
+      `);
+
+      const beforeArtifacts = artifactState.all(id) as Array<{
+        name: string;
+        status: string;
+        path: string | null;
+        checksum: string | null;
+      }>;
+
+      expect(beforeArtifacts).toMatchObject([
+        { name: 'alpha.txt', status: 'pending', checksum: null },
+        { name: 'beta.txt', status: 'pending', checksum: null },
+      ]);
+
+      expect(() => completeTask(db, id, 'Done', [
+        { name: 'alpha.txt', path: alphaPath },
+        { name: 'rogue.txt', path: roguePath },
+      ], undefined, 'agent-1')).toThrow("Artifact 'rogue.txt' not registered as a 'produces' artifact");
+
+      const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as TaskRow;
+      expect(task.status).toBe('claimed');
+      expect(task.owner).toBe('agent-1');
+      expect(task.completed_at).toBeNull();
+      expect(task.result_summary).toBeNull();
+
+      const afterArtifacts = artifactState.all(id) as Array<{
+        name: string;
+        status: string;
+        path: string | null;
+        checksum: string | null;
+      }>;
+      expect(afterArtifacts).toEqual(beforeArtifacts);
+    });
   });
 
   describe('failTask', () => {
@@ -535,6 +584,23 @@ describe('task lifecycle', () => {
       cancelTask(db, id1, false);
       const task2 = db.prepare('SELECT status FROM tasks WHERE id = ?').get(id2) as TaskRow;
       expect(task2.status).toBe('needs_review');
+    });
+
+    it('without cascade moves transitive dependents to needs_review', () => {
+      const id1 = createTask(db, { subject: 'A' });
+      const id2 = createTask(db, { subject: 'B', deps: [id1] });
+      const id3 = createTask(db, { subject: 'C', deps: [id2] });
+
+      const result = cancelTask(db, id1, false);
+      expect(result.cancelled).toEqual([id1]);
+
+      const task1 = db.prepare('SELECT status FROM tasks WHERE id = ?').get(id1) as TaskRow;
+      const task2 = db.prepare('SELECT status FROM tasks WHERE id = ?').get(id2) as TaskRow;
+      const task3 = db.prepare('SELECT status FROM tasks WHERE id = ?').get(id3) as TaskRow;
+
+      expect(task1.status).toBe('cancelled');
+      expect(task2.status).toBe('needs_review');
+      expect(task3.status).toBe('needs_review');
     });
 
     it('skips already completed tasks during cascade', () => {

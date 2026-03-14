@@ -16450,8 +16450,9 @@ ${m.payload}
       const workingDir = args.working_dir ?? getSessionProjectDir(getCurrentSessionId());
       const sessionId = getCurrentSessionId();
       const dbPath = getSessionDbPath(sessionId);
-      const pluginRoot = new URL("../../..", import.meta.url).pathname.replace(/\/$/, "");
-      const scriptPath = `${pluginRoot}/scripts/dispatch-agent.sh`;
+      const { resolve, dirname, join } = await import("node:path");
+      const pluginRoot = resolve(dirname(process.argv[1] || ""), "../..");
+      const scriptPath = join(pluginRoot, "scripts", "dispatch-agent.sh");
       const prompt = `${task.subject}${task.description ? "\n\n" + task.description : ""}`;
       const dispatchArgs = [
         scriptPath,

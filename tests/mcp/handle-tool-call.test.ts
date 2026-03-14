@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -7,10 +7,321 @@ import { createTask, updateTask } from '../../shared/src/task-ops.js';
 import { claimTask, claimSpecificTask, completeTask, failTask } from '../../shared/src/task-lifecycle.js';
 import { registerAgent, getActiveAgents } from '../../shared/src/agent-ops.js';
 import { sendMessage, getInbox } from '../../shared/src/message-ops.js';
-import { initSession, setCurrentSession, getCurrentSession } from '../../shared/src/session-ops.js';
+import { initSession, setCurrentSession, getCurrentSession, getSessionDir } from '../../shared/src/session-ops.js';
 import type { Database, TaskRow } from '../../shared/src/types.js';
 
 import { tmpDbPath, cleanupDb } from '../helpers/db.js';
+
+const mcpServerState = vi.hoisted(() => ({
+  db: null as Database | null,
+  sessionId: null as string | null,
+}));
+
+const childProcessMock = vi.hoisted(() => ({
+  execFileSync: vi.fn(),
+}));
+
+vi.mock('../../mcp-server/src/index.js', () => ({
+  ensureDb: () => {
+    if (!mcpServerState.db) {
+      throw new Error('No active test database configured');
+    }
+    return mcpServerState.db;
+  },
+  switchSession: vi.fn(),
+  getCurrentSessionId: () => mcpServerState.sessionId,
+}));
+
+vi.mock('node:child_process', () => ({
+  execFileSync: childProcessMock.execFileSync,
+}));
+
+type ToolCallResult = Awaited<ReturnType<typeof import('../../mcp-server/src/tools/index.js').handleToolCall>>;
+
+let handleToolCall: (name: string, args: Record<string, unknown>) => Promise<ToolCallResult>;
+
+function parseToolJson(result: ToolCallResult): Record<string, unknown> {
+  expect(result.content).toHaveLength(1);
+  expect(result.content[0]?.type).toBe('text');
+  return JSON.parse(result.content[0]?.text ?? '{}') as Record<string, unknown>;
+}
+
+function writeGridState(sessionId: string, projectDir: string, paneCount: number): void {
+  const sessionDir = getSessionDir(sessionId);
+  const panes = Array.from({ length: paneCount }, (_, index) => ({
+    index,
+    pane_id: `%${index + 1}`,
+    status: 'ready',
+  }));
+
+  fs.mkdirSync(path.join(sessionDir, 'grid'), { recursive: true });
+  fs.writeFileSync(
+    path.join(sessionDir, 'grid', 'grid-state.json'),
+    JSON.stringify({
+      schema_version: 1,
+      session_name: sessionId,
+      project_dir: projectDir,
+      created_at: new Date().toISOString(),
+      grid: { rows: 1, cols: paneCount },
+      panes,
+    })
+  );
+}
+
+beforeAll(async () => {
+  ({ handleToolCall } = await import('../../mcp-server/src/tools/index.js'));
+});
+
+describe('handleToolCall adapter integration', () => {
+  const STATE_ROOT = path.join(process.env.HOME ?? '/tmp', '.local/state/tmup');
+  const REGISTRY_PATH = path.join(STATE_ROOT, 'registry.json');
+  const CURRENT_SESSION_PATH = path.join(STATE_ROOT, 'current-session');
+
+  let originalRegistry: string | null = null;
+  let originalCurrentSession: string | null = null;
+  let createdSessionIds: string[] = [];
+  let openedDbs: Database[] = [];
+  let createdProjectDirs: string[] = [];
+  let originalArgv1: string | undefined;
+
+  function createAdapterSession(): { db: Database; projectDir: string; sessionId: string; dbPath: string } {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tmup-handle-tool-call-'));
+    const session = initSession(projectDir, 'test');
+    const db = openDatabase(session.db_path);
+
+    createdProjectDirs.push(projectDir);
+    createdSessionIds.push(session.session_id);
+    openedDbs.push(db);
+
+    mcpServerState.db = db;
+    mcpServerState.sessionId = session.session_id;
+
+    return { db, projectDir, sessionId: session.session_id, dbPath: session.db_path };
+  }
+
+  beforeEach(() => {
+    try { originalRegistry = fs.readFileSync(REGISTRY_PATH, 'utf-8'); } catch { originalRegistry = null; }
+    try { originalCurrentSession = fs.readFileSync(CURRENT_SESSION_PATH, 'utf-8'); } catch { originalCurrentSession = null; }
+    createdSessionIds = [];
+    openedDbs = [];
+    createdProjectDirs = [];
+    originalArgv1 = process.argv[1];
+    process.argv[1] = path.join(process.cwd(), 'mcp-server', 'dist', 'index.js');
+    childProcessMock.execFileSync.mockReset();
+    mcpServerState.db = null;
+    mcpServerState.sessionId = null;
+  });
+
+  afterEach(() => {
+    for (const db of openedDbs) {
+      closeDatabase(db);
+    }
+    openedDbs = [];
+
+    mcpServerState.db = null;
+    mcpServerState.sessionId = null;
+
+    if (originalRegistry !== null) {
+      fs.writeFileSync(REGISTRY_PATH, originalRegistry);
+    } else {
+      try { fs.unlinkSync(REGISTRY_PATH); } catch {}
+    }
+
+    if (originalCurrentSession !== null) {
+      fs.writeFileSync(CURRENT_SESSION_PATH, originalCurrentSession);
+    } else {
+      try { fs.unlinkSync(CURRENT_SESSION_PATH); } catch {}
+    }
+
+    for (const sessionId of createdSessionIds) {
+      try { fs.rmSync(path.join(STATE_ROOT, sessionId), { recursive: true, force: true }); } catch {}
+    }
+    createdSessionIds = [];
+
+    for (const projectDir of createdProjectDirs) {
+      try { fs.rmSync(projectDir, { recursive: true, force: true }); } catch {}
+    }
+    createdProjectDirs = [];
+
+    process.argv[1] = originalArgv1;
+  });
+
+  describe('tmup_dispatch', () => {
+    it('returns launch metadata from handleToolCall on success', async () => {
+      const { db, projectDir, sessionId, dbPath } = createAdapterSession();
+      writeGridState(sessionId, projectDir, 4);
+
+      const taskId = createTask(db, {
+        subject: 'Dispatch subject',
+        description: 'Dispatch description',
+        role: 'tester',
+      });
+
+      childProcessMock.execFileSync.mockReturnValue('launched pane 2\n');
+
+      const result = parseToolJson(await handleToolCall('tmup_dispatch', {
+        task_id: taskId,
+        role: 'tester',
+        pane_index: 2,
+      }));
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        task_id: taskId,
+        pane_index: 2,
+        role: 'tester',
+        subject: 'Dispatch subject',
+        description: 'Dispatch description',
+        launched: true,
+        launch_output: 'launched pane 2',
+      }));
+      expect(typeof result.agent_id).toBe('string');
+
+      expect(childProcessMock.execFileSync).toHaveBeenCalledTimes(1);
+      expect(childProcessMock.execFileSync).toHaveBeenCalledWith(
+        'bash',
+        [
+          path.join(process.cwd(), 'scripts', 'dispatch-agent.sh'),
+          '--session', sessionId,
+          '--role', 'tester',
+          '--prompt', 'Dispatch subject\n\nDispatch description',
+          '--agent-id', result.agent_id,
+          '--task-id', taskId,
+          '--db-path', dbPath,
+          '--working-dir', projectDir,
+          '--pane-index', '2',
+        ],
+        {
+          timeout: 30000,
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+        }
+      );
+    });
+
+    it('marks the registered agent as shutdown when claimSpecificTask fails', async () => {
+      const { db } = createAdapterSession();
+      const taskId = createTask(db, { subject: 'Already claimed', role: 'tester' });
+
+      registerAgent(db, 'existing-agent', 0, 'tester');
+      claimTask(db, 'existing-agent', 'tester');
+
+      await expect(handleToolCall('tmup_dispatch', {
+        task_id: taskId,
+        role: 'tester',
+        pane_index: 1,
+      })).rejects.toThrow('could not be claimed');
+
+      const shutdownAgents = db.prepare(
+        "SELECT id, status, pane_index, role FROM agents WHERE status = 'shutdown'"
+      ).all() as Array<{ id: string; status: string; pane_index: number; role: string | null }>;
+
+      expect(shutdownAgents).toHaveLength(1);
+      expect(shutdownAgents[0]).toEqual(expect.objectContaining({
+        status: 'shutdown',
+        pane_index: 1,
+        role: 'tester',
+      }));
+      expect(childProcessMock.execFileSync).not.toHaveBeenCalled();
+    });
+
+    it('marks the registered agent as shutdown when launch fails', async () => {
+      const { db } = createAdapterSession();
+      const taskId = createTask(db, {
+        subject: 'Launch failure',
+        description: 'Dispatch should clean up the agent',
+        role: 'tester',
+      });
+
+      childProcessMock.execFileSync.mockImplementation(() => {
+        throw new Error('tmux pane not available');
+      });
+
+      await expect(handleToolCall('tmup_dispatch', {
+        task_id: taskId,
+        role: 'tester',
+      })).rejects.toThrow('Dispatch registered agent');
+
+      const agent = db.prepare(
+        "SELECT id, status FROM agents WHERE role = 'tester' ORDER BY registered_at DESC LIMIT 1"
+      ).get() as { id: string; status: string } | undefined;
+
+      expect(agent).toBeDefined();
+      expect(agent?.status).toBe('shutdown');
+
+      const task = db.prepare('SELECT status, owner FROM tasks WHERE id = ?').get(taskId) as TaskRow;
+      expect(task.status).toBe('claimed');
+      expect(task.owner).toBe(agent?.id);
+    });
+  });
+
+  describe('tmup_harvest', () => {
+    it('captures pane output and strips ANSI escapes', async () => {
+      const { projectDir, sessionId } = createAdapterSession();
+      writeGridState(sessionId, projectDir, 3);
+
+      childProcessMock.execFileSync.mockReturnValue('\u001b[32mready\u001b[0m\nplain output');
+
+      const result = parseToolJson(await handleToolCall('tmup_harvest', {
+        pane_index: 1,
+        lines: 25,
+      }));
+
+      expect(result).toEqual({
+        ok: true,
+        pane_index: 1,
+        lines: 25,
+        output: 'ready\nplain output',
+      });
+      expect(childProcessMock.execFileSync).toHaveBeenCalledWith(
+        'tmux',
+        ['capture-pane', '-t', `${sessionId}:0.1`, '-p', '-S', '-25'],
+        {
+          timeout: 5000,
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+        }
+      );
+    });
+  });
+
+  describe('argument validation edge cases', () => {
+    it('rejects invalid pane indexes for dispatch', async () => {
+      const { db, projectDir, sessionId } = createAdapterSession();
+      writeGridState(sessionId, projectDir, 2);
+
+      const taskId = createTask(db, { subject: 'Validation target', role: 'tester' });
+
+      await expect(handleToolCall('tmup_dispatch', {
+        task_id: taskId,
+        role: 'tester',
+        pane_index: 1.5,
+      })).rejects.toThrow('pane_index must be a non-negative integer');
+
+      await expect(handleToolCall('tmup_dispatch', {
+        task_id: taskId,
+        role: 'tester',
+        pane_index: 2,
+      })).rejects.toThrow('pane_index 2 out of range');
+    });
+
+    it('rejects invalid harvest arguments before touching tmux', async () => {
+      const { projectDir, sessionId } = createAdapterSession();
+      writeGridState(sessionId, projectDir, 2);
+
+      await expect(handleToolCall('tmup_harvest', {
+        pane_index: 0,
+        lines: 0,
+      })).rejects.toThrow('lines must be integer 1-10000');
+
+      await expect(handleToolCall('tmup_harvest', {
+        pane_index: 2,
+      })).rejects.toThrow('pane_index 2 out of range');
+
+      expect(childProcessMock.execFileSync).not.toHaveBeenCalled();
+    });
+  });
+});
 
 describe('MCP handleToolCall', () => {
   let db: Database;
