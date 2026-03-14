@@ -113,6 +113,12 @@ for ((_r = 0; _r < GRID_ROWS; _r++)); do
   done
 done
 
+# Set a clean minimal prompt in each pane (hides user shell customizations like starship/p10k)
+for _pane_id in $(tmux list-panes -t "$SESSION_NAME" -F '#{pane_id}'); do
+  tmux send-keys -t "$_pane_id" "unset PROMPT_COMMAND; unset -f starship_precmd 2>/dev/null; PS1='tmup \$ '; clear" Enter
+done
+sleep 0.5
+
 # Write grid-state.json
 PANE_INFO=$(tmux list-panes -t "$SESSION_NAME" -F '#{pane_index} #{pane_id}')
 TIMESTAMP=$(date -Iseconds)
