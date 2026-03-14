@@ -1,0 +1,16 @@
+{
+  "name": "@tmup/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/tmup-cli.js",
+  "bin": {
+    "tmup-cli": "dist/tmup-cli.js"
+  },
+  "scripts": {
+    "build": "tsc --noEmit && npx esbuild src/index.ts --bundle --platform=node --format=esm --external:better-sqlite3 --outfile=dist/tmup-cli.js"
+  },
+  "dependencies": {
+    "@tmup/shared": "file:../shared"
+  }
+}

@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build artifacts (incremental caches)
+*.tsbuildinfo
+.tmp/
+
+# Source maps (development only)
+*.js.map
+*.d.ts.map
+
+# Claude Code project config (user-local)
+.claude/
+
+# Runtime state (created at runtime)
+*.db
+*.db-wal
+*.db-shm
+
+# OS
+.DS_Store
+Thumbs.db

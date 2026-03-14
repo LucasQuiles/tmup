@@ -1,0 +1,8 @@
+{
+  "journal_mode": "wal",
+  "busy_timeout": 8000,
+  "foreign_keys": 1,
+  "synchronous": 1,
+  "wal_autocheckpoint": 1000,
+  "journal_size_limit": 33554432
+}

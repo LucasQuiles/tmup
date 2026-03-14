@@ -1,0 +1,14 @@
+{
+  "name": "tmup-dev",
+  "owner": {
+    "name": "q"
+  },
+  "plugins": [
+    {
+      "name": "tmup",
+      "source": "./",
+      "description": "Multi-agent coordination for Claude Code + Codex CLI via SQLite WAL-backed task DAG",
+      "version": "0.1.0"
+    }
+  ]
+}
