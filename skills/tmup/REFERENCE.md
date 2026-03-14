@@ -87,16 +87,18 @@ Valid transitions: needs_review→pending, pending→cancelled, blocked→pendin
 ```
 
 ### tmup_dispatch
+Registers agent, claims task, and launches Codex process atomically.
 ```json
 {"task_id": "003", "role": "implementer",
  "pane_index?": 2, "working_dir?": "/path"}
-→ {"ok": true, "agent_id": "uuid", "pane_index": 2}
+→ {"ok": true, "agent_id": "uuid", "pane_index": 2, "launched": true,
+   "launch_output": "Dispatched implementer to pane 2 (agent uuid)"}
 ```
 
 ### tmup_harvest
 ```json
 {"pane_index": 3, "lines?": 200}
-→ {"ok": true, "instruction": "tmux capture-pane ..."}
+→ {"ok": true, "pane_index": 3, "lines": 200, "output": "...captured scrollback..."}
 ```
 
 ### tmup_pause / tmup_resume / tmup_teardown
