@@ -279,6 +279,24 @@ npm run build
 npm run test:watch
 ```
 
+### Dev workflow (after making changes)
+
+The MCP server runs from a **cache copy**, not from the source directory. After editing source:
+
+```bash
+# 1. Build
+cd ~/.claude/plugins/tmup && npm run build
+
+# 2. Sync to plugin cache
+bash scripts/sync-cache.sh
+
+# 3. Restart Claude Code session
+# The MCP server loads once at session start — you must restart
+# to pick up code changes. There is no hot-reload.
+```
+
+Skipping step 2 means Claude runs stale code. Skipping step 3 means the old MCP server process stays in memory with the old bundle.
+
 ### Test coverage
 
 621 tests across 24 files covering:
