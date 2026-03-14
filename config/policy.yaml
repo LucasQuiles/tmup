@@ -1,0 +1,57 @@
+dag:
+  default_priority: 50
+  max_retries: 3
+  retry_backoff_base_seconds: 30
+  stale_max_age_seconds: 300
+
+grid:
+  session_prefix: "tmup"
+  # rows and cols are configurable positive integers. Default: 2x4 = 8 panes.
+  # grid-setup.sh builds an NxM tmux layout from these values.
+  rows: 2
+  cols: 4
+  width: 240
+  height: 55
+
+harvesting:
+  capture_scrollback_lines: 500
+  poll_interval_seconds: 30
+
+timeouts:
+  dispatch_trust_prompt_seconds: 6
+  teardown_grace_seconds: 60
+  pause_checkpoint_seconds: 30
+
+autonomy:
+  full_participant_roles:
+    - investigator
+    - reviewer
+  checkpoint_roles:
+    - implementer
+    - tester
+    - refactorer
+    - documenter
+
+# Collaboration patterns (P5.6)
+# Each pattern declares the minimum collaborative contract.
+# Pattern selection is explicit on plans/tasks — not inferred from free text.
+collaboration:
+  patterns:
+    - research
+    - plan
+    - implement
+    - review
+    - test
+    - audit
+    - document
+
+# Lifecycle bridge (P5.1)
+# Claude-native lifecycle events are ingested via shared bridge, not raw SQL.
+lifecycle:
+  prune_max_age_seconds: 86400  # 24 hours
+  enabled_events:
+    - claude_session_start
+    - claude_session_end
+    - claude_precompact
+    - claude_task_completed
+    - claude_subagent_stop

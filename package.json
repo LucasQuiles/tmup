@@ -1,0 +1,28 @@
+{
+  "name": "tmup",
+  "version": "0.1.0",
+  "description": "Claude Code + Codex CLI team up in a tmux grid. Multi-agent coordination via SQLite WAL-backed task DAG.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LucasQuiles/tmup.git"
+  },
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "mcp-server",
+    "cli"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.7.0",
+    "esbuild": "^0.25.11",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
