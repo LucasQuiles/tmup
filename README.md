@@ -226,22 +226,98 @@ One command. You go get coffee. You come back and there's a PR. This is either t
 
 ### What it looks like
 
-When tmup launches, you'll see a terminal window with 8 panes arranged in a 2x4 grid. Each pane runs an independent Codex CLI session with its own task, role, and context window:
+When tmup launches, you'll see a terminal window with 8 panes arranged in a 2x4 grid. Each pane is an empty shell, numbered 0-7, waiting patiently for instructions like well-behaved robots:
 
-<!-- TODO: Add screenshot of empty grid after grid-setup.sh -->
-<!-- Screenshot: docs/images/grid-empty.png -->
+![Empty tmup grid — 8 panes ready for dispatch](docs/images/grid-empty.png)
 
-After dispatching workers, each pane shows a live Codex session working on its assigned task. You can watch them read files, run commands, and post checkpoints in real time:
+After dispatching workers, each pane shows a live Codex session working on its assigned task. You can watch them read files, run commands, spawn their own sub-agents, and post checkpoints in real time. They don't know you're watching. They don't care:
 
-<!-- TODO: Add screenshot of active grid with workers running -->
-<!-- Screenshot: docs/images/grid-active.png -->
-
-The lead (your Claude Code session) monitors everything through `tmup_status` and `tmup_inbox`. When workers complete tasks, dependencies cascade and blocked tasks unblock automatically:
-
-<!-- TODO: Add screenshot of Claude Code session showing tmup_status output -->
-<!-- Screenshot: docs/images/lead-status.png -->
+![Full tmup grid — 8 Codex workers running in parallel](docs/images/grid-full.png)
 
 > **Contributing screenshots:** If you're using tmup and want to add screenshots, capture your grid with your OS screenshot tool and open a PR adding images to `docs/images/`. We'd love to see your setup.
+
+### Live example: what the backend looks like
+
+All of the above is pretty, but what's actually happening under the hood? Here's real output from a tmup session where we used tmup to review tmup. Yes, we did that. No, we are not sorry.
+
+**`tmup_status --verbose` — raw JSON from a live session:**
+
+This is the actual output. Not mockups. Not examples. This is what Claude Code sees when it calls `tmup_status`:
+
+```json
+{
+  "ok": true,
+  "tasks": [
+    {
+      "id": "001", "subject": "Review README.md for accuracy",
+      "role": "reviewer", "priority": 90, "status": "completed",
+      "result_summary": "changes-requested: README has 5 accuracy issues covering the events --type flag, CLI error exit semantics, schema source-of-truth wording, test DB wording, and terminal auto-launch behavior.",
+      "claimed_at": "2026-03-14T09:38:54.929Z",
+      "completed_at": "2026-03-14T09:45:11.550Z"
+    },
+    {
+      "id": "002", "subject": "Verify test suite passes",
+      "role": "tester", "priority": 85, "status": "completed",
+      "result_summary": "Fresh npm test passed: 24/24 test files, 631/631 tests, 0 failures, duration 20.91s.",
+      "claimed_at": "2026-03-14T09:38:59.491Z",
+      "completed_at": "2026-03-14T09:41:34.332Z"
+    },
+    {
+      "id": "005", "subject": "Deep audit of shared library using sub-agents for parallel exploration",
+      "role": "investigator", "priority": 50, "status": "claimed",
+      "result_summary": "Launched two nested Codex sub-agents: one auditing task lifecycle and dependency resolution, one auditing session and agent operations. I am tracing supporting call paths locally while they read the target modules.",
+      "claimed_at": "2026-03-14T09:42:46.120Z",
+      "completed_at": null
+    }
+  ],
+  "agents": [
+    {"id": "549cefe9-...", "pane_index": 4, "role": "investigator", "status": "active"},
+    {"id": "4b7a2219-...", "pane_index": 5, "role": "tester", "status": "active"},
+    {"id": "3521112a-...", "pane_index": 6, "role": "documenter", "status": "active"},
+    {"id": "bbc1c43a-...", "pane_index": 7, "role": "tester", "status": "active"}
+  ],
+  "unread": 18,
+  "recovered": []
+}
+```
+
+**`tmup_inbox --mark_read` — real messages from workers:**
+
+This is what inter-agent communication looks like. Workers post checkpoints, findings, and blockers. The lead reads them via inbox. Every message is content-framed for prompt injection defense:
+
+```json
+{
+  "ok": true,
+  "messages": [
+    {
+      "from": "a6ddcc67-d1f2-4a66-84eb-409d63e2c8db",
+      "type": "checkpoint", "task_id": "002",
+      "created_at": "2026-03-14T09:41:04.170Z",
+      "payload_framed": "[WORKER MESSAGE from a6ddcc67, type=checkpoint, task=002]:\nTester checkpoint: fresh npm test completed successfully with 24/24 files and 631/631 tests passing in 20.91s; recording evidence artifact and closing task 002.\n[END WORKER MESSAGE]"
+    },
+    {
+      "from": "10bf504b-8ebc-41b2-9921-8e6b1eba2e5c",
+      "type": "finding", "task_id": null,
+      "created_at": "2026-03-14T09:42:57.839Z",
+      "payload_framed": "[WORKER MESSAGE from 10bf504b, type=finding]:\nTask 003 finding: config/schema.sql is stale relative to the runtime DB contract. openDatabase() applies schema.sql and then migration v3, which adds the P5 tables and agents.execution_target_id. shared/src/types.ts mostly matches the migrated schema, but AgentRow is stale and omits execution_target_id.\n[END WORKER MESSAGE]"
+    },
+    {
+      "from": "e1c5dc3e-f5a7-4299-a6e1-5a47c105a984",
+      "type": "finding", "task_id": null,
+      "created_at": "2026-03-14T09:43:53.718Z",
+      "payload_framed": "[WORKER MESSAGE from e1c5dc3e, type=finding]:\nDispatch-path finding: mcp-server/src/tools/index.ts marks the agent shutdown on launch failure, but shared/src/agent-ops.ts dead-claim recovery only scans status='active'. tests/mcp/handle-tool-call.test.ts confirms the task remains claimed by the shutdown agent, so the current launch-failure cleanup does not actually make the task recoverable.\n[END WORKER MESSAGE]"
+    },
+    {
+      "from": "549cefe9-1a1c-4602-939a-bd026ee2d691",
+      "type": "checkpoint", "task_id": "005",
+      "created_at": "2026-03-14T09:44:04.413Z",
+      "payload_framed": "[WORKER MESSAGE from 549cefe9, type=checkpoint, task=005]:\nLaunched two nested Codex sub-agents: one auditing task lifecycle and dependency resolution, one auditing session and agent operations. I am tracing supporting call paths locally while they read the target modules.\n[END WORKER MESSAGE]"
+    }
+  ]
+}
+```
+
+That last message is the nesting in action. A Codex worker dispatched by tmup spawned its own sub-agents to parallelize an audit. Agents spawning agents, coordinating through a shared SQLite file, reporting back to a lead that's running in a completely different AI system. It's exactly as cool and exactly as terrifying as it sounds.
 
 ### Step-by-step walkthrough
 
