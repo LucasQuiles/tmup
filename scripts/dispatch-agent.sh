@@ -122,7 +122,7 @@ $(if [[ -n "$TASK_ID" ]]; then printf 'export TMUP_TASK_ID=%q' "$TASK_ID"; fi)
 # Read prompt into memory, then clean up temp files before exec
 _PROMPT=\$(cat $(printf '%q' "$PROMPT_FILE"))
 rm -f $(printf '%q' "$PROMPT_FILE") "\$0" 2>/dev/null || true
-exec "\$CODEX_BIN" --full-auto --no-alt-screen -C "\$TMUP_WORKING_DIR" "\$_PROMPT"
+exec "\$CODEX_BIN" -a never -s danger-full-access --no-alt-screen -C "\$TMUP_WORKING_DIR" "\$_PROMPT"
 WRAPPER
 chmod 700 "$LAUNCHER"
 

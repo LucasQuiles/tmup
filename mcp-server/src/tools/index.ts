@@ -232,7 +232,7 @@ export const toolDefinitions = [
   },
   {
     name: 'tmup_dispatch',
-    description: 'Dispatch a Codex worker to a tmux pane with a task assignment.',
+    description: 'Dispatch a Codex worker to a tmux pane. Registers agent, claims task, and launches Codex process atomically.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -648,7 +648,50 @@ export async function handleToolCall(
         pane_index: paneIndex,
       });
 
-      // Return explicit launch metadata for the shell boundary
+      // Launch the Codex worker via dispatch-agent.sh
+      // MCP servers can't rely on the caller to do shell boundary work —
+      // dispatch must be atomic: DB claim + process launch in one call.
+      const workingDir = args.working_dir ?? getSessionProjectDir(getCurrentSessionId()!);
+      const sessionId = getCurrentSessionId()!;
+      const dbPath = getSessionDbPath(sessionId)!;
+      const pluginRoot = new URL('../../..', import.meta.url).pathname.replace(/\/$/, '');
+      const scriptPath = `${pluginRoot}/scripts/dispatch-agent.sh`;
+
+      const prompt = `${task.subject}${task.description ? '\n\n' + task.description : ''}`;
+
+      const dispatchArgs = [
+        scriptPath,
+        '--session', sessionId,
+        '--role', role,
+        '--prompt', prompt,
+        '--agent-id', agentId,
+        '--task-id', taskId,
+        '--db-path', dbPath,
+        '--working-dir', workingDir as string,
+      ];
+      if (paneIndex !== undefined) {
+        dispatchArgs.push('--pane-index', String(paneIndex));
+      }
+
+      let launchResult: string;
+      try {
+        const { execFileSync } = await import('node:child_process');
+        const output = execFileSync('bash', dispatchArgs, {
+          timeout: 30000,
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        launchResult = output.trim();
+      } catch (launchErr: unknown) {
+        const msg = launchErr instanceof Error ? launchErr.message : String(launchErr);
+        // Agent is registered and task is claimed but launch failed.
+        // Mark agent shutdown so dead-claim recovery can reassign.
+        try {
+          db.prepare("UPDATE agents SET status = 'shutdown' WHERE id = ?").run(agentId);
+        } catch (_) { /* best effort */ }
+        throw new Error(`Dispatch registered agent ${agentId} but launch failed: ${msg}`);
+      }
+
       return json({
         ok: true,
         agent_id: agentId,
@@ -657,6 +700,8 @@ export async function handleToolCall(
         role,
         subject: task.subject,
         description: task.description,
+        launched: true,
+        launch_output: launchResult,
       });
     }
 
@@ -677,11 +722,26 @@ export async function handleToolCall(
       if (typeof lines !== 'number' || !Number.isInteger(lines) || lines < 1 || lines > 10000) {
         throw new Error('lines must be integer 1-10000');
       }
-      // Harvest requires shell access — return instruction for the caller
-      return json({
-        ok: true,
-        instruction: `Run: tmux capture-pane -t "$(tmux list-panes -F '#{pane_id}' | sed -n '${paneIndex + 1}p')" -p -S -${lines} | sed 's/\\x1b\\[[0-9;]*m//g'`,
-      });
+
+      // Execute tmux capture directly — no shell boundary
+      const harvestSession = harvestSessionId ?? 'tmup';
+      const paneTarget = `${harvestSession}:0.${paneIndex}`;
+      try {
+        const { execFileSync } = await import('node:child_process');
+        const raw = execFileSync('tmux', [
+          'capture-pane', '-t', paneTarget, '-p', '-S', `-${lines}`,
+        ], {
+          timeout: 5000,
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        // Strip ANSI escape codes
+        const cleaned = raw.replace(/\x1b\[[0-9;]*m/g, '');
+        return json({ ok: true, pane_index: paneIndex, lines: lines, output: cleaned });
+      } catch (harvestErr: unknown) {
+        const msg = harvestErr instanceof Error ? harvestErr.message : String(harvestErr);
+        throw new Error(`Failed to capture pane ${paneIndex}: ${msg}`);
+      }
     }
 
     case 'tmup_pause': {
