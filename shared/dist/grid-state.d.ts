@@ -11,6 +11,9 @@ export interface GridState {
         index: number;
         pane_id: string;
         status: string;
+        codex_session_id?: string;
+        role?: string;
+        agent_id?: string;
     }>;
 }
 /**

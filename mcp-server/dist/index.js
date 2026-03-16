@@ -2983,7 +2983,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve.call(this, root, ref);
+      let _sch = resolve2.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref];
         const { schemaId } = this.opts;
@@ -3010,7 +3010,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve(root, ref) {
+    function resolve2(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3585,7 +3585,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve(baseURI, relativeURI, options) {
+    function resolve2(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const resolved = resolveComponent(parse3(baseURI, schemelessOptions), parse3(relativeURI, schemelessOptions), schemelessOptions, true);
       schemelessOptions.skipEscape = true;
@@ -3812,7 +3812,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve,
+      resolve: resolve2,
       resolveComponent,
       equal,
       serialize,
@@ -7141,7 +7141,7 @@ var init_event_ops = __esm({
 });
 
 // ../shared/dist/constants.js
-var BACKOFF_BASE_SECONDS, MAX_DEPENDENCY_DEPTH, MAX_ARTIFACT_SIZE_BYTES, STALE_AGENT_THRESHOLD_SECONDS, MIN_PRIORITY, MAX_PRIORITY, DEFAULT_PRIORITY, DEFAULT_PANE_COUNT, TASK_STATUSES, FAILURE_REASONS, MESSAGE_TYPES, EVENT_TYPES, PLAN_STATUSES, REVIEW_DISPOSITIONS, ATTEMPT_STATUSES, EVIDENCE_TYPES, EXECUTION_TARGET_TYPES, LIFECYCLE_EVENT_TYPES, COLLABORATION_PATTERNS;
+var BACKOFF_BASE_SECONDS, MAX_DEPENDENCY_DEPTH, MAX_ARTIFACT_SIZE_BYTES, STALE_AGENT_THRESHOLD_SECONDS, HEARTBEAT_INTERVAL_SECONDS, CLAIMED_DURATION_WARNING_SECONDS, MIN_PRIORITY, MAX_PRIORITY, DEFAULT_PRIORITY, DEFAULT_PANE_COUNT, TASK_STATUSES, FAILURE_REASONS, MESSAGE_TYPES, EVENT_TYPES, PLAN_STATUSES, REVIEW_DISPOSITIONS, ATTEMPT_STATUSES, EVIDENCE_TYPES, EXECUTION_TARGET_TYPES, LIFECYCLE_EVENT_TYPES, COLLABORATION_PATTERNS;
 var init_constants = __esm({
   "../shared/dist/constants.js"() {
     "use strict";
@@ -7149,6 +7149,8 @@ var init_constants = __esm({
     MAX_DEPENDENCY_DEPTH = 100;
     MAX_ARTIFACT_SIZE_BYTES = 100 * 1024 * 1024;
     STALE_AGENT_THRESHOLD_SECONDS = 300;
+    HEARTBEAT_INTERVAL_SECONDS = 60;
+    CLAIMED_DURATION_WARNING_SECONDS = 1800;
     MIN_PRIORITY = 0;
     MAX_PRIORITY = 100;
     DEFAULT_PRIORITY = 50;
@@ -8132,12 +8134,20 @@ function getStaleAgents(db2, maxAgeSeconds) {
       AND last_heartbeat_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ? || ' seconds')
   `).all(`-${maxAgeSeconds}`);
 }
-function recoverDeadClaim(db2, agentId, staleThresholdSeconds = STALE_AGENT_THRESHOLD_SECONDS) {
+function recoverDeadClaim(db2, agentId, staleThresholdSeconds = STALE_AGENT_THRESHOLD_SECONDS, paneLivenessCallback) {
   const recover = db2.transaction(() => {
     const recovered = [];
     const agent = db2.prepare("SELECT * FROM agents WHERE id = ? AND status = 'active' AND last_heartbeat_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ? || ' seconds')").get(agentId, `-${staleThresholdSeconds}`);
     if (!agent)
       return [];
+    if (paneLivenessCallback) {
+      const liveness = paneLivenessCallback(agent.pane_index);
+      if (liveness === "alive") {
+        db2.prepare("UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(agentId);
+        logEvent(db2, agentId, "agent_heartbeat_stale", { action: "refreshed", reason: "pane_alive" });
+        return [];
+      }
+    }
     const tasks = db2.prepare("SELECT * FROM tasks WHERE owner = ? AND status = 'claimed'").all(agentId);
     for (const task of tasks) {
       const isRetriable = task.retry_count < task.max_retries;
@@ -8168,6 +8178,9 @@ function getActiveAgents(db2) {
 }
 function getAgent(db2, agentId) {
   return db2.prepare("SELECT * FROM agents WHERE id = ?").get(agentId);
+}
+function getAgentByPaneIndex(db2, paneIndex) {
+  return db2.prepare("SELECT * FROM agents WHERE pane_index = ? AND status = 'active' ORDER BY registered_at DESC LIMIT 1").get(paneIndex);
 }
 var init_agent_ops = __esm({
   "../shared/dist/agent-ops.js"() {
@@ -8232,6 +8245,21 @@ function getNextAction(db2, paneInfo) {
 [WORKER MESSAGE from ${blocker.from_agent}, type=blocker${blocker.task_id ? `, task=${blocker.task_id}` : ""}]:
 ${blocker.payload}
 [END WORKER MESSAGE]`
+    };
+  }
+  const longRunning = db2.prepare(`
+    SELECT t.*, a.pane_index FROM tasks t
+    LEFT JOIN agents a ON t.owner = a.id
+    WHERE t.status = 'claimed'
+      AND t.claimed_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1800 seconds')
+    ORDER BY t.claimed_at ASC LIMIT 1
+  `).get();
+  if (longRunning) {
+    const claimedMinutes = Math.round((Date.now() - new Date(longRunning.claimed_at).getTime()) / 6e4);
+    const paneHint = longRunning.pane_index !== null ? ` Harvest pane ${longRunning.pane_index} and check progress.` : "";
+    return {
+      kind: "long_running",
+      message: `Task T-${longRunning.id} (${longRunning.subject}) has been claimed for ${claimedMinutes} minutes.${paneHint}`
     };
   }
   const recentUnblocked = getRecentEvents(db2, "task_unblocked", 5);
@@ -8652,6 +8680,7 @@ var dist_exports = {};
 __export(dist_exports, {
   ATTEMPT_STATUSES: () => ATTEMPT_STATUSES,
   BACKOFF_BASE_SECONDS: () => BACKOFF_BASE_SECONDS,
+  CLAIMED_DURATION_WARNING_SECONDS: () => CLAIMED_DURATION_WARNING_SECONDS,
   COLLABORATION_PATTERNS: () => COLLABORATION_PATTERNS,
   DEFAULT_PANE_COUNT: () => DEFAULT_PANE_COUNT,
   DEFAULT_PRIORITY: () => DEFAULT_PRIORITY,
@@ -8659,6 +8688,7 @@ __export(dist_exports, {
   EVIDENCE_TYPES: () => EVIDENCE_TYPES,
   EXECUTION_TARGET_TYPES: () => EXECUTION_TARGET_TYPES,
   FAILURE_REASONS: () => FAILURE_REASONS,
+  HEARTBEAT_INTERVAL_SECONDS: () => HEARTBEAT_INTERVAL_SECONDS,
   KNOWN_CAPABILITIES: () => KNOWN_CAPABILITIES,
   LIFECYCLE_EVENT_TYPES: () => LIFECYCLE_EVENT_TYPES,
   MAX_ARTIFACT_SIZE_BYTES: () => MAX_ARTIFACT_SIZE_BYTES,
@@ -8700,6 +8730,7 @@ __export(dist_exports, {
   getActiveAgents: () => getActiveAgents,
   getActiveTaskForAgent: () => getActiveTaskForAgent,
   getAgent: () => getAgent,
+  getAgentByPaneIndex: () => getAgentByPaneIndex,
   getAttemptEvidence: () => getAttemptEvidence,
   getCurrentSession: () => getCurrentSession,
   getExecutionTarget: () => getExecutionTarget,
@@ -14614,7 +14645,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+        await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error2) {
@@ -14631,7 +14662,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve2, reject) => {
       const earlyReject = (error2) => {
         reject(error2);
       };
@@ -14709,7 +14740,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve(parseResult.data);
+            resolve2(parseResult.data);
           }
         } catch (error2) {
           reject(error2);
@@ -14970,12 +15001,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve2, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve, interval);
+      const timeoutId = setTimeout(resolve2, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -15845,12 +15876,12 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve) => {
+    return new Promise((resolve2) => {
       const json = serializeMessage(message);
       if (this._stdout.write(json)) {
-        resolve();
+        resolve2();
       } else {
-        this._stdout.once("drain", resolve);
+        this._stdout.once("drain", resolve2);
       }
     });
   }
@@ -15860,6 +15891,8 @@ var StdioServerTransport = class {
 init_dist();
 
 // src/tools/index.ts
+import { execFileSync } from "node:child_process";
+import { resolve, dirname, join } from "node:path";
 init_dist();
 function validateTaskFields(input, prefix = "") {
   if (!input.subject || typeof input.subject !== "string") {
@@ -16085,7 +16118,8 @@ var toolDefinitions = [
         task_id: { type: "string", description: "Task to assign" },
         role: { type: "string", description: "Agent role" },
         pane_index: { type: "number", description: "Specific pane (auto-select if omitted)" },
-        working_dir: { type: "string", description: "Working directory (defaults to project_dir)" }
+        working_dir: { type: "string", description: "Working directory (defaults to project_dir)" },
+        resume_session_id: { type: "string", description: "Codex session ID to resume instead of fresh launch (uses codex resume)" }
       },
       required: ["task_id", "role"]
     }
@@ -16126,8 +16160,40 @@ var toolDefinitions = [
         force: { type: "boolean", description: "Skip grace period" }
       }
     }
+  },
+  {
+    name: "tmup_reprompt",
+    description: "Send a follow-up prompt to a running agent. Harvests pane output first, then sends the new prompt via tmux. Only sends to idle agents (not actively working).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        pane_index: { type: "number", description: "Pane index to reprompt (required unless all=true)" },
+        prompt: { type: "string", description: "Follow-up prompt text to send" },
+        all: { type: "boolean", description: "Send to all idle agent panes (ignores pane_index)" },
+        harvest_first: { type: "boolean", description: "Capture scrollback before sending new prompt (default: true)" }
+      },
+      required: ["prompt"]
+    }
   }
 ];
+function createPaneLivenessChecker(sessionName) {
+  return (paneIndex) => {
+    try {
+      const cmd = execFileSync("tmux", [
+        "display-message",
+        "-t",
+        `${sessionName}:0.${paneIndex}`,
+        "-p",
+        "#{pane_current_command}"
+      ], { timeout: 3e3, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+      if (["codex", "node", "npm", "npx"].includes(cmd)) return "alive";
+      if (["bash", "zsh", "sh", "fish", ""].includes(cmd)) return "shell";
+      return "alive";
+    } catch {
+      return "dead";
+    }
+  };
+}
 async function handleToolCall(name, args) {
   const text = (s) => ({ content: [{ type: "text", text: s }] });
   const json = (obj) => text(JSON.stringify(obj));
@@ -16146,10 +16212,12 @@ async function handleToolCall(name, args) {
     case "tmup_status": {
       const db2 = ensureDb();
       const verbose = args.verbose === true;
+      const sessionName = getCurrentSessionId() ?? "tmup";
+      const paneLivenessCheck = createPaneLivenessChecker(sessionName);
       const staleAgents = getStaleAgents(db2, STALE_AGENT_THRESHOLD_SECONDS);
       const recovered = [];
       for (const agent of staleAgents) {
-        recovered.push(...recoverDeadClaim(db2, agent.id));
+        recovered.push(...recoverDeadClaim(db2, agent.id, STALE_AGENT_THRESHOLD_SECONDS, paneLivenessCheck));
       }
       if (verbose) {
         const tasks = db2.prepare("SELECT * FROM tasks ORDER BY CAST(id AS INTEGER)").all();
@@ -16450,7 +16518,6 @@ ${m.payload}
       const workingDir = args.working_dir ?? getSessionProjectDir(getCurrentSessionId());
       const sessionId = getCurrentSessionId();
       const dbPath = getSessionDbPath(sessionId);
-      const { resolve, dirname, join } = await import("node:path");
       const pluginRoot = resolve(dirname(process.argv[1] || ""), "../..");
       const scriptPath = join(pluginRoot, "scripts", "dispatch-agent.sh");
       const prompt = `${task.subject}${task.description ? "\n\n" + task.description : ""}`;
@@ -16474,9 +16541,11 @@ ${m.payload}
       if (paneIndex !== void 0) {
         dispatchArgs.push("--pane-index", String(paneIndex));
       }
+      if (args.resume_session_id && typeof args.resume_session_id === "string") {
+        dispatchArgs.push("--resume-session-id", args.resume_session_id);
+      }
       let launchResult;
       try {
-        const { execFileSync } = await import("node:child_process");
         const output = execFileSync("bash", dispatchArgs, {
           timeout: 3e4,
           encoding: "utf-8",
@@ -16521,7 +16590,6 @@ ${m.payload}
       const harvestSession = harvestSessionId ?? "tmup";
       const paneTarget = `${harvestSession}:0.${paneIndex}`;
       try {
-        const { execFileSync } = await import("node:child_process");
         const raw = execFileSync("tmux", [
           "capture-pane",
           "-t",
@@ -16535,7 +16603,25 @@ ${m.payload}
           stdio: ["pipe", "pipe", "pipe"]
         });
         const cleaned = raw.replace(/\x1b\[[0-9;]*m/g, "");
-        return json({ ok: true, pane_index: paneIndex, lines, output: cleaned });
+        let codexSessionId;
+        if (harvestSessionDir) {
+          try {
+            const gridState = readGridState(harvestSessionDir);
+            const paneEntry = gridState?.panes.find((p) => p.index === paneIndex);
+            codexSessionId = paneEntry?.codex_session_id ?? void 0;
+          } catch {
+          }
+        }
+        return json({
+          ok: true,
+          pane_index: paneIndex,
+          lines,
+          output: cleaned,
+          ...codexSessionId ? {
+            codex_session_id: codexSessionId,
+            resume_command: `codex resume ${codexSessionId}`
+          } : {}
+        });
       } catch (harvestErr) {
         const msg = harvestErr instanceof Error ? harvestErr.message : String(harvestErr);
         throw new Error(`Failed to capture pane ${paneIndex}: ${msg}`);
@@ -16568,12 +16654,34 @@ ${m.payload}
       setCurrentSession(sessionId);
       const db2 = ensureDb();
       const stale = getStaleAgents(db2, STALE_AGENT_THRESHOLD_SECONDS);
+      const resumeInfo = [];
+      for (const agent of stale) {
+        resumeInfo.push({
+          agent_id: agent.id,
+          codex_session_id: agent.codex_session_id,
+          pane_index: agent.pane_index
+        });
+      }
+      const paneLivenessCheck = createPaneLivenessChecker(sessionId);
       const recovered = [];
       for (const agent of stale) {
-        recovered.push(...recoverDeadClaim(db2, agent.id));
+        recovered.push(...recoverDeadClaim(db2, agent.id, STALE_AGENT_THRESHOLD_SECONDS, paneLivenessCheck));
       }
-      logEvent(db2, "lead", "session_resume", { recovered });
-      return json({ ok: true, session_id: sessionId, recovered });
+      const resumeCommands = [];
+      for (const taskId of recovered) {
+        for (const info of resumeInfo) {
+          if (info.codex_session_id) {
+            resumeCommands.push({
+              task_id: taskId,
+              codex_session_id: info.codex_session_id,
+              command: `codex resume ${info.codex_session_id}`,
+              pane_index: info.pane_index
+            });
+          }
+        }
+      }
+      logEvent(db2, "lead", "session_resume", { recovered, resume_commands: resumeCommands.length });
+      return json({ ok: true, session_id: sessionId, recovered, resume_commands: resumeCommands });
     }
     case "tmup_teardown": {
       const db2 = ensureDb();
@@ -16590,6 +16698,66 @@ ${m.payload}
       }
       logEvent(db2, "lead", "session_teardown", { force: args.force === true });
       return json({ ok: true, agents_notified: agents.length });
+    }
+    case "tmup_reprompt": {
+      const db2 = ensureDb();
+      if (typeof args.prompt !== "string" || !args.prompt) {
+        throw new Error("prompt must be a non-empty string");
+      }
+      const repromptSessionId = getCurrentSessionId();
+      if (!repromptSessionId) throw new Error("No active session");
+      const pluginRoot = resolve(dirname(process.argv[1] || ""), "../..");
+      const scriptPath = join(pluginRoot, "scripts", "reprompt-agent.sh");
+      let harvestedOutput;
+      if (args.harvest_first !== false && typeof args.pane_index === "number") {
+        try {
+          const raw = execFileSync("tmux", [
+            "capture-pane",
+            "-t",
+            `${repromptSessionId}:0.${args.pane_index}`,
+            "-p",
+            "-S",
+            "-500"
+          ], { timeout: 5e3, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+          harvestedOutput = raw.replace(/\x1b\[[0-9;]*m/g, "");
+        } catch {
+        }
+      }
+      logEvent(db2, "lead", "dispatch", {
+        type: "reprompt",
+        pane_index: args.pane_index ?? "all",
+        prompt_preview: args.prompt.slice(0, 200)
+      });
+      const scriptArgs = [scriptPath, "--session", repromptSessionId, "--prompt", args.prompt];
+      if (args.all === true) {
+        scriptArgs.push("--all");
+      } else {
+        if (typeof args.pane_index !== "number" || !Number.isInteger(args.pane_index) || args.pane_index < 0) {
+          throw new Error("pane_index required (non-negative integer) unless all=true");
+        }
+        const repromptSessionDir = getSessionDir(repromptSessionId);
+        const { count: repromptPaneCount, source: repromptSource } = getGridPaneCount(repromptSessionDir);
+        if (repromptSource !== "default" && args.pane_index >= repromptPaneCount) {
+          throw new Error(`pane_index ${args.pane_index} out of range (grid has ${repromptPaneCount} panes)`);
+        }
+        scriptArgs.push("--pane", String(args.pane_index));
+      }
+      try {
+        const output = execFileSync("bash", scriptArgs, {
+          timeout: 3e4,
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"]
+        });
+        return json({
+          ok: true,
+          pane_index: args.pane_index ?? "all",
+          output: output.trim(),
+          ...harvestedOutput ? { harvested_before_reprompt: harvestedOutput } : {}
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`Reprompt failed: ${msg}`);
+      }
     }
     default:
       throw new Error(`Unknown tool: ${name}`);
