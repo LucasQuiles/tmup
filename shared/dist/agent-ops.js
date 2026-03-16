@@ -34,7 +34,7 @@ export function getStaleAgents(db, maxAgeSeconds) {
   `).all(`-${maxAgeSeconds}`);
 }
 import { BACKOFF_BASE_SECONDS, STALE_AGENT_THRESHOLD_SECONDS } from './constants.js';
-export function recoverDeadClaim(db, agentId, staleThresholdSeconds = STALE_AGENT_THRESHOLD_SECONDS) {
+export function recoverDeadClaim(db, agentId, staleThresholdSeconds = STALE_AGENT_THRESHOLD_SECONDS, paneLivenessCallback) {
     const recover = db.transaction(() => {
         const recovered = [];
         // Re-verify agent is still stale inside the transaction to close the TOCTOU window
@@ -42,6 +42,15 @@ export function recoverDeadClaim(db, agentId, staleThresholdSeconds = STALE_AGEN
         const agent = db.prepare("SELECT * FROM agents WHERE id = ? AND status = 'active' AND last_heartbeat_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ? || ' seconds')").get(agentId, `-${staleThresholdSeconds}`);
         if (!agent)
             return []; // Agent recovered (heartbeat arrived) or already shut down
+        // Pane-liveness check: if process is still running, refresh heartbeat and skip recovery
+        if (paneLivenessCallback) {
+            const liveness = paneLivenessCallback(agent.pane_index);
+            if (liveness === 'alive') {
+                db.prepare("UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(agentId);
+                logEvent(db, agentId, 'agent_heartbeat_stale', { action: 'refreshed', reason: 'pane_alive' });
+                return [];
+            }
+        }
         const tasks = db.prepare("SELECT * FROM tasks WHERE owner = ? AND status = 'claimed'").all(agentId);
         for (const task of tasks) {
             const isRetriable = task.retry_count < task.max_retries;
@@ -74,5 +83,8 @@ export function getActiveAgents(db) {
 }
 export function getAgent(db, agentId) {
     return db.prepare('SELECT * FROM agents WHERE id = ?').get(agentId);
+}
+export function getAgentByPaneIndex(db, paneIndex) {
+    return db.prepare("SELECT * FROM agents WHERE pane_index = ? AND status = 'active' ORDER BY registered_at DESC LIMIT 1").get(paneIndex);
 }
 //# sourceMappingURL=agent-ops.js.map

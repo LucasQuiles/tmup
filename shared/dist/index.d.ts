@@ -7,12 +7,12 @@ export { createTask, createTaskBatch, updateTask, getActiveTaskForAgent } from '
 export { claimTask, claimSpecificTask, completeTask, failTask, cancelTask } from './task-lifecycle.js';
 export { sendMessage, getInbox, getUnreadCount, postCheckpoint, pruneMessages } from './message-ops.js';
 export { initSession, readRegistry, setCurrentSession, getCurrentSession, removeFromRegistry, getSessionDbPath, getSessionDir, getSessionProjectDir, validateSessionName, isValidSessionId } from './session-ops.js';
-export { registerAgent, updateHeartbeat, getStaleAgents, recoverDeadClaim, getActiveAgents, getAgent } from './agent-ops.js';
+export { registerAgent, updateHeartbeat, getStaleAgents, recoverDeadClaim, getActiveAgents, getAgent, getAgentByPaneIndex } from './agent-ops.js';
 export { runMaintenance } from './maintenance.js';
 export type { MaintenanceResult } from './maintenance.js';
 export { getNextAction } from './next-action.js';
 export type { NextAction, NextActionKind } from './next-action.js';
-export { BACKOFF_BASE_SECONDS, MAX_DEPENDENCY_DEPTH, MAX_ARTIFACT_SIZE_BYTES, STALE_AGENT_THRESHOLD_SECONDS, MIN_PRIORITY, MAX_PRIORITY, DEFAULT_PRIORITY, DEFAULT_PANE_COUNT, TASK_STATUSES, FAILURE_REASONS, MESSAGE_TYPES, EVENT_TYPES } from './constants.js';
+export { BACKOFF_BASE_SECONDS, MAX_DEPENDENCY_DEPTH, MAX_ARTIFACT_SIZE_BYTES, STALE_AGENT_THRESHOLD_SECONDS, HEARTBEAT_INTERVAL_SECONDS, CLAIMED_DURATION_WARNING_SECONDS, MIN_PRIORITY, MAX_PRIORITY, DEFAULT_PRIORITY, DEFAULT_PANE_COUNT, TASK_STATUSES, FAILURE_REASONS, MESSAGE_TYPES, EVENT_TYPES } from './constants.js';
 export { readGridState, getGridPaneCount } from './grid-state.js';
 export type { GridState } from './grid-state.js';
 export { getSchemaVersion, runMigrations } from './migrations.js';

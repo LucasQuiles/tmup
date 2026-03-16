@@ -1,5 +1,5 @@
 import type { Database } from './types.js';
-export type NextActionKind = 'needs_review' | 'blocker' | 'unblocked' | 'dispatch' | 'all_complete' | 'waiting';
+export type NextActionKind = 'needs_review' | 'blocker' | 'long_running' | 'unblocked' | 'dispatch' | 'all_complete' | 'waiting';
 export interface NextAction {
     kind: NextActionKind;
     message: string;

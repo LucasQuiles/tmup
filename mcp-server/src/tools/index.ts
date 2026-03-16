@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import { resolve, dirname, join } from 'node:path';
 import { ensureDb, switchSession, getCurrentSessionId } from '../index.js';
 import {
   initSession, setCurrentSession, getSessionDbPath, getSessionDir, getSessionProjectDir,
@@ -5,7 +7,7 @@ import {
   claimTask, claimSpecificTask, completeTask, failTask, cancelTask,
   sendMessage, getInbox, getUnreadCount, postCheckpoint,
   registerAgent, updateHeartbeat, getStaleAgents, recoverDeadClaim, getActiveAgents,
-  logEvent, getNextAction, getGridPaneCount,
+  logEvent, getNextAction, getGridPaneCount, readGridState,
   STALE_AGENT_THRESHOLD_SECONDS, MIN_PRIORITY, MAX_PRIORITY, TASK_STATUSES, FAILURE_REASONS, MESSAGE_TYPES,
 } from '@tmup/shared';
 import type { Database, TaskRow, TaskStatus } from '@tmup/shared';
@@ -240,6 +242,7 @@ export const toolDefinitions = [
         role: { type: 'string', description: 'Agent role' },
         pane_index: { type: 'number', description: 'Specific pane (auto-select if omitted)' },
         working_dir: { type: 'string', description: 'Working directory (defaults to project_dir)' },
+        resume_session_id: { type: 'string', description: 'Codex session ID to resume instead of fresh launch (uses codex resume)' },
       },
       required: ['task_id', 'role'],
     },
@@ -281,7 +284,38 @@ export const toolDefinitions = [
       },
     },
   },
+  {
+    name: 'tmup_reprompt',
+    description: 'Send a follow-up prompt to a running agent. Harvests pane output first, then sends the new prompt via tmux. Only sends to idle agents (not actively working).',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        pane_index: { type: 'number', description: 'Pane index to reprompt (required unless all=true)' },
+        prompt: { type: 'string', description: 'Follow-up prompt text to send' },
+        all: { type: 'boolean', description: 'Send to all idle agent panes (ignores pane_index)' },
+        harvest_first: { type: 'boolean', description: 'Capture scrollback before sending new prompt (default: true)' },
+      },
+      required: ['prompt'],
+    },
+  },
 ];
+
+// --- Helpers ---
+
+function createPaneLivenessChecker(sessionName: string): (paneIndex: number) => 'alive' | 'shell' | 'dead' {
+  return (paneIndex: number) => {
+    try {
+      const cmd = execFileSync('tmux', [
+        'display-message', '-t', `${sessionName}:0.${paneIndex}`, '-p', '#{pane_current_command}'
+      ], { timeout: 3000, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+      if (['codex', 'node', 'npm', 'npx'].includes(cmd)) return 'alive' as const;
+      if (['bash', 'zsh', 'sh', 'fish', ''].includes(cmd)) return 'shell' as const;
+      return 'alive' as const; // Conservative: unknown process = assume alive
+    } catch {
+      return 'dead' as const;
+    }
+  };
+}
 
 // --- Tool handler dispatch ---
 
@@ -312,11 +346,13 @@ export async function handleToolCall(
       const db = ensureDb();
       const verbose = args.verbose === true;
 
-      // Side-effect: dead-claim recovery
+      // Side-effect: dead-claim recovery with pane-liveness check
+      const sessionName = getCurrentSessionId() ?? 'tmup';
+      const paneLivenessCheck = createPaneLivenessChecker(sessionName);
       const staleAgents = getStaleAgents(db, STALE_AGENT_THRESHOLD_SECONDS);
       const recovered: string[] = [];
       for (const agent of staleAgents) {
-        recovered.push(...recoverDeadClaim(db, agent.id));
+        recovered.push(...recoverDeadClaim(db, agent.id, STALE_AGENT_THRESHOLD_SECONDS, paneLivenessCheck));
       }
 
       if (verbose) {
@@ -654,7 +690,6 @@ export async function handleToolCall(
       const workingDir = args.working_dir ?? getSessionProjectDir(getCurrentSessionId()!);
       const sessionId = getCurrentSessionId()!;
       const dbPath = getSessionDbPath(sessionId)!;
-      const { resolve, dirname, join } = await import('node:path');
       const pluginRoot = resolve(dirname(process.argv[1] || ''), '../..');
       const scriptPath = join(pluginRoot, 'scripts', 'dispatch-agent.sh');
 
@@ -673,10 +708,12 @@ export async function handleToolCall(
       if (paneIndex !== undefined) {
         dispatchArgs.push('--pane-index', String(paneIndex));
       }
+      if (args.resume_session_id && typeof args.resume_session_id === 'string') {
+        dispatchArgs.push('--resume-session-id', args.resume_session_id);
+      }
 
       let launchResult: string;
       try {
-        const { execFileSync } = await import('node:child_process');
         const output = execFileSync('bash', dispatchArgs, {
           timeout: 30000,
           encoding: 'utf-8',
@@ -728,7 +765,6 @@ export async function handleToolCall(
       const harvestSession = harvestSessionId ?? 'tmup';
       const paneTarget = `${harvestSession}:0.${paneIndex}`;
       try {
-        const { execFileSync } = await import('node:child_process');
         const raw = execFileSync('tmux', [
           'capture-pane', '-t', paneTarget, '-p', '-S', `-${lines}`,
         ], {
@@ -738,7 +774,27 @@ export async function handleToolCall(
         });
         // Strip ANSI escape codes
         const cleaned = raw.replace(/\x1b\[[0-9;]*m/g, '');
-        return json({ ok: true, pane_index: paneIndex, lines: lines, output: cleaned });
+
+        // Include codex session ID from grid state for resume
+        let codexSessionId: string | undefined;
+        if (harvestSessionDir) {
+          try {
+            const gridState = readGridState(harvestSessionDir);
+            const paneEntry = gridState?.panes.find(p => p.index === paneIndex);
+            codexSessionId = paneEntry?.codex_session_id ?? undefined;
+          } catch { /* non-fatal */ }
+        }
+
+        return json({
+          ok: true,
+          pane_index: paneIndex,
+          lines: lines,
+          output: cleaned,
+          ...(codexSessionId ? {
+            codex_session_id: codexSessionId,
+            resume_command: `codex resume ${codexSessionId}`,
+          } : {}),
+        });
       } catch (harvestErr: unknown) {
         const msg = harvestErr instanceof Error ? harvestErr.message : String(harvestErr);
         throw new Error(`Failed to capture pane ${paneIndex}: ${msg}`);
@@ -762,7 +818,6 @@ export async function handleToolCall(
     }
 
     case 'tmup_resume': {
-      // Validate session_id if provided
       const rawSessionId = args.session_id;
       if (rawSessionId !== undefined && (typeof rawSessionId !== 'string' || !rawSessionId)) {
         throw new Error('session_id must be a non-empty string');
@@ -773,21 +828,44 @@ export async function handleToolCall(
       if (!dbPath) throw new Error(`Session ${sessionId} not found`);
 
       switchSession(sessionId, dbPath);
-
-      // Persist the resumed session as current
       setCurrentSession(sessionId);
 
       const db = ensureDb();
 
-      // Dead-claim recovery
+      // Capture resume info BEFORE recovery (recovery clears owners)
       const stale = getStaleAgents(db, STALE_AGENT_THRESHOLD_SECONDS);
-      const recovered: string[] = [];
+      const resumeInfo: Array<{ agent_id: string; codex_session_id: string | null; pane_index: number }> = [];
       for (const agent of stale) {
-        recovered.push(...recoverDeadClaim(db, agent.id));
+        resumeInfo.push({
+          agent_id: agent.id,
+          codex_session_id: agent.codex_session_id,
+          pane_index: agent.pane_index,
+        });
       }
 
-      logEvent(db, 'lead', 'session_resume', { recovered });
-      return json({ ok: true, session_id: sessionId, recovered });
+      const paneLivenessCheck = createPaneLivenessChecker(sessionId);
+      const recovered: string[] = [];
+      for (const agent of stale) {
+        recovered.push(...recoverDeadClaim(db, agent.id, STALE_AGENT_THRESHOLD_SECONDS, paneLivenessCheck));
+      }
+
+      // Build resume commands for recovered tasks
+      const resumeCommands: Array<{ task_id: string; codex_session_id: string; command: string; pane_index: number }> = [];
+      for (const taskId of recovered) {
+        for (const info of resumeInfo) {
+          if (info.codex_session_id) {
+            resumeCommands.push({
+              task_id: taskId,
+              codex_session_id: info.codex_session_id,
+              command: `codex resume ${info.codex_session_id}`,
+              pane_index: info.pane_index,
+            });
+          }
+        }
+      }
+
+      logEvent(db, 'lead', 'session_resume', { recovered, resume_commands: resumeCommands.length });
+      return json({ ok: true, session_id: sessionId, recovered, resume_commands: resumeCommands });
     }
 
     case 'tmup_teardown': {
@@ -808,6 +886,71 @@ export async function handleToolCall(
 
       logEvent(db, 'lead', 'session_teardown', { force: args.force === true });
       return json({ ok: true, agents_notified: agents.length });
+    }
+
+    case 'tmup_reprompt': {
+      const db = ensureDb();
+
+      if (typeof args.prompt !== 'string' || !args.prompt) {
+        throw new Error('prompt must be a non-empty string');
+      }
+
+      const repromptSessionId = getCurrentSessionId();
+      if (!repromptSessionId) throw new Error('No active session');
+
+      const pluginRoot = resolve(dirname(process.argv[1] || ''), '../..');
+      const scriptPath = join(pluginRoot, 'scripts', 'reprompt-agent.sh');
+
+      // Harvest before reprompt (default: true)
+      let harvestedOutput: string | undefined;
+      if (args.harvest_first !== false && typeof args.pane_index === 'number') {
+        try {
+          const raw = execFileSync('tmux', [
+            'capture-pane', '-t', `${repromptSessionId}:0.${args.pane_index}`, '-p', '-S', '-500',
+          ], { timeout: 5000, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+          harvestedOutput = raw.replace(/\x1b\[[0-9;]*m/g, '');
+        } catch { /* non-fatal */ }
+      }
+
+      // Record reprompt event in DB
+      logEvent(db, 'lead', 'dispatch', {
+        type: 'reprompt',
+        pane_index: args.pane_index ?? 'all',
+        prompt_preview: (args.prompt as string).slice(0, 200),
+      });
+
+      const scriptArgs = [scriptPath, '--session', repromptSessionId, '--prompt', args.prompt as string];
+
+      if (args.all === true) {
+        scriptArgs.push('--all');
+      } else {
+        if (typeof args.pane_index !== 'number' || !Number.isInteger(args.pane_index) || args.pane_index < 0) {
+          throw new Error('pane_index required (non-negative integer) unless all=true');
+        }
+        const repromptSessionDir = getSessionDir(repromptSessionId);
+        const { count: repromptPaneCount, source: repromptSource } = getGridPaneCount(repromptSessionDir);
+        if (repromptSource !== 'default' && args.pane_index >= repromptPaneCount) {
+          throw new Error(`pane_index ${args.pane_index} out of range (grid has ${repromptPaneCount} panes)`);
+        }
+        scriptArgs.push('--pane', String(args.pane_index));
+      }
+
+      try {
+        const output = execFileSync('bash', scriptArgs, {
+          timeout: 30000,
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        return json({
+          ok: true,
+          pane_index: args.pane_index ?? 'all',
+          output: output.trim(),
+          ...(harvestedOutput ? { harvested_before_reprompt: harvestedOutput } : {}),
+        });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`Reprompt failed: ${msg}`);
+      }
     }
 
     default:
