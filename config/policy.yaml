@@ -3,6 +3,8 @@ dag:
   max_retries: 3
   retry_backoff_base_seconds: 30
   stale_max_age_seconds: 300
+  heartbeat_interval_seconds: 60
+  claimed_duration_warning_seconds: 1800
 
 grid:
   session_prefix: "tmup"
@@ -21,6 +23,7 @@ timeouts:
   dispatch_trust_prompt_seconds: 6
   teardown_grace_seconds: 60
   pause_checkpoint_seconds: 30
+  send_reprompt_seconds: 10
 
 autonomy:
   full_participant_roles:
