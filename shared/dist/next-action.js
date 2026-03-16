@@ -1,5 +1,6 @@
 import { getRecentEvents } from './event-ops.js';
 import { getActiveAgents } from './agent-ops.js';
+import { CLAIMED_DURATION_WARNING_SECONDS } from './constants.js';
 /**
  * Synthesize a single recommended next action from DAG state.
  * Pure domain logic — no adapter concerns (grid state, MCP response formatting).
@@ -26,9 +27,9 @@ export function getNextAction(db, paneInfo) {
     SELECT t.*, a.pane_index FROM tasks t
     LEFT JOIN agents a ON t.owner = a.id
     WHERE t.status = 'claimed'
-      AND t.claimed_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1800 seconds')
+      AND t.claimed_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ? || ' seconds')
     ORDER BY t.claimed_at ASC LIMIT 1
-  `).get();
+  `).get(`-${CLAIMED_DURATION_WARNING_SECONDS}`);
     if (longRunning) {
         const claimedMinutes = Math.round((Date.now() - new Date(longRunning.claimed_at).getTime()) / 60000);
         const paneHint = longRunning.pane_index !== null ? ` Harvest pane ${longRunning.pane_index} and check progress.` : '';

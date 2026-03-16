@@ -832,15 +832,21 @@ export async function handleToolCall(
 
       const db = ensureDb();
 
-      // Capture resume info BEFORE recovery (recovery clears owners)
+      // Capture resume info BEFORE recovery (recovery clears owners).
+      // Track per-agent so we can map recovered tasks → their owning agent's session.
       const stale = getStaleAgents(db, STALE_AGENT_THRESHOLD_SECONDS);
-      const resumeInfo: Array<{ agent_id: string; codex_session_id: string | null; pane_index: number }> = [];
+      const agentResumeInfo = new Map<string, { codex_session_id: string | null; pane_index: number }>();
+      // Snapshot which tasks each agent owns BEFORE recovery clears them
+      const agentOwnedTasks = new Map<string, string[]>();
       for (const agent of stale) {
-        resumeInfo.push({
-          agent_id: agent.id,
+        agentResumeInfo.set(agent.id, {
           codex_session_id: agent.codex_session_id,
           pane_index: agent.pane_index,
         });
+        const owned = db.prepare(
+          "SELECT id FROM tasks WHERE owner = ? AND status = 'claimed'"
+        ).all(agent.id) as Array<{ id: string }>;
+        agentOwnedTasks.set(agent.id, owned.map(t => t.id));
       }
 
       const paneLivenessCheck = createPaneLivenessChecker(sessionId);
@@ -849,17 +855,21 @@ export async function handleToolCall(
         recovered.push(...recoverDeadClaim(db, agent.id, STALE_AGENT_THRESHOLD_SECONDS, paneLivenessCheck));
       }
 
-      // Build resume commands for recovered tasks
+      // Build resume commands — map each recovered task to its owning agent's session
       const resumeCommands: Array<{ task_id: string; codex_session_id: string; command: string; pane_index: number }> = [];
       for (const taskId of recovered) {
-        for (const info of resumeInfo) {
-          if (info.codex_session_id) {
-            resumeCommands.push({
-              task_id: taskId,
-              codex_session_id: info.codex_session_id,
-              command: `codex resume ${info.codex_session_id}`,
-              pane_index: info.pane_index,
-            });
+        for (const [agentId, ownedTaskIds] of agentOwnedTasks) {
+          if (ownedTaskIds.includes(taskId)) {
+            const info = agentResumeInfo.get(agentId);
+            if (info?.codex_session_id) {
+              resumeCommands.push({
+                task_id: taskId,
+                codex_session_id: info.codex_session_id,
+                command: `codex resume ${info.codex_session_id}`,
+                pane_index: info.pane_index,
+              });
+            }
+            break; // A task has exactly one owner
           }
         }
       }
