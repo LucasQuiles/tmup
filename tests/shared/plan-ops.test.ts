@@ -57,13 +57,13 @@ describe('plan-ops', () => {
       expect(plan.owner).toBe('alice');
     });
 
-    it('logs an event on creation', () => {
+    it('logs exactly one event on creation', () => {
       createPlan(db, 'plan-003', { subject: 'Test event logging' });
       const events = db.prepare(
         "SELECT * FROM events WHERE event_type = 'task_created'"
       ).all() as Array<{ payload: string }>;
-      expect(events.length).toBeGreaterThanOrEqual(1);
-      const payload = JSON.parse(events[events.length - 1].payload);
+      expect(events).toHaveLength(1);
+      const payload = JSON.parse(events[0].payload);
       expect(payload.plan_id).toBe('plan-003');
       expect(payload.type).toBe('plan');
     });
@@ -150,16 +150,15 @@ describe('plan-ops', () => {
         .toBeGreaterThanOrEqual(new Date(before).getTime());
     });
 
-    it('logs an event on status change', () => {
+    it('logs exactly one event on status change', () => {
       createPlan(db, 'p1', { subject: 'Test' });
       updatePlanStatus(db, 'p1', 'challenged', 'reviewer-1');
       const events = db.prepare(
         "SELECT * FROM events WHERE event_type = 'task_updated'"
       ).all() as Array<{ actor: string; payload: string }>;
-      expect(events.length).toBeGreaterThanOrEqual(1);
-      const last = events[events.length - 1];
-      expect(last.actor).toBe('reviewer-1');
-      const payload = JSON.parse(last.payload);
+      expect(events).toHaveLength(1);
+      expect(events[0].actor).toBe('reviewer-1');
+      const payload = JSON.parse(events[0].payload);
       expect(payload.plan_id).toBe('p1');
       expect(payload.status).toBe('challenged');
     });

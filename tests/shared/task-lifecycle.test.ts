@@ -886,12 +886,23 @@ describe('task lifecycle', () => {
         .toThrow("Cannot checkpoint task");
     });
 
-    it('allows checkpoint for claimed task by owner', () => {
-      // postCheckpoint imported at top
+    it('allows checkpoint for claimed task by owner — stores summary and message', () => {
       const id = createTask(db, { subject: 'Active task' });
       claimTask(db, 'agent-1');
 
-      expect(() => postCheckpoint(db, id, 'agent-1', 'Progress update')).not.toThrow();
+      postCheckpoint(db, id, 'agent-1', 'Progress update');
+
+      // Verify result_summary was updated
+      const task = db.prepare('SELECT result_summary FROM tasks WHERE id = ?').get(id) as TaskRow;
+      expect(task.result_summary).toBe('Progress update');
+
+      // Verify checkpoint message was created for lead
+      const msgs = db.prepare(
+        "SELECT * FROM messages WHERE type = 'checkpoint' AND task_id = ?"
+      ).all(id) as Array<{ from_agent: string; payload: string }>;
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0].from_agent).toBe('agent-1');
+      expect(msgs[0].payload).toBe('Progress update');
     });
   });
 

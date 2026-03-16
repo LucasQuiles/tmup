@@ -166,6 +166,10 @@ describe('CLI handleCommand', () => {
         taskId,
       });
       expect(result.ok).toBe(true);
+
+      // Verify the env taskId was actually used — checkpoint stored on the right task
+      const task = db.prepare('SELECT result_summary FROM tasks WHERE id = ?').get(taskId) as { result_summary: string };
+      expect(task.result_summary).toBe('env checkpoint msg');
     });
 
     it('checkpoint with only flag args (no message) throws correctly', async () => {
@@ -187,13 +191,20 @@ describe('CLI handleCommand', () => {
       ).rejects.toThrow("Invalid message type 'invalid_type'");
     });
 
-    it('accepts valid --type values', async () => {
+    it('accepts valid --type values and stores messages with correct type', async () => {
       for (const type of ['direct', 'finding', 'blocker']) {
-        const result = await handleCommand(db, 'message', ['msg', '--type', type, '--to', 'lead'], {
+        const result = await handleCommand(db, 'message', [`msg-${type}`, '--type', type, '--to', 'lead'], {
           agentId: 'test-agent',
         });
         expect(result.ok).toBe(true);
       }
+
+      // Verify all 3 messages were stored with correct types
+      const msgs = db.prepare(
+        "SELECT type, payload FROM messages WHERE from_agent = 'test-agent' ORDER BY created_at"
+      ).all() as Array<{ type: string; payload: string }>;
+      expect(msgs).toHaveLength(3);
+      expect(msgs.map(m => m.type)).toEqual(['direct', 'finding', 'blocker']);
     });
   });
 
