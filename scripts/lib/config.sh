@@ -60,6 +60,9 @@ _raw_stale=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.dag.stale_max_age_se
 _raw_harvest=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.harvesting.capture_scrollback_lines // 500' "500")
 _raw_trust_seconds=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.timeouts.dispatch_trust_prompt_seconds // 6' "6")
 _raw_teardown_grace=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.timeouts.teardown_grace_seconds // 60' "60")
+_raw_heartbeat_interval=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.dag.heartbeat_interval_seconds // 60' "60")
+_raw_claimed_warning=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.dag.claimed_duration_warning_seconds // 1800' "1800")
+_raw_reprompt_timeout=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.timeouts.send_reprompt_seconds // 10' "10")
 
 # Session name validation: alphanumeric, hyphens, underscores only. No path separators.
 # Name = user-provided prefix (max 64 chars, matches TS SESSION_NAME_RE)
@@ -112,6 +115,9 @@ CFG_STALE_MAX_AGE=$(_cfg_validate_int "CFG_STALE_MAX_AGE" "$_raw_stale" "300")
 CFG_HARVEST_LINES=$(_cfg_validate_int "CFG_HARVEST_LINES" "$_raw_harvest" "500")
 CFG_TRUST_SECONDS=$(_cfg_validate_int "CFG_TRUST_SECONDS" "$_raw_trust_seconds" "6")
 CFG_TEARDOWN_GRACE=$(_cfg_validate_int "CFG_TEARDOWN_GRACE" "$_raw_teardown_grace" "60")
+CFG_HEARTBEAT_INTERVAL=$(_cfg_validate_int "CFG_HEARTBEAT_INTERVAL" "$_raw_heartbeat_interval" "60")
+CFG_CLAIMED_WARNING=$(_cfg_validate_int "CFG_CLAIMED_WARNING" "$_raw_claimed_warning" "1800")
+CFG_REPROMPT_TIMEOUT=$(_cfg_validate_int "CFG_REPROMPT_TIMEOUT" "$_raw_reprompt_timeout" "10")
 
 CFG_TOTAL_PANES=$((CFG_ROWS * CFG_COLS))
 CFG_PLUGIN_DIR="$_cfg_plugin_dir"
@@ -136,11 +142,13 @@ fi
 
 export CFG_SESSION_NAME CFG_SESSION_PREFIX CFG_ROWS CFG_COLS CFG_WIDTH CFG_HEIGHT
 export CFG_STALE_MAX_AGE CFG_HARVEST_LINES CFG_TRUST_SECONDS CFG_TEARDOWN_GRACE
+export CFG_HEARTBEAT_INTERVAL CFG_CLAIMED_WARNING CFG_REPROMPT_TIMEOUT
 export CFG_TOTAL_PANES CFG_PLUGIN_DIR CFG_CONFIG_DIR CFG_STATE_DIR CFG_STATE_ROOT
 export CFG_CONFIG_DEGRADED
 
 unset _cfg_this_dir _cfg_scripts_dir _cfg_plugin_dir
 unset _raw_rows _raw_cols _raw_width _raw_height _raw_prefix
 unset _raw_stale _raw_harvest _raw_trust_seconds _raw_teardown_grace
+unset _raw_heartbeat_interval _raw_claimed_warning _raw_reprompt_timeout
 unset _cfg_yq_warned
 unset -f _cfg_read_yaml _cfg_validate_int _cfg_validate_session_name _cfg_validate_session_id
