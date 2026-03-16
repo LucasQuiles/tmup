@@ -84,6 +84,7 @@ export function getActiveAgents(db) {
 export function getAgent(db, agentId) {
     return db.prepare('SELECT * FROM agents WHERE id = ?').get(agentId);
 }
+/** Look up the active agent occupying a specific tmux pane. Used by reprompt and status tools. */
 export function getAgentByPaneIndex(db, paneIndex) {
     return db.prepare("SELECT * FROM agents WHERE pane_index = ? AND status = 'active' ORDER BY registered_at DESC LIMIT 1").get(paneIndex);
 }
