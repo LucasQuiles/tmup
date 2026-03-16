@@ -49,7 +49,7 @@ describe('session-ops', () => {
     try { fs.unlinkSync(REGISTRY_PATH); } catch {}
     const reg = readRegistry();
     expect(reg.sessions).toBeDefined();
-    expect(Object.keys(reg.sessions).length).toBeGreaterThanOrEqual(0);
+    expect(Object.keys(reg.sessions)).toHaveLength(0);
   });
 
   it('initSession creates a new session', () => {
