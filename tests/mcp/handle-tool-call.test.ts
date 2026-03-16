@@ -382,6 +382,274 @@ describe('handleToolCall adapter integration', () => {
       expect(resumeCommands).toHaveLength(2);
     });
   });
+
+  describe('tmup_reprompt', () => {
+    it('rejects empty prompt', async () => {
+      createAdapterSession();
+      await expect(handleToolCall('tmup_reprompt', { prompt: '' }))
+        .rejects.toThrow('prompt must be a non-empty string');
+    });
+
+    it('rejects missing pane_index when all is not set', async () => {
+      createAdapterSession();
+      await expect(handleToolCall('tmup_reprompt', { prompt: 'hello' }))
+        .rejects.toThrow('pane_index required');
+    });
+
+    it('rejects fractional pane_index', async () => {
+      createAdapterSession();
+      await expect(handleToolCall('tmup_reprompt', { prompt: 'hello', pane_index: 1.5 }))
+        .rejects.toThrow('pane_index required (non-negative integer)');
+    });
+
+    it('rejects out-of-range pane_index when grid state exists', async () => {
+      const { projectDir, sessionId } = createAdapterSession();
+      writeGridState(sessionId, projectDir, 4);
+      await expect(handleToolCall('tmup_reprompt', { prompt: 'hello', pane_index: 4 }))
+        .rejects.toThrow('pane_index 4 out of range');
+    });
+
+    it('calls reprompt-agent.sh with correct args for single-pane mode', async () => {
+      const { db, sessionId } = createAdapterSession();
+
+      // Mock: harvest capture returns scrollback, reprompt script returns success
+      childProcessMock.execFileSync.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === 'tmux') return '\x1b[32mWorking\x1b[0m output line';
+        if (cmd === 'bash') return 'Pane 2: sent\n';
+        return '';
+      });
+
+      const result = parseToolJson(await handleToolCall('tmup_reprompt', {
+        prompt: 'Continue with error handling',
+        pane_index: 2,
+      }));
+
+      expect(result.ok).toBe(true);
+      expect(result.pane_index).toBe(2);
+      expect(result.output).toBe('Pane 2: sent');
+      // harvest_first defaults to true — should have harvested output
+      expect(result.harvested_before_reprompt).toContain('output line');
+
+      // Verify the bash call included correct script args
+      const bashCall = childProcessMock.execFileSync.mock.calls.find(
+        (c: unknown[]) => c[0] === 'bash'
+      );
+      expect(bashCall).toBeDefined();
+      const scriptArgs = bashCall![1] as string[];
+      expect(scriptArgs).toContain('--session');
+      expect(scriptArgs).toContain(sessionId);
+      expect(scriptArgs).toContain('--prompt');
+      expect(scriptArgs).toContain('Continue with error handling');
+      expect(scriptArgs).toContain('--pane');
+      expect(scriptArgs).toContain('2');
+
+      // Verify reprompt event was logged
+      const events = db.prepare(
+        "SELECT * FROM events WHERE event_type = 'dispatch'"
+      ).all() as Array<{ payload: string }>;
+      const repromptEvent = events.find(e => {
+        const p = JSON.parse(e.payload);
+        return p.type === 'reprompt';
+      });
+      expect(repromptEvent).toBeDefined();
+      const payload = JSON.parse(repromptEvent!.payload);
+      expect(payload.pane_index).toBe(2);
+      expect(payload.prompt_preview).toBe('Continue with error handling');
+    });
+
+    it('passes --all flag when all=true', async () => {
+      createAdapterSession();
+      childProcessMock.execFileSync.mockReturnValue('Sent to 3 panes\n');
+
+      const result = parseToolJson(await handleToolCall('tmup_reprompt', {
+        prompt: 'Wrap up',
+        all: true,
+      }));
+
+      expect(result.ok).toBe(true);
+      expect(result.pane_index).toBe('all');
+
+      const bashCall = childProcessMock.execFileSync.mock.calls.find(
+        (c: unknown[]) => c[0] === 'bash'
+      );
+      expect(bashCall).toBeDefined();
+      expect((bashCall![1] as string[])).toContain('--all');
+    });
+
+    it('skips harvest when harvest_first=false', async () => {
+      createAdapterSession();
+      childProcessMock.execFileSync.mockReturnValue('Pane 0: sent\n');
+
+      const result = parseToolJson(await handleToolCall('tmup_reprompt', {
+        prompt: 'Quick nudge',
+        pane_index: 0,
+        harvest_first: false,
+      }));
+
+      expect(result.ok).toBe(true);
+      // No tmux capture-pane call should have been made (only bash call)
+      const tmuxCalls = childProcessMock.execFileSync.mock.calls.filter(
+        (c: unknown[]) => c[0] === 'tmux'
+      );
+      expect(tmuxCalls).toHaveLength(0);
+      expect(result.harvested_before_reprompt).toBeUndefined();
+    });
+  });
+
+  describe('tmup_dispatch with resume_session_id', () => {
+    it('passes --resume-session-id to dispatch-agent.sh', async () => {
+      const { db, projectDir, sessionId, dbPath } = createAdapterSession();
+      writeGridState(sessionId, projectDir, 4);
+      const taskId = createTask(db, { subject: 'Resume task', role: 'implementer' });
+
+      childProcessMock.execFileSync.mockReturnValue('Dispatched implementer to pane 0\n');
+
+      const result = parseToolJson(await handleToolCall('tmup_dispatch', {
+        task_id: taskId,
+        role: 'implementer',
+        pane_index: 0,
+        resume_session_id: 'csid-abc-123',
+      }));
+
+      expect(result.ok).toBe(true);
+      expect(result.launched).toBe(true);
+
+      // Verify the script received --resume-session-id
+      const bashCall = childProcessMock.execFileSync.mock.calls.find(
+        (c: unknown[]) => c[0] === 'bash'
+      );
+      const scriptArgs = bashCall![1] as string[];
+      const resumeIdx = scriptArgs.indexOf('--resume-session-id');
+      expect(resumeIdx).toBeGreaterThan(-1);
+      expect(scriptArgs[resumeIdx + 1]).toBe('csid-abc-123');
+    });
+  });
+
+  describe('tmup_harvest codex_session_id enrichment', () => {
+    it('includes codex_session_id from grid state when available', async () => {
+      const { projectDir, sessionId } = createAdapterSession();
+
+      // Write grid state WITH a codex_session_id on pane 1
+      const gridDir = path.join(getSessionDir(sessionId), 'grid');
+      fs.mkdirSync(gridDir, { recursive: true });
+      fs.writeFileSync(path.join(gridDir, 'grid-state.json'), JSON.stringify({
+        schema_version: 1,
+        session_name: sessionId,
+        project_dir: projectDir,
+        created_at: new Date().toISOString(),
+        grid: { rows: 1, cols: 4 },
+        panes: [
+          { index: 0, pane_id: '%1', status: 'ready' },
+          { index: 1, pane_id: '%2', status: 'active', codex_session_id: 'csid-harvest-test' },
+          { index: 2, pane_id: '%3', status: 'ready' },
+          { index: 3, pane_id: '%4', status: 'ready' },
+        ],
+      }));
+
+      childProcessMock.execFileSync.mockReturnValue('agent output here\n');
+
+      const result = parseToolJson(await handleToolCall('tmup_harvest', {
+        pane_index: 1,
+        lines: 50,
+      }));
+
+      expect(result.ok).toBe(true);
+      expect(result.codex_session_id).toBe('csid-harvest-test');
+      expect(result.resume_command).toBe('codex resume csid-harvest-test');
+    });
+
+    it('omits codex_session_id when not in grid state', async () => {
+      const { projectDir, sessionId } = createAdapterSession();
+      writeGridState(sessionId, projectDir, 4); // no codex_session_id fields
+
+      childProcessMock.execFileSync.mockReturnValue('plain output\n');
+
+      const result = parseToolJson(await handleToolCall('tmup_harvest', {
+        pane_index: 0,
+      }));
+
+      expect(result.ok).toBe(true);
+      expect(result.codex_session_id).toBeUndefined();
+      expect(result.resume_command).toBeUndefined();
+    });
+  });
+
+  describe('tmup_status pane-liveness-aware recovery', () => {
+    it('skips recovery for stale agent when pane process is alive', async () => {
+      const { db } = createAdapterSession();
+
+      registerAgent(db, 'agent-alive', 0, 'implementer');
+      const taskId = createTask(db, { subject: 'Alive task' });
+      claimTask(db, 'agent-alive');
+      db.prepare(
+        "UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-600 seconds') WHERE id = 'agent-alive'"
+      ).run();
+
+      // Mock tmux display-message to return 'codex' (= alive process)
+      childProcessMock.execFileSync.mockReturnValue('codex\n');
+
+      // Use verbose mode to get JSON response with recovered field
+      const result = parseToolJson(await handleToolCall('tmup_status', { verbose: true }));
+
+      expect(result.ok).toBe(true);
+      // Agent should NOT have been recovered — pane is alive
+      expect(result.recovered).toEqual([]);
+
+      // Task should still be claimed
+      const task = db.prepare('SELECT status, owner FROM tasks WHERE id = ?').get(taskId) as TaskRow;
+      expect(task.status).toBe('claimed');
+      expect(task.owner).toBe('agent-alive');
+    });
+
+    it('recovers stale agent when pane process is dead (tmux throws)', async () => {
+      const { db } = createAdapterSession();
+
+      registerAgent(db, 'agent-dead', 0, 'implementer');
+      const taskId = createTask(db, { subject: 'Dead task' });
+      claimTask(db, 'agent-dead');
+      db.prepare(
+        "UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-600 seconds') WHERE id = 'agent-dead'"
+      ).run();
+
+      // Mock tmux to throw (= pane dead / tmux not running)
+      childProcessMock.execFileSync.mockImplementation(() => {
+        throw new Error('no server running');
+      });
+
+      const result = parseToolJson(await handleToolCall('tmup_status', { verbose: true }));
+
+      expect(result.ok).toBe(true);
+      expect(result.recovered).toContain(taskId);
+
+      // Task should be requeued
+      const task = db.prepare('SELECT status, owner FROM tasks WHERE id = ?').get(taskId) as TaskRow;
+      expect(task.status).toBe('pending');
+      expect(task.owner).toBeNull();
+    });
+
+    it('recovers stale agent when pane is at shell prompt', async () => {
+      const { db } = createAdapterSession();
+
+      registerAgent(db, 'agent-shell', 0, 'implementer');
+      const taskId = createTask(db, { subject: 'Shell task' });
+      claimTask(db, 'agent-shell');
+      db.prepare(
+        "UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-600 seconds') WHERE id = 'agent-shell'"
+      ).run();
+
+      // Mock tmux to return 'bash' (= shell prompt, agent exited)
+      childProcessMock.execFileSync.mockReturnValue('bash\n');
+
+      const result = parseToolJson(await handleToolCall('tmup_status', { verbose: true }));
+
+      expect(result.ok).toBe(true);
+      expect(result.recovered).toContain(taskId);
+
+      const task = db.prepare('SELECT status, owner FROM tasks WHERE id = ?').get(taskId) as TaskRow;
+      expect(task.status).toBe('pending');
+      expect(task.owner).toBeNull();
+    });
+  });
 });
 
 describe('MCP handleToolCall', () => {
