@@ -97,7 +97,7 @@ describe('full lifecycle integration', () => {
     expect(eventTypes).toContain('task_unblocked');
   });
 
-  it('concurrent claim simulation — exactly one winner', () => {
+  it('serial double-claim — first agent wins, second gets null', () => {
     createTask(db, { subject: 'Single task', priority: 50 });
 
     const result1 = claimTask(db, 'agent-1');

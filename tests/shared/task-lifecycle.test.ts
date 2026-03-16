@@ -248,13 +248,17 @@ describe('task lifecycle', () => {
       expect(new Date(task!.claimed_at!).getTime()).not.toBeNaN();
     });
 
-    it('concurrent claims: only one agent wins', () => {
+    it('serial double-claim: first agent wins, second gets null', () => {
       createTask(db, { subject: 'Single task' });
       const r1 = claimTask(db, 'agent-1');
       const r2 = claimTask(db, 'agent-2');
-      const winners = [r1, r2].filter(r => r !== null);
-      expect(winners).toHaveLength(1);
-      expect(winners[0]!.owner).toBe('agent-1');
+      expect(r1).not.toBeNull();
+      expect(r1!.owner).toBe('agent-1');
+      expect(r2).toBeNull();
+      // Verify DB state — task still owned by agent-1
+      const task = db.prepare('SELECT owner, status FROM tasks WHERE id = ?').get(r1!.id) as TaskRow;
+      expect(task.owner).toBe('agent-1');
+      expect(task.status).toBe('claimed');
     });
   });
 
@@ -787,13 +791,16 @@ describe('task lifecycle', () => {
       expect(task.status).toBe('claimed');
     });
 
-    it('failTask allows owner to fail', () => {
+    it('failTask allows owner to fail — retriable crash goes to pending', () => {
       const id = createTask(db, { subject: 'Owned task' });
       claimTask(db, 'agent-A');
       failTask(db, id, 'crash', 'agent failed', 'agent-A');
 
       const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as TaskRow;
-      expect(task.status).not.toBe('claimed');
+      expect(task.status).toBe('pending');
+      expect(task.owner).toBeNull();
+      expect(task.failure_reason).toBe('crash');
+      expect(task.retry_count).toBe(1);
     });
 
     it('failTask allows lead to fail any task', () => {

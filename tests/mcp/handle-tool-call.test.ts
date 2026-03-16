@@ -552,7 +552,12 @@ describe('MCP handleToolCall', () => {
       db.prepare("UPDATE tasks SET status = 'claimed', owner = 'agent-1' WHERE id = ?").run(taskId);
 
       const result = failTask(db, taskId, 'crash', 'forced by lead', 'lead');
-      expect(result).toBeDefined();
+      expect(result.retrying).toBe(true);
+
+      const task = db.prepare('SELECT status, owner, failure_reason FROM tasks WHERE id = ?').get(taskId) as TaskRow;
+      expect(task.status).toBe('pending');
+      expect(task.owner).toBeNull();
+      expect(task.failure_reason).toBe('crash');
     });
 
     it('non-lead non-owner actorId is rejected by failTask', () => {
@@ -688,23 +693,10 @@ describe('MCP handleToolCall', () => {
   });
 
   describe('tmup_harvest input validation', () => {
-    it('rejects non-numeric pane_index', () => {
-      expect(() => {
-        const paneIndex = 'abc' as unknown;
-        if (typeof paneIndex !== 'number' || !Number.isInteger(paneIndex) || paneIndex < 0) {
-          throw new Error('pane_index must be a non-negative integer');
-        }
-      }).toThrow('pane_index must be a non-negative integer');
-    });
-
-    it('rejects negative pane_index', () => {
-      expect(() => {
-        const paneIndex = -1;
-        if (typeof paneIndex !== 'number' || !Number.isInteger(paneIndex) || paneIndex < 0) {
-          throw new Error('pane_index must be a non-negative integer');
-        }
-      }).toThrow('pane_index must be a non-negative integer');
-    });
+    // NOTE: Removed 2 tests ("rejects non-numeric pane_index", "rejects negative pane_index")
+    // that tested self-contained inline validation logic, NOT the actual MCP handler.
+    // The handler's input validation IS tested via the adapter integration tests
+    // ("rejects invalid pane indexes for dispatch" at line 289) which call handleToolCall directly.
 
     it('validates pane_index against grid state when available', async () => {
       // When grid state exists with N panes, pane_index >= N should be rejected
