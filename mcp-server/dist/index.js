@@ -8251,9 +8251,9 @@ ${blocker.payload}
     SELECT t.*, a.pane_index FROM tasks t
     LEFT JOIN agents a ON t.owner = a.id
     WHERE t.status = 'claimed'
-      AND t.claimed_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1800 seconds')
+      AND t.claimed_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ? || ' seconds')
     ORDER BY t.claimed_at ASC LIMIT 1
-  `).get();
+  `).get(`-${CLAIMED_DURATION_WARNING_SECONDS}`);
   if (longRunning) {
     const claimedMinutes = Math.round((Date.now() - new Date(longRunning.claimed_at).getTime()) / 6e4);
     const paneHint = longRunning.pane_index !== null ? ` Harvest pane ${longRunning.pane_index} and check progress.` : "";
@@ -8311,6 +8311,7 @@ var init_next_action = __esm({
     "use strict";
     init_event_ops();
     init_agent_ops();
+    init_constants();
   }
 });
 
@@ -16654,13 +16655,17 @@ ${m.payload}
       setCurrentSession(sessionId);
       const db2 = ensureDb();
       const stale = getStaleAgents(db2, STALE_AGENT_THRESHOLD_SECONDS);
-      const resumeInfo = [];
+      const agentResumeInfo = /* @__PURE__ */ new Map();
+      const agentOwnedTasks = /* @__PURE__ */ new Map();
       for (const agent of stale) {
-        resumeInfo.push({
-          agent_id: agent.id,
+        agentResumeInfo.set(agent.id, {
           codex_session_id: agent.codex_session_id,
           pane_index: agent.pane_index
         });
+        const owned = db2.prepare(
+          "SELECT id FROM tasks WHERE owner = ? AND status = 'claimed'"
+        ).all(agent.id);
+        agentOwnedTasks.set(agent.id, owned.map((t) => t.id));
       }
       const paneLivenessCheck = createPaneLivenessChecker(sessionId);
       const recovered = [];
@@ -16669,14 +16674,18 @@ ${m.payload}
       }
       const resumeCommands = [];
       for (const taskId of recovered) {
-        for (const info of resumeInfo) {
-          if (info.codex_session_id) {
-            resumeCommands.push({
-              task_id: taskId,
-              codex_session_id: info.codex_session_id,
-              command: `codex resume ${info.codex_session_id}`,
-              pane_index: info.pane_index
-            });
+        for (const [agentId, ownedTaskIds] of agentOwnedTasks) {
+          if (ownedTaskIds.includes(taskId)) {
+            const info = agentResumeInfo.get(agentId);
+            if (info?.codex_session_id) {
+              resumeCommands.push({
+                task_id: taskId,
+                codex_session_id: info.codex_session_id,
+                command: `codex resume ${info.codex_session_id}`,
+                pane_index: info.pane_index
+              });
+            }
+            break;
           }
         }
       }

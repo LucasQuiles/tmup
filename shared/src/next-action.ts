@@ -1,6 +1,7 @@
 import type { Database, TaskRow, MessageRow } from './types.js';
 import { getRecentEvents } from './event-ops.js';
 import { getActiveAgents } from './agent-ops.js';
+import { CLAIMED_DURATION_WARNING_SECONDS } from './constants.js';
 
 export type NextActionKind =
   | 'needs_review'
@@ -52,9 +53,9 @@ export function getNextAction(db: Database, paneInfo: PaneInfo): NextAction {
     SELECT t.*, a.pane_index FROM tasks t
     LEFT JOIN agents a ON t.owner = a.id
     WHERE t.status = 'claimed'
-      AND t.claimed_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1800 seconds')
+      AND t.claimed_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ? || ' seconds')
     ORDER BY t.claimed_at ASC LIMIT 1
-  `).get() as (TaskRow & { pane_index: number | null }) | undefined;
+  `).get(`-${CLAIMED_DURATION_WARNING_SECONDS}`) as (TaskRow & { pane_index: number | null }) | undefined;
 
   if (longRunning) {
     const claimedMinutes = Math.round(

@@ -121,22 +121,27 @@ send_reprompt() {
     return 1
   }
 
-  # Verify text appeared in scrollback
+  # Verify text appeared in scrollback (write verify text to file to avoid shell quoting issues)
   local verify_text="${prompt_text:0:40}"
   local reprompt_timeout="${CFG_REPROMPT_TIMEOUT:-10}"
+  local verify_file
+  verify_file=$(mktemp "/tmp/tmup-verify-XXXXXX.txt")
+  printf '%s' "$verify_text" > "$verify_file"
 
   if ! timeout "$reprompt_timeout" bash -c '
+    _vfile="$1"; _target="$2"
     sleep 0.3
-    scrollback=$(tmux capture-pane -t "'"$target"'" -p -S -20 2>/dev/null) || scrollback=""
-    if echo "$scrollback" | grep -qF "'"$verify_text"'"; then exit 0; fi
+    scrollback=$(tmux capture-pane -t "$_target" -p -S -20 2>/dev/null) || scrollback=""
+    if echo "$scrollback" | grep -qFf "$_vfile"; then exit 0; fi
     sleep 0.3
-    scrollback=$(tmux capture-pane -t "'"$target"'" -p -S -20 2>/dev/null) || scrollback=""
-    echo "$scrollback" | grep -qF "'"$verify_text"'"
-  '; then
+    scrollback=$(tmux capture-pane -t "$_target" -p -S -20 2>/dev/null) || scrollback=""
+    echo "$scrollback" | grep -qFf "$_vfile"
+  ' _ "$verify_file" "$target"; then
     echo "send_reprompt: text not confirmed in scrollback for $target (timed out)" >&2
-    rm -f "$tmpfile"
+    rm -f "$tmpfile" "$verify_file"
     return 1
   fi
+  rm -f "$verify_file"
 
   # Submit: double-Enter (first may not register if input buffer unfocused)
   tmux send-keys -t "$target" Enter
