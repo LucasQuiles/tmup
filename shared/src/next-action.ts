@@ -47,6 +47,26 @@ export function getNextAction(db: Database, paneInfo: PaneInfo): NextAction {
     };
   }
 
+  // 2.5: Long-running tasks — claimed beyond threshold without completion
+  const longRunning = db.prepare(`
+    SELECT t.*, a.pane_index FROM tasks t
+    LEFT JOIN agents a ON t.owner = a.id
+    WHERE t.status = 'claimed'
+      AND t.claimed_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1800 seconds')
+    ORDER BY t.claimed_at ASC LIMIT 1
+  `).get() as (TaskRow & { pane_index: number | null }) | undefined;
+
+  if (longRunning) {
+    const claimedMinutes = Math.round(
+      (Date.now() - new Date(longRunning.claimed_at!).getTime()) / 60000
+    );
+    const paneHint = longRunning.pane_index !== null ? ` Harvest pane ${longRunning.pane_index} and check progress.` : '';
+    return {
+      kind: 'long_running',
+      message: `Task T-${longRunning.id} (${longRunning.subject}) has been claimed for ${claimedMinutes} minutes.${paneHint}`,
+    };
+  }
+
   // 3. Recently unblocked tasks (DAG progress) — iterate through candidates
   const recentUnblocked = getRecentEvents(db, 'task_unblocked', 5);
   for (const event of recentUnblocked) {

@@ -168,4 +168,70 @@ describe('getNextAction', () => {
     const action = getNextAction(db, defaultPanes);
     expect(action.kind).toBe('dispatch');
   });
+
+  it('returns long_running when task claimed beyond threshold', () => {
+    registerAgent(db, 'slow-agent', 2, 'implementer');
+    const taskId = createTask(db, { subject: 'Long compilation' });
+    // Claim and then backdate claimed_at to 45 minutes ago
+    claimTask(db, 'slow-agent');
+    db.prepare("UPDATE tasks SET claimed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-2700 seconds') WHERE id = ?").run(taskId);
+
+    const action = getNextAction(db, defaultPanes);
+    expect(action.kind).toBe('long_running');
+    expect(action.message).toContain('Long compilation');
+    expect(action.message).toContain('pane 2');
+  });
+
+  it('long_running is lower priority than needs_review', () => {
+    registerAgent(db, 'agent-1', 0, 'implementer');
+    // Create needs_review task
+    const reviewTaskId = createTask(db, { subject: 'Review me' });
+    db.prepare("UPDATE tasks SET status = 'needs_review', failure_reason = 'timeout' WHERE id = ?").run(reviewTaskId);
+    // Create long-running task
+    const longTaskId = createTask(db, { subject: 'Still running' });
+    claimTask(db, 'agent-1');
+    db.prepare("UPDATE tasks SET claimed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-3600 seconds') WHERE id = ?").run(longTaskId);
+
+    const action = getNextAction(db, defaultPanes);
+    expect(action.kind).toBe('needs_review');
+  });
+
+  it('long_running is lower priority than blocker', () => {
+    registerAgent(db, 'agent-1', 0, 'implementer');
+    // Create blocker message
+    db.prepare(`
+      INSERT INTO messages (id, from_agent, to_agent, type, payload, created_at)
+      VALUES ('blk-lr', 'agent-1', 'lead', 'blocker', 'Stuck on X', strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    `).run();
+    // Create long-running task
+    const longTaskId = createTask(db, { subject: 'Still running' });
+    claimTask(db, 'agent-1');
+    db.prepare("UPDATE tasks SET claimed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-3600 seconds') WHERE id = ?").run(longTaskId);
+
+    const action = getNextAction(db, defaultPanes);
+    expect(action.kind).toBe('blocker');
+  });
+
+  it('long_running is higher priority than dispatch', () => {
+    registerAgent(db, 'agent-1', 0, 'implementer');
+    // Create a long-running claimed task
+    const longTaskId = createTask(db, { subject: 'Slow task' });
+    claimTask(db, 'agent-1');
+    db.prepare("UPDATE tasks SET claimed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-3600 seconds') WHERE id = ?").run(longTaskId);
+    // Create a pending task that could be dispatched
+    createTask(db, { subject: 'Waiting task' });
+
+    const action = getNextAction(db, defaultPanes);
+    expect(action.kind).toBe('long_running');
+  });
+
+  it('does not return long_running for recently claimed tasks', () => {
+    registerAgent(db, 'agent-1', 0, 'implementer');
+    const taskId = createTask(db, { subject: 'Recent task' });
+    claimTask(db, 'agent-1');
+    // claimed_at is now (recent) — should NOT trigger long_running
+
+    const action = getNextAction(db, defaultPanes);
+    expect(action.kind).not.toBe('long_running');
+  });
 });
