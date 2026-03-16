@@ -344,4 +344,46 @@ describe('config.sh shell boundary', () => {
       expect(stateResult).toBe('');
     });
   });
+
+  describe('new config values from policy.yaml', () => {
+    it('CFG_HEARTBEAT_INTERVAL loads from policy.yaml with correct default', () => {
+      const result = runShell(`
+        source "${CONFIG_SH}"
+        echo "$CFG_HEARTBEAT_INTERVAL"
+      `);
+      expect(result).toBe('60');
+    });
+
+    it('CFG_CLAIMED_WARNING loads from policy.yaml with correct default', () => {
+      const result = runShell(`
+        source "${CONFIG_SH}"
+        echo "$CFG_CLAIMED_WARNING"
+      `);
+      expect(result).toBe('1800');
+    });
+
+    it('CFG_REPROMPT_TIMEOUT loads from policy.yaml with correct default', () => {
+      const result = runShell(`
+        source "${CONFIG_SH}"
+        echo "$CFG_REPROMPT_TIMEOUT"
+      `);
+      expect(result).toBe('10');
+    });
+
+    it('falls back to defaults when policy.yaml is missing', () => {
+      const result = runShell(`
+        source "${CONFIG_SH}"
+        echo "$CFG_HEARTBEAT_INTERVAL:$CFG_CLAIMED_WARNING:$CFG_REPROMPT_TIMEOUT"
+      `, { CFG_CONFIG_DIR: '/nonexistent/path' });
+      expect(result).toBe('60:1800:10');
+    });
+
+    it('new config values are exported (available in subshells)', () => {
+      const result = runShell(`
+        source "${CONFIG_SH}"
+        bash -c 'echo "$CFG_HEARTBEAT_INTERVAL:$CFG_CLAIMED_WARNING:$CFG_REPROMPT_TIMEOUT"'
+      `);
+      expect(result).toBe('60:1800:10');
+    });
+  });
 });
