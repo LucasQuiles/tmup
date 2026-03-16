@@ -5,6 +5,7 @@ import { getActiveAgents } from './agent-ops.js';
 export type NextActionKind =
   | 'needs_review'
   | 'blocker'
+  | 'long_running'
   | 'unblocked'
   | 'dispatch'
   | 'all_complete'
