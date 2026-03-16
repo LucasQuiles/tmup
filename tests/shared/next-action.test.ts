@@ -169,69 +169,127 @@ describe('getNextAction', () => {
     expect(action.kind).toBe('dispatch');
   });
 
-  it('returns long_running when task claimed beyond threshold', () => {
+  it('returns long_running when task claimed beyond threshold, with correct message', () => {
     registerAgent(db, 'slow-agent', 2, 'implementer');
     const taskId = createTask(db, { subject: 'Long compilation' });
-    // Claim and then backdate claimed_at to 45 minutes ago
     claimTask(db, 'slow-agent');
+    // Backdate claimed_at to 45 minutes ago
     db.prepare("UPDATE tasks SET claimed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-2700 seconds') WHERE id = ?").run(taskId);
 
     const action = getNextAction(db, defaultPanes);
     expect(action.kind).toBe('long_running');
+    // Verify the message includes the task subject
     expect(action.message).toContain('Long compilation');
+    // Verify pane hint (agent registered on pane 2)
     expect(action.message).toContain('pane 2');
+    // Verify the task ID appears in the message
+    expect(action.message).toContain(`T-${taskId}`);
+    // Verify minutes calculation is in a reasonable range (should be ~45)
+    const minutesMatch = action.message.match(/claimed for (\d+) minutes/);
+    expect(minutesMatch).not.toBeNull();
+    const minutes = parseInt(minutesMatch![1], 10);
+    expect(minutes).toBeGreaterThanOrEqual(44);
+    expect(minutes).toBeLessThanOrEqual(46);
   });
 
-  it('long_running is lower priority than needs_review', () => {
+  it('long_running omits pane hint when task has no associated agent', () => {
+    // Create a claimed task with an owner that has no agent row
+    const taskId = createTask(db, { subject: 'Orphaned claim' });
+    db.prepare(
+      "UPDATE tasks SET status = 'claimed', owner = 'ghost-agent', claimed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-3600 seconds') WHERE id = ?"
+    ).run(taskId);
+
+    const action = getNextAction(db, defaultPanes);
+    expect(action.kind).toBe('long_running');
+    expect(action.message).toContain('Orphaned claim');
+    // LEFT JOIN with no agent row → pane_index is null → no pane hint
+    expect(action.message).not.toContain('pane');
+  });
+
+  it('long_running picks the oldest claimed task when multiple exceed threshold', () => {
+    registerAgent(db, 'agent-a', 0, 'implementer');
+    registerAgent(db, 'agent-b', 1, 'tester');
+    const olderTaskId = createTask(db, { subject: 'Older stale task' });
+    claimTask(db, 'agent-a');
+    const newerTaskId = createTask(db, { subject: 'Newer stale task' });
+    claimTask(db, 'agent-b');
+    // Backdate both, but older one further back
+    db.prepare("UPDATE tasks SET claimed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7200 seconds') WHERE id = ?").run(olderTaskId);
+    db.prepare("UPDATE tasks SET claimed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-3600 seconds') WHERE id = ?").run(newerTaskId);
+
+    const action = getNextAction(db, defaultPanes);
+    expect(action.kind).toBe('long_running');
+    // Should report the OLDEST one (ORDER BY claimed_at ASC)
+    expect(action.message).toContain('Older stale task');
+    expect(action.message).toContain(`T-${olderTaskId}`);
+  });
+
+  it('long_running: needs_review wins when both conditions present', () => {
     registerAgent(db, 'agent-1', 0, 'implementer');
-    // Create needs_review task
+    // needs_review task
     const reviewTaskId = createTask(db, { subject: 'Review me' });
     db.prepare("UPDATE tasks SET status = 'needs_review', failure_reason = 'timeout' WHERE id = ?").run(reviewTaskId);
-    // Create long-running task
+    // long-running task
     const longTaskId = createTask(db, { subject: 'Still running' });
     claimTask(db, 'agent-1');
     db.prepare("UPDATE tasks SET claimed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-3600 seconds') WHERE id = ?").run(longTaskId);
 
     const action = getNextAction(db, defaultPanes);
     expect(action.kind).toBe('needs_review');
+    // Verify it's specifically the review task, not some other needs_review
+    expect(action.message).toContain('Review me');
   });
 
-  it('long_running is lower priority than blocker', () => {
+  it('long_running: blocker wins when both conditions present', () => {
     registerAgent(db, 'agent-1', 0, 'implementer');
-    // Create blocker message
     db.prepare(`
       INSERT INTO messages (id, from_agent, to_agent, type, payload, created_at)
       VALUES ('blk-lr', 'agent-1', 'lead', 'blocker', 'Stuck on X', strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     `).run();
-    // Create long-running task
     const longTaskId = createTask(db, { subject: 'Still running' });
     claimTask(db, 'agent-1');
     db.prepare("UPDATE tasks SET claimed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-3600 seconds') WHERE id = ?").run(longTaskId);
 
     const action = getNextAction(db, defaultPanes);
     expect(action.kind).toBe('blocker');
+    expect(action.message).toContain('Stuck on X');
   });
 
-  it('long_running is higher priority than dispatch', () => {
+  it('long_running wins over dispatch when both conditions present', () => {
     registerAgent(db, 'agent-1', 0, 'implementer');
-    // Create a long-running claimed task
     const longTaskId = createTask(db, { subject: 'Slow task' });
     claimTask(db, 'agent-1');
     db.prepare("UPDATE tasks SET claimed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-3600 seconds') WHERE id = ?").run(longTaskId);
-    // Create a pending task that could be dispatched
+    // Also create a pending task that would trigger dispatch
     createTask(db, { subject: 'Waiting task' });
 
     const action = getNextAction(db, defaultPanes);
     expect(action.kind).toBe('long_running');
+    expect(action.message).toContain('Slow task');
   });
 
-  it('does not return long_running for recently claimed tasks', () => {
+  it('recently claimed task returns waiting, not long_running', () => {
     registerAgent(db, 'agent-1', 0, 'implementer');
-    const taskId = createTask(db, { subject: 'Recent task' });
+    createTask(db, { subject: 'Recent task' });
     claimTask(db, 'agent-1');
-    // claimed_at is now (recent) — should NOT trigger long_running
+    // claimed_at is now — well within the 1800-second threshold
 
     const action = getNextAction(db, defaultPanes);
+    // With 1 claimed task, 0 pending, 0 blocked → should be 'waiting'
+    expect(action.kind).toBe('waiting');
+    expect(action.message).toContain('1 tasks in progress');
+  });
+
+  it('task claimed at exactly the threshold boundary is not long_running', () => {
+    registerAgent(db, 'agent-1', 0, 'implementer');
+    const taskId = createTask(db, { subject: 'Boundary task' });
+    claimTask(db, 'agent-1');
+    // Set claimed_at to exactly 1800 seconds ago (the threshold uses strict <)
+    db.prepare("UPDATE tasks SET claimed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1800 seconds') WHERE id = ?").run(taskId);
+
+    const action = getNextAction(db, defaultPanes);
+    // At exactly the boundary, the SQL uses strict < so this should NOT trigger
+    // (SQLite strftime precision means this is at the boundary — not past it)
     expect(action.kind).not.toBe('long_running');
   });
 });
