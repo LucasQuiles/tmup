@@ -166,30 +166,22 @@ describe('event-ops', () => {
       expect(result.errors).toEqual([]);
     });
 
-    it('collects errors without throwing', () => {
-      // Close the database to force errors
+    it('collects errors into result.errors instead of throwing', () => {
+      // Close the live DB to force maintenance operations to fail
       closeDatabase(db);
 
-      // Re-open a fresh one for the afterEach cleanup
-      const freshPath = tmpDbPath();
-      const freshDb = openDatabase(freshPath);
-
-      // Close it and try maintenance on it
-      closeDatabase(freshDb);
-
-      // The closed DB should produce errors in result.errors
-      // We can't easily test this without mocking, so just verify the contract:
-      // runMaintenance on a working db with no old data returns zeros
-      db = openDatabase(dbPath);
+      // Run maintenance on the closed handle — should not throw
       const result = runMaintenance(db);
-      expect(result.eventsPruned).toBe(0);
-      expect(result.messagesPruned).toBe(0);
-      expect(result.walCheckpoint).toBe(true);
-      expect(result.errors).toEqual([]);
 
-      try { fs.unlinkSync(freshPath); } catch {}
-      try { fs.unlinkSync(freshPath + '-wal'); } catch {}
-      try { fs.unlinkSync(freshPath + '-shm'); } catch {}
+      // At least one operation should have produced an error
+      expect(result.errors.length).toBeGreaterThan(0);
+      // Errors should contain meaningful descriptions, not empty strings
+      for (const err of result.errors) {
+        expect(err.length).toBeGreaterThan(0);
+      }
+
+      // Re-open for afterEach cleanup
+      db = openDatabase(dbPath);
     });
 
     it('maintenance with nothing to prune returns zeros', () => {

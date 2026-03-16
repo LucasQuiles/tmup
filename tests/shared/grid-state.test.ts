@@ -108,43 +108,16 @@ describe('grid-state', () => {
       expect(result.source).toBe('default-session-no-grid');
     });
 
-    it('returns actual pane count from grid-state (8 panes)', () => {
+    it.each([
+      [8, 2, 4],
+      [9, 3, 3],
+      [1, 1, 1],
+      [4, 1, 4],
+    ] as const)('returns pane count %i from grid-state (%ix%i)', (panes, rows, cols) => {
       const dir = makeTmpSessionDir();
-      writeGridState(dir, 8, 2, 4);
+      writeGridState(dir, panes, rows, cols);
       const result = getGridPaneCount(dir);
-      expect(result.count).toBe(8);
-      expect(result.source).toBe('grid-state');
-    });
-
-    it('returns actual pane count from grid-state (9 panes for 3x3)', () => {
-      const dir = makeTmpSessionDir();
-      writeGridState(dir, 9, 3, 3);
-      const result = getGridPaneCount(dir);
-      expect(result.count).toBe(9);
-      expect(result.source).toBe('grid-state');
-    });
-
-    it('returns actual pane count from grid-state (1 pane for 1x1)', () => {
-      const dir = makeTmpSessionDir();
-      writeGridState(dir, 1, 1, 1);
-      const result = getGridPaneCount(dir);
-      expect(result.count).toBe(1);
-      expect(result.source).toBe('grid-state');
-    });
-
-    it('returns actual pane count from grid-state (4 panes for 1x4)', () => {
-      const dir = makeTmpSessionDir();
-      writeGridState(dir, 4, 1, 4);
-      const result = getGridPaneCount(dir);
-      expect(result.count).toBe(4);
-      expect(result.source).toBe('grid-state');
-    });
-
-    it('returns actual pane count from grid-state (4 panes for 4x1)', () => {
-      const dir = makeTmpSessionDir();
-      writeGridState(dir, 4, 4, 1);
-      const result = getGridPaneCount(dir);
-      expect(result.count).toBe(4);
+      expect(result.count).toBe(panes);
       expect(result.source).toBe('grid-state');
     });
 

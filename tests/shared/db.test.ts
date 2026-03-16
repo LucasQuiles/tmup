@@ -72,37 +72,22 @@ describe('openDatabase', () => {
     closeDatabase(db);
   });
 
-  it('rejects unknown pragma in runtime-contract', () => {
+  it('runtime-contract.json pragma allowlist matches applied pragmas', () => {
     const p = tmpDbPath();
     paths.push(p);
 
-    // Create a modified contract with an unknown pragma
-    const configDir = path.resolve(path.dirname(p), 'tmup-test-config-' + Date.now());
-    fs.mkdirSync(configDir, { recursive: true });
+    // Read the runtime contract to get the declared pragmas
+    const contractPath = path.resolve(__dirname, '../../config/runtime-contract.json');
+    const contract = JSON.parse(fs.readFileSync(contractPath, 'utf-8')) as Record<string, unknown>;
+    const declaredPragmas = Object.keys(contract);
 
-    // Copy schema from real config
-    const realConfigDir = path.resolve(__dirname, '../../config');
-    fs.copyFileSync(path.join(realConfigDir, 'schema.sql'), path.join(configDir, 'schema.sql'));
-
-    // Write contract with unknown key
-    fs.writeFileSync(path.join(configDir, 'runtime-contract.json'), JSON.stringify({
-      journal_mode: 'wal',
-      busy_timeout: 8000,
-      evil_pragma: 42,
-    }));
-
-    // We can't easily inject a different config dir into openDatabase,
-    // so test the allowlist validation logic directly by verifying the source behavior:
-    // The allowlist is hardcoded in db.ts — verify it rejects at the source level
+    // Every pragma in the contract must be applied and verifiable
     const db = openDatabase(p);
-    // Verify the actual contract pragmas are applied correctly
-    expect(db.pragma('journal_mode', { simple: true })).toBe('wal');
-    // Verify unknown pragmas don't sneak through — journal_size_limit is in the contract
-    expect(db.pragma('journal_size_limit', { simple: true })).toBe(33554432);
+    for (const pragma of declaredPragmas) {
+      const value = db.pragma(pragma, { simple: true });
+      expect(value).toBe(contract[pragma]);
+    }
     closeDatabase(db);
-
-    // Clean up
-    try { fs.rmSync(configDir, { recursive: true }); } catch {}
   });
 
   it('applies all pragmas from the runtime-contract.json', () => {

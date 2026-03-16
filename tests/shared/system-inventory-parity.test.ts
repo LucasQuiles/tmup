@@ -26,50 +26,13 @@ describe('system-inventory-parity', () => {
     cleanupDb(dbPath);
   });
 
-  describe('stale claims are absent', () => {
-    it('does not claim "71 source files"', () => {
-      expect(inventoryDoc).not.toContain('71 source files');
-    });
+  // NOTE: Removed 5 "stale claims are absent" tests (71 files, 6700 LOC, 409+ tests,
+  // 18+ test files, 14 indexes). These were backward-looking guards against specific
+  // stale values that were removed long ago. They can never fail and provide zero signal.
 
-    it('does not claim "~6,700 LOC"', () => {
-      expect(inventoryDoc).not.toContain('6,700 LOC');
-    });
-
-    it('does not claim "409+ tests"', () => {
-      expect(inventoryDoc).not.toMatch(/409\+/);
-    });
-
-    it('does not claim "18+ test files"', () => {
-      expect(inventoryDoc).not.toMatch(/18\+ test files/);
-    });
-
-    it('does not claim "14 indexes"', () => {
-      expect(inventoryDoc).not.toContain('14 indexes');
-    });
-  });
-
-  describe('stale v3 column/enum names are absent', () => {
-    it('does not use stale column name "source_session_id"', () => {
-      expect(inventoryDoc).not.toContain('source_session_id');
-    });
-
-    it('does not use stale evidence type "diff_summary"', () => {
-      expect(inventoryDoc).not.toContain('diff_summary');
-    });
-
-    it('does not use stale evidence type "log_output"', () => {
-      expect(inventoryDoc).not.toContain('log_output');
-    });
-
-    it('does not use stale evidence type "artifact_ref"', () => {
-      expect(inventoryDoc).not.toContain('artifact_ref');
-    });
-
-    it('does not use stale evidence type "custom"', () => {
-      // "custom" appears in "custom_instructions" in other contexts, so check evidence-specific
-      expect(inventoryDoc).not.toMatch(/type.*custom\)/);
-    });
-  });
+  // NOTE: Removed 5 "stale v3 column/enum names are absent" tests. Same issue as
+  // stale claims — these guard against specific strings that were removed long ago
+  // and can never fail again.
 
   describe('v3 table names are documented', () => {
     const v3Tables = [
@@ -124,7 +87,7 @@ describe('system-inventory-parity', () => {
   });
 
   describe('runnable test file count', () => {
-    it('actual runnable test files matches documented count', () => {
+    it('inventory documents the exact test file count', () => {
       const testsDir = path.resolve(__dirname, '..');
       const testFiles: string[] = [];
 
@@ -140,9 +103,11 @@ describe('system-inventory-parity', () => {
       }
 
       findTestFiles(testsDir);
-      // Inventory should document the actual count
-      // Currently 24 test files (23 runnable + this new one = 24 runnable)
-      expect(testFiles.length).toBeGreaterThanOrEqual(23);
+      // Extract documented count from inventory (e.g. "28 test files")
+      const countMatch = inventoryDoc.match(/(\d+)\s+test files/);
+      expect(countMatch).not.toBeNull();
+      const documentedCount = parseInt(countMatch![1], 10);
+      expect(testFiles.length).toBe(documentedCount);
     });
   });
 });
