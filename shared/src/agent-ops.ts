@@ -51,7 +51,12 @@ export function getStaleAgents(db: Database, maxAgeSeconds: number): AgentRow[] 
 
 import { BACKOFF_BASE_SECONDS, STALE_AGENT_THRESHOLD_SECONDS } from './constants.js';
 
-export function recoverDeadClaim(db: Database, agentId: string, staleThresholdSeconds: number = STALE_AGENT_THRESHOLD_SECONDS): string[] {
+export function recoverDeadClaim(
+  db: Database,
+  agentId: string,
+  staleThresholdSeconds: number = STALE_AGENT_THRESHOLD_SECONDS,
+  paneLivenessCallback?: (paneIndex: number) => 'alive' | 'shell' | 'dead'
+): string[] {
   const recover = db.transaction(() => {
     const recovered: string[] = [];
 
@@ -61,6 +66,18 @@ export function recoverDeadClaim(db: Database, agentId: string, staleThresholdSe
       "SELECT * FROM agents WHERE id = ? AND status = 'active' AND last_heartbeat_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ? || ' seconds')"
     ).get(agentId, `-${staleThresholdSeconds}`) as AgentRow | undefined;
     if (!agent) return []; // Agent recovered (heartbeat arrived) or already shut down
+
+    // Pane-liveness check: if process is still running, refresh heartbeat and skip recovery
+    if (paneLivenessCallback) {
+      const liveness = paneLivenessCallback(agent.pane_index);
+      if (liveness === 'alive') {
+        db.prepare(
+          "UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?"
+        ).run(agentId);
+        logEvent(db, agentId, 'agent_heartbeat_stale', { action: 'refreshed', reason: 'pane_alive' });
+        return [];
+      }
+    }
 
     const tasks = db.prepare(
       "SELECT * FROM tasks WHERE owner = ? AND status = 'claimed'"
@@ -103,4 +120,10 @@ export function getActiveAgents(db: Database): AgentRow[] {
 
 export function getAgent(db: Database, agentId: string): AgentRow | undefined {
   return db.prepare('SELECT * FROM agents WHERE id = ?').get(agentId) as AgentRow | undefined;
+}
+
+export function getAgentByPaneIndex(db: Database, paneIndex: number): AgentRow | undefined {
+  return db.prepare(
+    "SELECT * FROM agents WHERE pane_index = ? AND status = 'active' ORDER BY registered_at DESC LIMIT 1"
+  ).get(paneIndex) as AgentRow | undefined;
 }
