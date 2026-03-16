@@ -1,6 +1,6 @@
 ---
 name: tmup-reference
-description: Complete reference for all 18 MCP tools and 9 CLI commands
+description: Complete reference for all 19 MCP tools and 9 CLI commands
 ---
 
 # tmup Reference
@@ -90,21 +90,41 @@ Valid transitions: needs_review→pending, pending→cancelled, blocked→pendin
 Registers agent, claims task, and launches Codex process atomically.
 ```json
 {"task_id": "003", "role": "implementer",
- "pane_index?": 2, "working_dir?": "/path"}
+ "pane_index?": 2, "working_dir?": "/path", "resume_session_id?": "codex-session-abc"}
 → {"ok": true, "agent_id": "uuid", "pane_index": 2, "launched": true,
    "launch_output": "Dispatched implementer to pane 2 (agent uuid)"}
 ```
 
+With `resume_session_id`, uses `codex resume <ID>` instead of fresh launch.
+
 ### tmup_harvest
 ```json
 {"pane_index": 3, "lines?": 200}
-→ {"ok": true, "pane_index": 3, "lines": 200, "output": "...captured scrollback..."}
+→ {"ok": true, "pane_index": 3, "lines": 200, "output": "...captured scrollback...",
+   "codex_session_id?": "abc123", "resume_command?": "codex resume abc123"}
 ```
+
+### tmup_reprompt
+Send a follow-up prompt to a running agent. Harvests pane output first (configurable).
+```json
+{"pane_index": 3, "prompt": "Now implement the error handling for edge cases",
+ "harvest_first?": true, "all?": false}
+→ {"ok": true, "pane_index": 3, "output": "Pane 3: sent",
+   "harvested_before_reprompt": "...scrollback..."}
+```
+
+Safety guards:
+- Only sends to idle agents (not actively "Working")
+- Rejects shell prompts (pane must have running agent)
+- Uses literal mode (`-l`) to prevent prompt text from triggering key events
+- Double-Enter submission for reliable input
 
 ### tmup_pause / tmup_resume / tmup_teardown
 ```json
 {} / {"session_id?": "tmup-a3f1b2"} / {"force?": true}
 ```
+
+`tmup_resume` now returns `resume_commands` array with `codex resume <ID>` for each recovered task.
 
 ## CLI Commands (tmup-cli)
 
