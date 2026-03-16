@@ -369,6 +369,8 @@ export interface Policy {
     max_retries: number;
     retry_backoff_base_seconds: number;
     stale_max_age_seconds: number;
+    heartbeat_interval_seconds: number;
+    claimed_duration_warning_seconds: number;
   };
   grid: {
     session_prefix: string;
@@ -385,6 +387,7 @@ export interface Policy {
     dispatch_trust_prompt_seconds: number;
     teardown_grace_seconds: number;
     pause_checkpoint_seconds: number;
+    send_reprompt_seconds: number;
   };
   autonomy: {
     full_participant_roles: string[];

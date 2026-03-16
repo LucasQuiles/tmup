@@ -8,7 +8,7 @@ export interface GridState {
   project_dir: string;
   created_at: string;
   grid: { rows: number; cols: number };
-  panes: Array<{ index: number; pane_id: string; status: string }>;
+  panes: Array<{ index: number; pane_id: string; status: string; codex_session_id?: string; role?: string; agent_id?: string }>;
 }
 
 /**

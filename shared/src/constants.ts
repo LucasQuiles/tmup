@@ -16,6 +16,12 @@ export const MAX_ARTIFACT_SIZE_BYTES = 100 * 1024 * 1024;
 /** Heartbeat stale threshold (seconds). Agents without a heartbeat for this duration are considered stale. */
 export const STALE_AGENT_THRESHOLD_SECONDS = 300;
 
+/** Background heartbeat interval (seconds). Launcher sends heartbeats at this cadence. */
+export const HEARTBEAT_INTERVAL_SECONDS = 60;
+
+/** Warning threshold for long-running tasks without completion (seconds). Default 30 minutes. */
+export const CLAIMED_DURATION_WARNING_SECONDS = 1800;
+
 /** Priority range for tasks. */
 export const MIN_PRIORITY = 0;
 export const MAX_PRIORITY = 100;
