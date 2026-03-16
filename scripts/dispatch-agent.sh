@@ -79,7 +79,7 @@ trap '_dispatch_teardown 130' INT
 trap '_dispatch_teardown 143' TERM
 
 # Parse arguments
-ROLE="" PROMPT="" PANE_INDEX="" WORKING_DIR="" AGENT_ID="" TASK_ID="" DB_PATH=""
+ROLE="" PROMPT="" PANE_INDEX="" WORKING_DIR="" AGENT_ID="" TASK_ID="" DB_PATH="" RESUME_SESSION_ID=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -91,6 +91,7 @@ while [[ $# -gt 0 ]]; do
     --task-id) TASK_ID="$2"; shift 2 ;;
     --db-path) DB_PATH="$2"; shift 2 ;;
     --session) shift 2 ;;
+    --resume-session-id) RESUME_SESSION_ID="$2"; shift 2 ;;
     *) die "Unknown option: $1" ;;
   esac
 done
@@ -172,10 +173,38 @@ export TMUP_SESSION_DIR=$(printf '%q' "$STATE_DIR")
 export CODEX_BIN=$(printf '%q' "$CODEX_BIN")
 export TMUP_WORKING_DIR=$(printf '%q' "$WORKING_DIR")
 $(if [[ -n "$TASK_ID" ]]; then printf 'export TMUP_TASK_ID=%q' "$TASK_ID"; fi)
-# Read prompt into memory, then clean up temp files before exec
+$(if [[ -n "$RESUME_SESSION_ID" ]]; then printf 'export RESUME_SESSION_ID=%q' "$RESUME_SESSION_ID"; fi)
+_CLI_PATH=$(printf '%q' "$PLUGIN_DIR/cli/dist/tmup-cli.js")
+_HB_INTERVAL=${CFG_HEARTBEAT_INTERVAL:-60}
+
+# Read prompt into memory, then clean up prompt file
 _PROMPT=\$(cat $(printf '%q' "$PROMPT_FILE"))
-rm -f $(printf '%q' "$PROMPT_FILE") "\$0" 2>/dev/null || true
-exec "\$CODEX_BIN" -a never -s danger-full-access --no-alt-screen -C "\$TMUP_WORKING_DIR" "\$_PROMPT"
+rm -f $(printf '%q' "$PROMPT_FILE") 2>/dev/null || true
+
+# Start background heartbeat loop
+(
+  while true; do
+    sleep "\$_HB_INTERVAL"
+    TMUP_AGENT_ID="\$TMUP_AGENT_ID" TMUP_DB="\$TMUP_DB" TMUP_PANE_INDEX="\$TMUP_PANE_INDEX" \\
+      TMUP_SESSION_NAME="\$TMUP_SESSION_NAME" TMUP_SESSION_DIR="\$TMUP_SESSION_DIR" \\
+      node "\$_CLI_PATH" heartbeat 2>/dev/null || true
+  done
+) &
+_HB_PID=\$!
+
+# Run codex as foreground process (not exec — so heartbeat can be cleaned up)
+if [[ -n "\${RESUME_SESSION_ID:-}" ]]; then
+  "\$CODEX_BIN" resume "\$RESUME_SESSION_ID"
+else
+  "\$CODEX_BIN" -a never -s danger-full-access --no-alt-screen -C "\$TMUP_WORKING_DIR" "\$_PROMPT"
+fi
+_EXIT=\$?
+
+# Kill heartbeat loop when codex exits
+kill "\$_HB_PID" 2>/dev/null
+wait "\$_HB_PID" 2>/dev/null
+rm -f "\$0" 2>/dev/null || true
+exit "\$_EXIT"
 WRAPPER
 chmod 700 "$LAUNCHER"
 
@@ -266,3 +295,39 @@ for _attempt in $(seq 1 $ATTEMPTS); do
 done
 
 echo "Dispatched $ROLE to pane $PANE_INDEX (agent $AGENT_ID)"
+
+# Capture Codex session ID for resume capability
+CODEX_SID=""
+HISTORY_FILE="$HOME/.codex/history.jsonl"
+if [[ -f "$HISTORY_FILE" ]]; then
+  sleep 2  # Wait for codex to register the session
+  CODEX_SID=$(tail -1 "$HISTORY_FILE" 2>/dev/null | jq -r '.session_id // ""' 2>/dev/null) || CODEX_SID=""
+  if [[ -n "$CODEX_SID" && "$CODEX_SID" != "null" ]]; then
+    # Store in grid-state.json pane entry
+    if [[ -f "$GRID_STATE" ]]; then
+      exec 9>"$LOCK_FILE"
+      if flock -w 5 9 2>/dev/null; then
+        _temp=$(mktemp "$STATE_DIR/grid/grid-state.XXXXXX" 2>/dev/null) || _temp=""
+        if [[ -n "$_temp" ]]; then
+          if jq --argjson idx "$PANE_INDEX" --arg csid "$CODEX_SID" \
+            '(.panes[] | select(.index == $idx)).codex_session_id = $csid' \
+            "$GRID_STATE" > "$_temp" 2>/dev/null && [[ -s "$_temp" ]]; then
+            mv "$_temp" "$GRID_STATE"
+          else
+            rm -f "$_temp"
+          fi
+        fi
+      fi
+      exec 9>&- 2>/dev/null || true
+    fi
+
+    # Store in agents table via heartbeat
+    CLI_PATH="$PLUGIN_DIR/cli/dist/tmup-cli.js"
+    TMUP_AGENT_ID="$AGENT_ID" TMUP_DB="$DB_PATH" TMUP_PANE_INDEX="$PANE_INDEX" \
+      TMUP_SESSION_NAME="$SESSION_NAME" TMUP_SESSION_DIR="$STATE_DIR" \
+      node "$CLI_PATH" heartbeat --codex-session-id "$CODEX_SID" 2>/dev/null || true
+
+    echo "Codex session ID: $CODEX_SID"
+    echo "Resume: codex resume $CODEX_SID"
+  fi
+fi
