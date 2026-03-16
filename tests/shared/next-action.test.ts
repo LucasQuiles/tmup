@@ -63,7 +63,7 @@ describe('getNextAction', () => {
     expect(action.message).toContain('Stuck on auth');
   });
 
-  it('returns unblocked when task just unblocked', () => {
+  it('returns unblocked when task just unblocked and still pending', () => {
     const dep = createTask(db, { subject: 'Dep task' });
     const taskId = createTask(db, { subject: 'Blocked task', deps: [dep] });
 
@@ -76,6 +76,20 @@ describe('getNextAction', () => {
     expect(action.kind).toBe('unblocked');
     expect(action.message).toContain('just unblocked');
     expect(action.message).toContain('Blocked task');
+  });
+
+  it('does NOT return unblocked when the unblocked task was already claimed', () => {
+    registerAgent(db, 'fast-agent', 0, 'implementer');
+    const dep = createTask(db, { subject: 'Dep task' });
+    const taskId = createTask(db, { subject: 'Was blocked', deps: [dep] });
+
+    // Simulate: task was unblocked, then immediately claimed by a fast agent
+    logEvent(db, null, 'task_unblocked', { task_id: taskId });
+    db.prepare("UPDATE tasks SET status = 'claimed', owner = 'fast-agent' WHERE id = ?").run(taskId);
+
+    const action = getNextAction(db, defaultPanes);
+    // Should NOT report as unblocked — it's already claimed
+    expect(action.kind).not.toBe('unblocked');
   });
 
   it('returns dispatch when pending tasks and idle panes exist', () => {

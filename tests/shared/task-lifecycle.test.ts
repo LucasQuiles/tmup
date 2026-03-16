@@ -193,11 +193,19 @@ describe('task lifecycle', () => {
       expect(low.status).toBe('pending');
     });
 
-    it('respects FIFO for same priority', () => {
+    it('respects FIFO for same priority (distinct timestamps)', () => {
+      // Both tasks have same priority — FIFO tiebreaker uses created_at ASC.
+      // We must ensure distinct timestamps because SQLite DEFAULT timestamps
+      // can collide within the same millisecond, making the test pass by
+      // accident (rowid order happens to match FIFO).
       createTask(db, { subject: 'First' });
+      // Backdate 'First' so it's unambiguously older
+      db.prepare("UPDATE tasks SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-10 seconds') WHERE id = '001'").run();
       createTask(db, { subject: 'Second' });
+
       const task = claimTask(db, 'agent-1');
       expect(task?.id).toBe('001');
+      expect(task?.subject).toBe('First');
     });
 
     it('returns null when no pending tasks', () => {
