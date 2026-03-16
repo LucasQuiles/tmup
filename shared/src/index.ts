@@ -7,7 +7,7 @@ export { createTask, createTaskBatch, updateTask, getActiveTaskForAgent } from '
 export { claimTask, claimSpecificTask, completeTask, failTask, cancelTask } from './task-lifecycle.js';
 export { sendMessage, getInbox, getUnreadCount, postCheckpoint, pruneMessages } from './message-ops.js';
 export { initSession, readRegistry, setCurrentSession, getCurrentSession, removeFromRegistry, getSessionDbPath, getSessionDir, getSessionProjectDir, validateSessionName, isValidSessionId } from './session-ops.js';
-export { registerAgent, updateHeartbeat, getStaleAgents, recoverDeadClaim, getActiveAgents, getAgent } from './agent-ops.js';
+export { registerAgent, updateHeartbeat, getStaleAgents, recoverDeadClaim, getActiveAgents, getAgent, getAgentByPaneIndex } from './agent-ops.js';
 export { runMaintenance } from './maintenance.js';
 export type { MaintenanceResult } from './maintenance.js';
 export { getNextAction } from './next-action.js';
