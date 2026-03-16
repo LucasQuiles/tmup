@@ -37,6 +37,7 @@ tmup coordinates Claude Code (lead) and Codex CLI workers through a shared SQLit
 | `tmup_pause` | Pause session |
 | `tmup_resume` | Resume paused session |
 | `tmup_teardown` | Shutdown grid |
+| `tmup_reprompt` | Send follow-up prompt to running agent |
 
 ## Task Lifecycle
 
@@ -61,6 +62,21 @@ tmup_dispatch({task_id: "001", role: "implementer"})
 // ... monitor with tmup_next_action, dispatch more as tasks unblock
 tmup_teardown()
 ```
+
+## Re-Prompting Pattern
+
+When an agent finishes early or needs additional instructions:
+1. `tmup_harvest` -- capture current output (includes resume command if available)
+2. `tmup_reprompt` -- send follow-up prompt to idle agent
+3. Monitor via `tmup_next_action` and `tmup_inbox`
+
+For resuming crashed agents:
+1. `tmup_harvest` -- get codex session ID from response
+2. `tmup_dispatch` with `resume_session_id` -- continue where agent left off
+
+## Long-Running Task Detection
+
+`tmup_next_action` returns `long_running` kind when a task has been claimed for over 30 minutes without completion. Use `tmup_harvest` to check the agent's progress and `tmup_reprompt` to nudge if idle.
 
 ## Key Design Decisions
 

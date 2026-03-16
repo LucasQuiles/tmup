@@ -20,6 +20,7 @@ allowed-tools:
   - mcp__tmup__tmup_pause
   - mcp__tmup__tmup_resume
   - mcp__tmup__tmup_teardown
+  - mcp__tmup__tmup_reprompt
 ---
 
 # /tmup — Multi-Agent Coordination
