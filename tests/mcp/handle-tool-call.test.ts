@@ -321,6 +321,67 @@ describe('handleToolCall adapter integration', () => {
       expect(childProcessMock.execFileSync).not.toHaveBeenCalled();
     });
   });
+
+  describe('tmup_resume resume_commands mapping', () => {
+    it('maps each recovered task to its owning agent only (no cross-contamination)', async () => {
+      const { db, sessionId } = createAdapterSession();
+
+      // Register two agents on different panes with different codex session IDs
+      registerAgent(db, 'agent-A', 0, 'implementer');
+      db.prepare("UPDATE agents SET codex_session_id = 'csid-A' WHERE id = 'agent-A'").run();
+      registerAgent(db, 'agent-B', 1, 'tester');
+      db.prepare("UPDATE agents SET codex_session_id = 'csid-B' WHERE id = 'agent-B'").run();
+
+      // Create and claim different tasks for each agent
+      const taskA = createTask(db, { subject: 'Task for A' });
+      claimTask(db, 'agent-A');
+      const taskB = createTask(db, { subject: 'Task for B' });
+      claimTask(db, 'agent-B');
+
+      // Backdate both heartbeats to make them stale
+      db.prepare(
+        "UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-600 seconds') WHERE id IN ('agent-A', 'agent-B')"
+      ).run();
+
+      // Pane-liveness checker calls execFileSync('tmux', ...) — make it throw (= 'dead')
+      childProcessMock.execFileSync.mockImplementation(() => {
+        throw new Error('tmux not available');
+      });
+
+      const result = await handleToolCall('tmup_resume', { session_id: sessionId });
+      const parsed = parseToolJson(result);
+
+      expect(parsed.ok).toBe(true);
+      const recovered = parsed.recovered as string[];
+      const resumeCommands = parsed.resume_commands as Array<{
+        task_id: string;
+        codex_session_id: string;
+        command: string;
+        pane_index: number;
+      }>;
+
+      // Both tasks should be recovered
+      expect(recovered).toContain(taskA);
+      expect(recovered).toContain(taskB);
+
+      // Each task should have exactly ONE resume command from its owning agent
+      const commandsForA = resumeCommands.filter(c => c.task_id === taskA);
+      const commandsForB = resumeCommands.filter(c => c.task_id === taskB);
+
+      expect(commandsForA).toHaveLength(1);
+      expect(commandsForA[0].codex_session_id).toBe('csid-A');
+      expect(commandsForA[0].pane_index).toBe(0);
+      expect(commandsForA[0].command).toBe('codex resume csid-A');
+
+      expect(commandsForB).toHaveLength(1);
+      expect(commandsForB[0].codex_session_id).toBe('csid-B');
+      expect(commandsForB[0].pane_index).toBe(1);
+      expect(commandsForB[0].command).toBe('codex resume csid-B');
+
+      // Total resume commands should be exactly 2 (not 4 from cross-product)
+      expect(resumeCommands).toHaveLength(2);
+    });
+  });
 });
 
 describe('MCP handleToolCall', () => {
@@ -443,6 +504,7 @@ describe('MCP handleToolCall', () => {
     it('setCurrentSession rejects session not in registry', () => {
       expect(() => setCurrentSession('test-nonexistent')).toThrow('not found in registry');
     });
+
   });
 
   describe('tmup_send_message input validation', () => {
