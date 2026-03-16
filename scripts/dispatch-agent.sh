@@ -297,11 +297,24 @@ done
 echo "Dispatched $ROLE to pane $PANE_INDEX (agent $AGENT_ID)"
 
 # Capture Codex session ID for resume capability
+# Race mitigation: after reading the last history entry, verify its cwd matches
+# our WORKING_DIR. In multi-dispatch scenarios, another agent's entry could be
+# the last one — the cwd check prevents cross-contamination.
 CODEX_SID=""
 HISTORY_FILE="$HOME/.codex/history.jsonl"
 if [[ -f "$HISTORY_FILE" ]]; then
   sleep 2  # Wait for codex to register the session
-  CODEX_SID=$(tail -1 "$HISTORY_FILE" 2>/dev/null | jq -r '.session_id // ""' 2>/dev/null) || CODEX_SID=""
+  _last_entry=$(tail -1 "$HISTORY_FILE" 2>/dev/null) || _last_entry=""
+  if [[ -n "$_last_entry" ]]; then
+    _entry_cwd=$(echo "$_last_entry" | jq -r '.cwd // ""' 2>/dev/null) || _entry_cwd=""
+    CODEX_SID=$(echo "$_last_entry" | jq -r '.session_id // ""' 2>/dev/null) || CODEX_SID=""
+    # Correlation check: reject if entry's working directory doesn't match ours
+    if [[ -n "$_entry_cwd" && "$_entry_cwd" != "$WORKING_DIR" ]]; then
+      echo "Session ID skipped: history entry cwd '$_entry_cwd' != working dir '$WORKING_DIR'" >&2
+      CODEX_SID=""
+    fi
+  fi
+  unset _last_entry _entry_cwd
   if [[ -n "$CODEX_SID" && "$CODEX_SID" != "null" ]]; then
     # Store in grid-state.json pane entry
     if [[ -f "$GRID_STATE" ]]; then

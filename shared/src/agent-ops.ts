@@ -122,6 +122,7 @@ export function getAgent(db: Database, agentId: string): AgentRow | undefined {
   return db.prepare('SELECT * FROM agents WHERE id = ?').get(agentId) as AgentRow | undefined;
 }
 
+/** Look up the active agent occupying a specific tmux pane. Used by reprompt and status tools. */
 export function getAgentByPaneIndex(db: Database, paneIndex: number): AgentRow | undefined {
   return db.prepare(
     "SELECT * FROM agents WHERE pane_index = ? AND status = 'active' ORDER BY registered_at DESC LIMIT 1"

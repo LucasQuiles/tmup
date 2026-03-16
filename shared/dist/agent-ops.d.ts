@@ -5,5 +5,6 @@ export declare function getStaleAgents(db: Database, maxAgeSeconds: number): Age
 export declare function recoverDeadClaim(db: Database, agentId: string, staleThresholdSeconds?: number, paneLivenessCallback?: (paneIndex: number) => 'alive' | 'shell' | 'dead'): string[];
 export declare function getActiveAgents(db: Database): AgentRow[];
 export declare function getAgent(db: Database, agentId: string): AgentRow | undefined;
+/** Look up the active agent occupying a specific tmux pane. Used by reprompt and status tools. */
 export declare function getAgentByPaneIndex(db: Database, paneIndex: number): AgentRow | undefined;
 //# sourceMappingURL=agent-ops.d.ts.map
