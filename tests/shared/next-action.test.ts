@@ -294,16 +294,16 @@ describe('getNextAction', () => {
     expect(action.message).toContain('1 tasks in progress');
   });
 
-  it('task claimed at exactly the threshold boundary is not long_running', () => {
+  it('task claimed 1790 seconds ago (10s inside threshold) is not long_running', () => {
     registerAgent(db, 'agent-1', 0, 'implementer');
-    const taskId = createTask(db, { subject: 'Boundary task' });
+    const taskId = createTask(db, { subject: 'Near-boundary task' });
     claimTask(db, 'agent-1');
-    // Set claimed_at to exactly 1800 seconds ago (the threshold uses strict <)
-    db.prepare("UPDATE tasks SET claimed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1800 seconds') WHERE id = ?").run(taskId);
+    // Set claimed_at to 1790 seconds ago — 10 seconds INSIDE the 1800s threshold.
+    // We avoid the exact boundary because strftime('now') evaluates at different
+    // wall-clock times in the UPDATE vs the query, creating flaky results under load.
+    db.prepare("UPDATE tasks SET claimed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1790 seconds') WHERE id = ?").run(taskId);
 
     const action = getNextAction(db, defaultPanes);
-    // At exactly the boundary, the SQL uses strict < so this should NOT trigger
-    // (SQLite strftime precision means this is at the boundary — not past it)
     expect(action.kind).not.toBe('long_running');
   });
 });
