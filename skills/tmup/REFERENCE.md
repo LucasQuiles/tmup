@@ -7,6 +7,10 @@ description: Complete reference for all 19 MCP tools and 9 CLI commands
 
 ## MCP Tools
 
+## Interactive Session Rule
+
+All workers are interactive Codex sessions in tmux panes. Use `tmup_dispatch` to start sessions, `tmup_reprompt` to send follow-up text into them, `tmup_harvest` to observe. Never use `codex exec` or Bash to drive panes.
+
 ### tmup_init
 Initializes or reattaches DB and session registry for a project directory. Does not create tmux panes (grid-setup.sh handles grid creation).
 ```json
@@ -87,11 +91,12 @@ Valid transitions: needs_review→pending, pending→cancelled, blocked→pendin
 ```
 
 ### tmup_dispatch
-Registers agent, claims task, and launches Codex process atomically.
+Registers agent, claims task, and launches an interactive Codex session in a pane. The session persists until the codex process exits. Follow-up communication goes through `tmup_reprompt`, not by running additional commands in the pane.
 ```json
 {"task_id": "003", "role": "implementer",
  "pane_index?": 2, "working_dir?": "/path", "resume_session_id?": "codex-session-abc"}
 → {"ok": true, "agent_id": "uuid", "pane_index": 2, "launched": true,
+   "session_mode": "interactive", "follow_up_via": "tmup_reprompt",
    "launch_output": "Dispatched implementer to pane 2 (agent uuid)"}
 ```
 
@@ -105,7 +110,7 @@ With `resume_session_id`, uses `codex resume <ID>` instead of fresh launch.
 ```
 
 ### tmup_reprompt
-Send a follow-up prompt to a running agent. Harvests pane output first (configurable).
+Send follow-up text to a running interactive session via `tmux send-keys -l` (literal mode). This is the only way to send text into the worker's interactive pane. Structured inter-agent messaging uses `tmup_send_message` separately.
 ```json
 {"pane_index": 3, "prompt": "Now implement the error handling for edge cases",
  "harvest_first?": true, "all?": false}
@@ -114,10 +119,10 @@ Send a follow-up prompt to a running agent. Harvests pane output first (configur
 ```
 
 Safety guards:
-- Only sends to idle agents (not actively "Working")
-- Rejects shell prompts (pane must have running agent)
+- Agent must be idle or explicitly queueable ("tab to queue" visible in scrollback)
+- Rejects shell prompts (pane must be hosting a Codex session, not at bare shell)
 - Uses literal mode (`-l`) to prevent prompt text from triggering key events
-- Double-Enter submission for reliable input
+- Text verified in scrollback before double-Enter submission
 
 ### tmup_pause / tmup_resume / tmup_teardown
 ```json
