@@ -8866,7 +8866,6 @@ function $constructor(name, initializer3, params) {
   Object.defineProperty(_, "name", { value: name });
   return _;
 }
-var $brand = Symbol("zod_brand");
 var $ZodAsyncError = class extends Error {
   constructor() {
     super(`Encountered Promise during synchronous parse. Use .parseAsync() instead.`);
@@ -11368,8 +11367,6 @@ function en_default() {
 }
 
 // ../node_modules/zod/v4/core/registries.js
-var $output = Symbol("ZodOutput");
-var $input = Symbol("ZodInput");
 var $ZodRegistry = class {
   constructor() {
     this._map = /* @__PURE__ */ new Map();
@@ -14125,9 +14122,6 @@ function isTerminal(status) {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 
-// ../node_modules/zod-to-json-schema/dist/esm/Options.js
-var ignoreOverride = Symbol("Let zodToJsonSchema decide on which parser to use");
-
 // ../node_modules/zod-to-json-schema/dist/esm/parsers/string.js
 var ALPHA_NUMERIC = new Set("ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvxyz0123456789");
 
@@ -16112,7 +16106,7 @@ var toolDefinitions = [
   },
   {
     name: "tmup_dispatch",
-    description: "Dispatch a Codex worker to a tmux pane. Registers agent, claims task, and launches Codex process atomically.",
+    description: "Start or resume an interactive Codex session in a tmux pane. The session persists until the process exits. Registers agent and claims task atomically. Use tmup_reprompt for follow-up communication, not Bash or codex exec.",
     inputSchema: {
       type: "object",
       properties: {
@@ -16164,7 +16158,7 @@ var toolDefinitions = [
   },
   {
     name: "tmup_reprompt",
-    description: "Send a follow-up prompt to a running agent. Harvests pane output first, then sends the new prompt via tmux. Only sends to idle agents (not actively working).",
+    description: "Send follow-up text into a running interactive Codex session via tmux send-keys (literal mode). Guarded: agent must be idle or queueable, pane must host a session (not bare shell). This is the only way to send text into the worker pane. Structured messaging uses tmup_send_message separately.",
     inputSchema: {
       type: "object",
       properties: {
@@ -16570,6 +16564,8 @@ ${m.payload}
         subject: task.subject,
         description: task.description,
         launched: true,
+        session_mode: "interactive",
+        follow_up_via: "tmup_reprompt",
         launch_output: launchResult
       });
     }
