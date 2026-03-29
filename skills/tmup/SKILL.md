@@ -15,6 +15,33 @@ tmup coordinates Claude Code (lead) and Codex CLI workers through a shared SQLit
 4. **Monitor**: Use `tmup_next_action` for synthesized recommendations
 5. **Teardown**: Use `tmup_teardown` when all tasks complete
 
+## Interactive Session Model
+
+tmup workers are long-lived interactive Codex sessions inside existing tmux panes. They are NOT one-shot `codex exec` commands.
+
+Before dispatch, a pane is just a shell. After dispatch, the pane hosts a live Codex session until that process exits.
+
+| Tool | What it does | Underlying mechanism |
+|------|-------------|---------------------|
+| `tmup_dispatch` | Start or resume an interactive Codex session in a pane | Sends a launcher script into an existing pane via `tmux send-keys`; the launcher starts or resumes codex as a foreground process |
+| `tmup_reprompt` | Send follow-up text into that existing session | `tmux send-keys -l` (literal mode) with guards: agent must be idle or explicitly queueable ("tab to queue" visible), pane must not be at shell prompt, text verified in scrollback before double-Enter submission |
+| `tmup_harvest` | Read pane scrollback — observation only | `tmux capture-pane`; returns codex_session_id and resume_command if available |
+
+### Anti-Patterns
+
+- Do NOT run `codex exec "prompt"` via Bash — workers are interactive, not one-shot
+- Do NOT type shell commands directly into worker panes
+- Do NOT treat each prompt as a fresh codex process
+- Do NOT use Bash tool to drive pane content
+- Do NOT use `tmup_harvest` as the primary way to communicate with workers — harvest is observational, not conversational
+
+### Correct Patterns
+
+- `tmup_dispatch` once per worker to start or resume that worker's interactive session
+- `tmup_reprompt` to continue, redirect, or nudge an existing idle or queueable session
+- `tmup_harvest` to inspect pane state or recover a session ID
+- `tmup_dispatch` with `resume_session_id` to relaunch a crashed worker into a resumed Codex session
+
 ## MCP Tools (Lead)
 
 | Tool | Purpose |
