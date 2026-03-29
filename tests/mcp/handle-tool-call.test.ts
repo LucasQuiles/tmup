@@ -173,6 +173,8 @@ describe('handleToolCall adapter integration', () => {
         subject: 'Dispatch subject',
         description: 'Dispatch description',
         launched: true,
+        session_mode: 'interactive',
+        follow_up_via: 'tmup_reprompt',
         launch_output: 'launched pane 2',
       }));
       expect(typeof result.agent_id).toBe('string');
