@@ -2,6 +2,7 @@
 # dispatch-agent.sh — Launch a Codex worker in a tmux pane with tmup env vars
 # Uses wrapper script pattern (NOT $(cat) in tmux command) for security
 set -euo pipefail
+source "$(dirname "$0")/lib/common.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$(dirname "$SCRIPT_DIR")"
@@ -34,7 +35,6 @@ LAUNCHER=""
 RESERVATION_ACTIVE=0
 DISPATCH_COMMITTED=0
 
-die() { echo "ERROR: $*" >&2; exit 1; }
 
 _dispatch_cleanup() {
   rm -f "${PROMPT_FILE:-}" "${LAUNCHER:-}" 2>/dev/null || true

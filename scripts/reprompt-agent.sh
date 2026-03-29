@@ -2,6 +2,7 @@
 # reprompt-agent.sh — Send follow-up prompt to a running Codex agent
 # CLI wrapper around send_reprompt() from tmux-helpers.sh
 set -euo pipefail
+source "$(dirname "$0")/lib/common.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -19,7 +20,6 @@ unset _arg _prev_arg
 source "$SCRIPT_DIR/lib/config.sh"
 source "$SCRIPT_DIR/lib/tmux-helpers.sh"
 
-die() { echo "ERROR: $*" >&2; exit 1; }
 
 SESSION_NAME="$CFG_SESSION_NAME"
 [[ -n "$SESSION_NAME" ]] || die "No active session (set TMUP_SESSION_NAME or create current-session pointer)"

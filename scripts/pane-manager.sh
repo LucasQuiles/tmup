@@ -1,6 +1,7 @@
 #!/bin/bash
 # pane-manager.sh — Manage pane reservations in grid-state.json
 set -euo pipefail
+source "$(dirname "$0")/lib/common.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/config.sh"
@@ -9,7 +10,6 @@ STATE_DIR="$CFG_STATE_DIR"
 GRID_STATE="$STATE_DIR/grid/grid-state.json"
 LOCK_FILE="$STATE_DIR/grid/grid-state.lock"
 
-die() { echo "ERROR: $*" >&2; exit 1; }
 
 [[ -f "$GRID_STATE" ]] || die "Grid state not found: $GRID_STATE"
 
