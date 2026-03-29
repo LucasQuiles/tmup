@@ -16164,7 +16164,7 @@ var toolDefinitions = [
       properties: {
         pane_index: { type: "number", description: "Pane index to reprompt (required unless all=true)" },
         prompt: { type: "string", description: "Follow-up prompt text to send" },
-        all: { type: "boolean", description: "Send to all idle agent panes (ignores pane_index)" },
+        all: { type: "boolean", description: "Send to all idle or queueable agent panes (ignores pane_index)" },
         harvest_first: { type: "boolean", description: "Capture scrollback before sending new prompt (default: true)" }
       },
       required: ["prompt"]

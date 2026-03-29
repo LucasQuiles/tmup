@@ -7,8 +7,6 @@ description: Complete reference for all 19 MCP tools and 9 CLI commands
 
 ## MCP Tools
 
-## Interactive Session Rule
-
 All workers are interactive Codex sessions in tmux panes. Use `tmup_dispatch` to start sessions, `tmup_reprompt` to send follow-up text into them, `tmup_harvest` to observe. Never use `codex exec` or Bash to drive panes.
 
 ### tmup_init

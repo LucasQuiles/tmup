@@ -94,7 +94,7 @@ tmup_teardown()
 
 When an agent finishes early or needs additional instructions:
 1. `tmup_harvest` -- capture current output (includes resume command if available)
-2. `tmup_reprompt` -- send follow-up prompt to idle agent
+2. `tmup_reprompt` -- send follow-up prompt to idle or queueable agent
 3. Monitor via `tmup_next_action` and `tmup_inbox`
 
 For resuming crashed agents:
@@ -103,7 +103,7 @@ For resuming crashed agents:
 
 ## Long-Running Task Detection
 
-`tmup_next_action` returns `long_running` kind when a task has been claimed for over 30 minutes without completion. Use `tmup_harvest` to check the agent's progress and `tmup_reprompt` to nudge if idle.
+`tmup_next_action` returns `long_running` kind when a task has been claimed for over 30 minutes without completion. Use `tmup_harvest` to check the agent's progress and `tmup_reprompt` to nudge if idle or queueable.
 
 ## Key Design Decisions
 
