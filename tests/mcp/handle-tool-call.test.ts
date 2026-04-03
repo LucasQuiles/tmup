@@ -190,6 +190,7 @@ describe('handleToolCall adapter integration', () => {
           '--db-path', dbPath,
           '--working-dir', projectDir,
           '--pane-index', '2',
+          '--worker-type', 'codex',
         ],
         {
           timeout: 30000,
