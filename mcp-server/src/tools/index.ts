@@ -244,6 +244,7 @@ export const toolDefinitions = [
         working_dir: { type: 'string', description: 'Working directory (defaults to project_dir)' },
         resume_session_id: { type: 'string', description: 'Codex session ID to resume instead of fresh launch (uses codex resume)' },
         worker_type: { type: 'string', enum: ['codex','claude_code'], description: 'Worker type' },
+        clone_isolation: { type: 'boolean', description: 'If true, dispatch worker into an isolated git clone (colony clone isolation)' },
       },
       required: ['task_id', 'role'],
     },
@@ -755,6 +756,9 @@ export async function handleToolCall(
       }
       const workerType = typeof args.worker_type === 'string' ? args.worker_type : 'codex';
       dispatchArgs.push('--worker-type', workerType);
+      if (args.clone_isolation === true) {
+        dispatchArgs.push('--clone-isolation');
+      }
 
       let launchResult: string;
       try {
