@@ -2,6 +2,7 @@
 # dispatch-agent.sh — Launch a Codex worker in a tmux pane with tmup env vars
 # Uses wrapper script pattern (NOT $(cat) in tmux command) for security
 set -euo pipefail
+source "$(dirname "$0")/lib/common.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$(dirname "$SCRIPT_DIR")"
@@ -34,7 +35,6 @@ LAUNCHER=""
 RESERVATION_ACTIVE=0
 DISPATCH_COMMITTED=0
 
-die() { echo "ERROR: $*" >&2; exit 1; }
 
 _dispatch_cleanup() {
   rm -f "${PROMPT_FILE:-}" "${LAUNCHER:-}" 2>/dev/null || true
@@ -79,7 +79,7 @@ trap '_dispatch_teardown 130' INT
 trap '_dispatch_teardown 143' TERM
 
 # Parse arguments
-ROLE="" PROMPT="" PANE_INDEX="" WORKING_DIR="" AGENT_ID="" TASK_ID="" DB_PATH="" RESUME_SESSION_ID=""
+ROLE="" PROMPT="" PANE_INDEX="" WORKING_DIR="" AGENT_ID="" TASK_ID="" DB_PATH="" RESUME_SESSION_ID="" WORKER_TYPE="codex"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -92,6 +92,7 @@ while [[ $# -gt 0 ]]; do
     --db-path) DB_PATH="$2"; shift 2 ;;
     --session) shift 2 ;;
     --resume-session-id) RESUME_SESSION_ID="$2"; shift 2 ;;
+    --worker-type) WORKER_TYPE="$2"; shift 2 ;;
     *) die "Unknown option: $1" ;;
   esac
 done
@@ -176,35 +177,41 @@ $(if [[ -n "$TASK_ID" ]]; then printf 'export TMUP_TASK_ID=%q' "$TASK_ID"; fi)
 $(if [[ -n "$RESUME_SESSION_ID" ]]; then printf 'export RESUME_SESSION_ID=%q' "$RESUME_SESSION_ID"; fi)
 _CLI_PATH=$(printf '%q' "$PLUGIN_DIR/cli/dist/tmup-cli.js")
 _HB_INTERVAL=${CFG_HEARTBEAT_INTERVAL:-60}
+_WORKER_TYPE=$(printf '%q' "$WORKER_TYPE")
+_PROMPT_FILE=$(printf '%q' "$PROMPT_FILE")
 
-# Read prompt into memory, then clean up prompt file
-_PROMPT=\$(cat $(printf '%q' "$PROMPT_FILE"))
-rm -f $(printf '%q' "$PROMPT_FILE") 2>/dev/null || true
-
-# Start background heartbeat loop
-(
-  while true; do
-    sleep "\$_HB_INTERVAL"
-    TMUP_AGENT_ID="\$TMUP_AGENT_ID" TMUP_DB="\$TMUP_DB" TMUP_PANE_INDEX="\$TMUP_PANE_INDEX" \\
-      TMUP_SESSION_NAME="\$TMUP_SESSION_NAME" TMUP_SESSION_DIR="\$TMUP_SESSION_DIR" \\
-      node "\$_CLI_PATH" heartbeat 2>/dev/null || true
-  done
-) &
-_HB_PID=\$!
-
-# Run codex as foreground process (not exec — so heartbeat can be cleaned up)
-if [[ -n "\${RESUME_SESSION_ID:-}" ]]; then
-  "\$CODEX_BIN" resume "\$RESUME_SESSION_ID"
-else
-  "\$CODEX_BIN" -a never -s danger-full-access --no-alt-screen -C "\$TMUP_WORKING_DIR" "\$_PROMPT"
-fi
-_EXIT=\$?
-
-# Kill heartbeat loop when codex exits
-kill "\$_HB_PID" 2>/dev/null
-wait "\$_HB_PID" 2>/dev/null
 rm -f "\$0" 2>/dev/null || true
-exit "\$_EXIT"
+
+if [[ "\$_WORKER_TYPE" == "claude_code" ]]; then
+  # Claude Code worker — uses MCP heartbeat, no background heartbeat loop needed
+  cd "\$TMUP_WORKING_DIR" && claude -p \\
+    --model sonnet \\
+    --permission-mode bypassPermissions \\
+    --plugin-dir /home/q/.claude/plugins/tmup \\
+    --max-budget-usd 3.00 \\
+    < "\$_PROMPT_FILE" \\
+    > "\$TMUP_WORKING_DIR/session-output.json" 2>&1
+else
+  # Start background heartbeat loop (runs independently — will be orphaned when we exec)
+  # Use nohup + disown to survive the exec
+  (
+    while true; do
+      sleep "\$_HB_INTERVAL"
+      TMUP_AGENT_ID="\$TMUP_AGENT_ID" TMUP_DB="\$TMUP_DB" TMUP_PANE_INDEX="\$TMUP_PANE_INDEX" \\
+        TMUP_SESSION_NAME="\$TMUP_SESSION_NAME" TMUP_SESSION_DIR="\$TMUP_SESSION_DIR" \\
+        node "\$_CLI_PATH" heartbeat 2>/dev/null || true
+    done
+  ) &
+  disown
+
+  # exec codex — replaces this shell process, becomes pane foreground
+  # The dispatch script will send the prompt via tmux send-keys after detecting codex is ready
+  if [[ -n "\${RESUME_SESSION_ID:-}" ]]; then
+    exec "\$CODEX_BIN" resume "\$RESUME_SESSION_ID"
+  else
+    exec "\$CODEX_BIN" -s danger-full-access --no-alt-screen -C "\$TMUP_WORKING_DIR"
+  fi
+fi
 WRAPPER
 chmod 700 "$LAUNCHER"
 
@@ -295,6 +302,29 @@ for _attempt in $(seq 1 $ATTEMPTS); do
 done
 
 echo "Dispatched $ROLE to pane $PANE_INDEX (agent $AGENT_ID)"
+
+# Wait for codex to be ready for input (idle at its prompt)
+echo "Waiting for codex to become ready..."
+for _ready_attempt in $(seq 1 20); do
+  sleep 1
+  _ready_check=$(tmux capture-pane -t "$PANE_TARGET" -p -S -5 2>/dev/null || true)
+  if echo "$_ready_check" | grep -qE '❯|›'; then
+    echo "Codex ready in pane $PANE_INDEX (attempt $_ready_attempt)"
+    break
+  fi
+done
+
+# Send the initial prompt via tmux send-keys
+if [[ -f "$PROMPT_FILE" ]]; then
+  # Use send-keys -l (literal) to avoid key interpretation
+  tmux send-keys -l -t "$PANE_TARGET" "$(cat "$PROMPT_FILE")" 2>/dev/null || true
+  sleep 0.3
+  tmux send-keys -t "$PANE_TARGET" Enter 2>/dev/null || true
+  sleep 0.2
+  tmux send-keys -t "$PANE_TARGET" Enter 2>/dev/null || true
+  rm -f "$PROMPT_FILE" 2>/dev/null || true
+  echo "Initial prompt sent to pane $PANE_INDEX"
+fi
 
 # Capture Codex session ID for resume capability
 # Race mitigation: after reading the last history entry, verify its cwd matches
