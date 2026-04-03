@@ -99,6 +99,21 @@ export type LifecycleEventType =
   | 'claude_task_completed'
   | 'claude_subagent_stop';
 
+// --- Colony runtime types (spec §4.2) ---
+
+export type CynefinDomain = 'clear' | 'complicated' | 'complex' | 'chaotic' | 'confusion';
+export type SdlcLoopLevel = 'L0' | 'L1' | 'L2' | 'L2.5' | 'L2.75';
+export type SdlcPhase = 'frame' | 'scout' | 'architect' | 'execute' | 'synthesize';
+export type WorkerType = 'codex' | 'claude_code';
+
+export interface TaskCorrectionRow {
+  task_id: string;
+  level: SdlcLoopLevel;
+  cycle: number;
+  max_cycles: number;
+  last_finding: string | null;
+}
+
 // --- Collaboration pattern types (P5.6) ---
 
 export type CollaborationPattern =
