@@ -243,6 +243,7 @@ export const toolDefinitions = [
         pane_index: { type: 'number', description: 'Specific pane (auto-select if omitted)' },
         working_dir: { type: 'string', description: 'Working directory (defaults to project_dir)' },
         resume_session_id: { type: 'string', description: 'Codex session ID to resume instead of fresh launch (uses codex resume)' },
+        worker_type: { type: 'string', enum: ['codex','claude_code'], description: 'Worker type' },
       },
       required: ['task_id', 'role'],
     },
@@ -752,6 +753,8 @@ export async function handleToolCall(
       if (args.resume_session_id && typeof args.resume_session_id === 'string') {
         dispatchArgs.push('--resume-session-id', args.resume_session_id);
       }
+      const workerType = typeof args.worker_type === 'string' ? args.worker_type : 'codex';
+      dispatchArgs.push('--worker-type', workerType);
 
       let launchResult: string;
       try {
