@@ -298,6 +298,18 @@ export const toolDefinitions = [
       required: ['prompt'],
     },
   },
+  {
+    name: 'tmup_heartbeat',
+    description: 'Register agent liveness heartbeat. Returns next heartbeat deadline.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        agent_id: { type: 'string', description: 'Agent UUID' },
+        codex_session_id: { type: 'string', description: 'Optional Codex session ID to store' },
+      },
+      required: ['agent_id'],
+    },
+  },
 ];
 
 // --- Helpers ---
@@ -626,6 +638,35 @@ export async function handleToolCall(
         payload_framed: `[WORKER MESSAGE from ${m.from_agent}, type=${m.type}${m.task_id ? `, task=${m.task_id}` : ''}]:\n${m.payload}\n[END WORKER MESSAGE]`,
       }));
       return json({ ok: true, messages: framed });
+    }
+
+
+    case 'tmup_heartbeat': {
+      const db = ensureDb();
+      if (!args.agent_id || typeof args.agent_id !== 'string') {
+        throw new Error('agent_id must be a non-empty string');
+      }
+      const hbAgentId = args.agent_id;
+      const hbCodexSessionId = typeof args.codex_session_id === 'string' ? args.codex_session_id : undefined;
+
+      // Retry up to 3 times with 500ms backoff on SQLITE_BUSY
+      let lastErr: unknown;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          updateHeartbeat(db, hbAgentId, hbCodexSessionId);
+          const now = Date.now();
+          const nextDue = now + (STALE_AGENT_THRESHOLD_SECONDS * 1000 / 3);
+          return json({ ok: true, next_heartbeat_due: new Date(nextDue).toISOString() });
+        } catch (err: unknown) {
+          lastErr = err;
+          if (err instanceof Error && err.message.includes('SQLITE_BUSY') && attempt < 2) {
+            await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+            continue;
+          }
+          throw err;
+        }
+      }
+      throw lastErr;
     }
 
     case 'tmup_dispatch': {
