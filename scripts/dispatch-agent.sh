@@ -79,7 +79,7 @@ trap '_dispatch_teardown 130' INT
 trap '_dispatch_teardown 143' TERM
 
 # Parse arguments
-ROLE="" PROMPT="" PANE_INDEX="" WORKING_DIR="" AGENT_ID="" TASK_ID="" DB_PATH="" RESUME_SESSION_ID="" WORKER_TYPE="codex"
+ROLE="" PROMPT="" PANE_INDEX="" WORKING_DIR="" AGENT_ID="" TASK_ID="" DB_PATH="" RESUME_SESSION_ID="" WORKER_TYPE="codex" CLONE_ISOLATION=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -93,6 +93,7 @@ while [[ $# -gt 0 ]]; do
     --session) shift 2 ;;
     --resume-session-id) RESUME_SESSION_ID="$2"; shift 2 ;;
     --worker-type) WORKER_TYPE="$2"; shift 2 ;;
+    --clone-isolation) CLONE_ISOLATION=1; shift ;;
     *) die "Unknown option: $1" ;;
   esac
 done
@@ -107,6 +108,19 @@ SESSION_NAME="$CFG_SESSION_NAME"
 [[ -n "$WORKING_DIR" ]] || die "--working-dir required (will not fall back to pwd)"
 validate_working_dir "$WORKING_DIR" || die "Invalid working directory: $WORKING_DIR"
 WORKING_DIR="$(cd "$WORKING_DIR" && pwd -P)" || die "Failed to resolve working directory: $WORKING_DIR"
+
+# Clone isolation: create isolated git clone for colony workers (council M4)
+if [[ "$CLONE_ISOLATION" -eq 1 ]]; then
+  _CLONE_MANAGER="${SDLC_OS_PLUGIN:-/home/q/.claude/plugins/sdlc-os}/colony/clone-manager.sh"
+  if [[ -f "$_CLONE_MANAGER" ]]; then
+    source "$_CLONE_MANAGER"
+    WORKING_DIR="$(colony_clone_create "$WORKING_DIR" "$SESSION_NAME" "$AGENT_ID")" || die "Failed to create isolated clone"
+    colony_clone_verify "$WORKING_DIR" || die "Clone verification failed"
+  else
+    die "Clone isolation requested but clone-manager.sh not found at $_CLONE_MANAGER"
+  fi
+  unset _CLONE_MANAGER
+fi
 
 validate_role "$ROLE"
 
