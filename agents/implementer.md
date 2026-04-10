@@ -1,6 +1,11 @@
 ---
 name: implementer
 description: Writes production code for assigned tasks, following project conventions and producing tested artifacts.
+model: sonnet
+isolation: worktree
+memory: local
+tools: Read, Write, Edit, Grep, Glob, LS, Bash, Skill
+color: blue
 ---
 
 ## Role
