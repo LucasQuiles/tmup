@@ -9,6 +9,24 @@ description: Complete reference for all 19 MCP tools and 9 CLI commands
 
 All workers are interactive Codex sessions in tmux panes. Use `tmup_dispatch` to start sessions, `tmup_reprompt` to send follow-up text into them, `tmup_harvest` to observe. Never use `codex exec` or Bash to drive panes.
 
+## Supervisor Loop
+
+- Treat each pane as a persistent worker lane, not a disposable process.
+- Use `tmup_dispatch` for fresh or resumed sessions only.
+- Use `tmup_harvest` to inspect current progress before changing course.
+- Use `tmup_reprompt` to continue or redirect an existing lane when it already has relevant context.
+- Prefer reprompting over respawning when a live pane is still the right worker.
+
+## Fresh Worker Runtime
+
+Fresh tmup workers launch with `gpt-5.4`, `model_context_window=1050000`, `model_auto_compact_token_limit=750000`, `model_reasoning_effort=high`, `model_reasoning_summary=low`, `plan_mode_reasoning_effort=xhigh`, `model_verbosity=low`, `service_tier=fast`, `tool_output_token_limit=50000`, `web_search=live`, `history.persistence=save-all`, `features.undo=true`, `shell_environment_policy.inherit=all`, `features.shell_snapshot=true`, `features.enable_request_compression=true`, `tui.notifications=true`, `background_terminal_max_timeout=600000`, autonomous shell execution, inline-mode scrollback, and Codex subagent caps of `max_threads=6`, `max_depth=2`, and `job_max_runtime_seconds=3600`. Planning-first behavior is supplied in the initial prompt rather than via an undocumented CLI startup flag.
+
+Tiered subagent pack:
+
+- `tmup-tier1` in `~/.codex/agents/tmup-tier1.toml` — `gpt-5.3-codex`
+- `tmup-tier2` in `~/.codex/agents/tmup-tier2.toml` — `gpt-5.2-codex`
+- `grid-setup.sh` syncs these files from plugin-local `agents/codex/` before returning success, including on existing-grid reattach paths
+
 ### tmup_init
 Initializes or reattaches DB and session registry for a project directory. Does not create tmux panes (grid-setup.sh handles grid creation).
 ```json
@@ -98,7 +116,7 @@ Registers agent, claims task, and launches an interactive Codex session in a pan
    "launch_output": "Dispatched implementer to pane 2 (agent uuid)"}
 ```
 
-With `resume_session_id`, uses `codex resume <ID>` instead of fresh launch.
+With `resume_session_id`, uses `codex resume <ID>` instead of fresh launch while reapplying the same model, context, compaction, approval, sandbox, and subagent-cap flags.
 
 ### tmup_harvest
 ```json
