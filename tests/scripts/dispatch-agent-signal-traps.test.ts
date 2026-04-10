@@ -38,6 +38,10 @@ describe('dispatch-agent.sh trap cleanup', () => {
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.mkdirSync(tmuxStateDir, { recursive: true });
 
+    writeExecutable('flock', `#!/bin/bash
+exit 0
+`);
+
     writeGridState([
       { index: 1, pane_id: '%1', status: 'available' },
     ]);
@@ -209,7 +213,7 @@ case "$cmd" in
     if [[ "$count" -eq 3 && "\${TMUX_FAKE_BLOCK_LAUNCH:-0}" == "1" ]]; then
       touch ${blockedFile}
       trap 'exit 0' INT TERM
-      while :; do /usr/bin/sleep 1; done
+      exec /usr/bin/tail -f /dev/null
     fi
     ;;
   capture-pane)
