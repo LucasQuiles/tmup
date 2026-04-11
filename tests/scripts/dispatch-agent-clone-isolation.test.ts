@@ -42,7 +42,6 @@ describe('dispatch-agent.sh clone isolation', () => {
 
     // Fake sdlc-os clone-manager.sh — creates a tmpdir per call and logs invocations
     const callLog = path.join(tmuxStateDir, 'clone-manager.log');
-    const cloneRootQuoted = shellQuote(cloneRoot);
     const callLogQuoted = shellQuote(callLog);
     fs.writeFileSync(
       path.join(sdlcOsPlugin, 'colony/clone-manager.sh'),
@@ -319,7 +318,6 @@ colony_clone_verify() {
     // Overwrite beforeEach's clone-manager with a verify-fails variant.
     // Create succeeds normally so the dispatcher reaches the verify step.
     const callLogFailVerify = shellQuote(path.join(tmuxStateDir, 'clone-manager-fail-verify.log'));
-    const cloneRootQuoted = shellQuote(cloneRoot);
     fs.writeFileSync(
       path.join(sdlcOsPlugin, 'colony/clone-manager.sh'),
       `#!/bin/bash

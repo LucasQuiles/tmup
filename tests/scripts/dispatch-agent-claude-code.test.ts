@@ -189,7 +189,12 @@ describe('dispatch-agent.sh worker-type claude_code', () => {
   });
 
   it('completes claude_code dispatch without entering the codex post-launch flow', () => {
-    writeNonCodexTmuxStub();
+    // Non-codex capture-pane output: no `Working (`, no `❯`, no `›`.
+    // Load-bearing for mutation detection — if the codex post-launch gate
+    // ever regresses, this stub's output would fail to satisfy the trust
+    // loop and ready loop, and the test's negative assertions below would
+    // still fire correctly.
+    writeTmuxStub('$ \\n');
 
     const output = execFileSync('bash', [
       DISPATCH_AGENT_SH,
@@ -257,7 +262,10 @@ describe('dispatch-agent.sh worker-type claude_code', () => {
     expect(launcher).toContain("_WORKER_TYPE=claude_code");
   });
 
-  function writeTmuxStub(): void {
+  // Default captureOutput emits the codex-ready markers (`Working (` and `❯`)
+  // that short-circuit the dispatch script's trust loop and ready loop. Pass
+  // a custom string (e.g. `'$ \\n'`) to simulate a non-codex pane.
+  function writeTmuxStub(captureOutput: string = 'Working (fake)\\n\u276f\\n'): void {
     const sendKeysLog = shellQuote(path.join(tmuxStateDir, 'send-keys.log'));
     writeExecutable('tmux', `#!/bin/bash
 set -euo pipefail
@@ -272,32 +280,7 @@ case "$cmd" in
     printf '%s\\n' "$*" >> ${sendKeysLog}
     ;;
   capture-pane)
-    printf 'Working (fake)\\n\u276f\\n'
-    ;;
-  *)
-    printf 'unexpected tmux command: %s\\n' "$cmd" >&2
-    exit 1
-    ;;
-esac
-`);
-  }
-
-  function writeNonCodexTmuxStub(): void {
-    const sendKeysLog = shellQuote(path.join(tmuxStateDir, 'send-keys.log'));
-    writeExecutable('tmux', `#!/bin/bash
-set -euo pipefail
-cmd="\${1:-}"
-shift || true
-
-case "$cmd" in
-  display-message)
-    printf 'bash\\n'
-    ;;
-  send-keys)
-    printf '%s\\n' "$*" >> ${sendKeysLog}
-    ;;
-  capture-pane)
-    printf '$ \\n'
+    printf '${captureOutput}'
     ;;
   *)
     printf 'unexpected tmux command: %s\\n' "$cmd" >&2
