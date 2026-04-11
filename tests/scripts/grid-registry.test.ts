@@ -12,7 +12,7 @@ describe('grid-registry.sh', () => {
   let registryFile: string;
 
   beforeEach(() => {
-    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tmup-reg-'));
+    tmpHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tmup-reg-')));
     fs.mkdirSync(path.join(tmpHome, '.local/state/tmup'), { recursive: true });
     registryFile = path.join(tmpHome, '.local/state/tmup/registry.json');
   });
@@ -54,7 +54,7 @@ describe('grid-registry.sh', () => {
     });
 
     it('shell-written entries store canonical project_dir', () => {
-      const realDir = path.join(tmpHome, 'real-project');
+      const realDir = fs.realpathSync(path.join(tmpHome, 'real-project') + '/..')  + '/real-project';
       const symlink = path.join(tmpHome, 'project-link');
       fs.mkdirSync(realDir, { recursive: true });
       fs.symlinkSync(realDir, symlink);
@@ -134,7 +134,7 @@ describe('grid-registry.sh', () => {
 
   describe('registry_lookup with canonical paths', () => {
     it('finds session when searching via symlink path', () => {
-      const realDir = path.join(tmpHome, 'real-project');
+      const realDir = fs.realpathSync(path.join(tmpHome, 'real-project') + '/..')  + '/real-project';
       const symlink = path.join(tmpHome, 'project-link');
       fs.mkdirSync(realDir, { recursive: true });
       fs.symlinkSync(realDir, symlink);
