@@ -2,6 +2,14 @@ import type { Database } from './types.js';
 import { logEvent } from './event-ops.js';
 import { MAX_DEPENDENCY_DEPTH } from './constants.js';
 
+/**
+ * Checks whether adding a dependency edge would introduce a cycle.
+ *
+ * @param db - Database handle used to traverse the dependency graph.
+ * @param taskId - Task that would gain a dependency.
+ * @param dependsOnId - Task that would be added as a prerequisite.
+ * @returns `true` when the new edge would create a cycle.
+ */
 export function checkCycle(db: Database, taskId: string, dependsOnId: string): boolean {
   // Adding edge (taskId depends on dependsOnId).
   // Cycle exists if dependsOnId already transitively depends on taskId.
@@ -23,7 +31,7 @@ export function checkCycle(db: Database, taskId: string, dependsOnId: string): b
 /**
  * Get the transitive closure of all tasks that depend on the given task.
  * Bounded by MAX_DEPENDENCY_DEPTH to prevent DoS.
- * Returns { dependents, truncated } so callers can detect incomplete traversal.
+ * Logs when traversal reaches the configured depth limit and returns discovered IDs.
  */
 export function getTransitiveDependents(
   db: Database,
@@ -53,6 +61,13 @@ export function getTransitiveDependents(
   return rows.map(r => r.id);
 }
 
+/**
+ * Adds a dependency edge after verifying both tasks exist and the new edge is acyclic.
+ *
+ * @param db - Database handle used for validation and persistence.
+ * @param taskId - Task that will depend on another task.
+ * @param dependsOnId - Task that must complete before `taskId`.
+ */
 export function addDependency(db: Database, taskId: string, dependsOnId: string): void {
   // Wrap in IMMEDIATE transaction to prevent concurrent cycle creation.
   // Without this, two concurrent addDependency calls could each pass the cycle
@@ -83,6 +98,13 @@ export function addDependency(db: Database, taskId: string, dependsOnId: string)
   add.immediate();
 }
 
+/**
+ * Checks whether a task still has any dependencies that are not completed.
+ *
+ * @param db - Database handle used to query dependency status.
+ * @param taskId - Task to inspect.
+ * @returns `true` when at least one prerequisite remains incomplete.
+ */
 export function hasUnmetDependencies(db: Database, taskId: string): boolean {
   const row = db.prepare(`
     SELECT 1 FROM task_deps td
@@ -93,6 +115,13 @@ export function hasUnmetDependencies(db: Database, taskId: string): boolean {
   return row !== undefined;
 }
 
+/**
+ * Finds dependents unblocked by a completed task and re-queues blocked ones as pending.
+ *
+ * @param db - Database handle used to evaluate and update dependent tasks.
+ * @param completedTaskId - Completed task that may unblock dependents.
+ * @returns IDs of dependent tasks whose prerequisites are now fully satisfied.
+ */
 export function findUnblockedDependents(db: Database, completedTaskId: string): string[] {
   const rows = db.prepare(`
     SELECT DISTINCT td.task_id FROM task_deps td
