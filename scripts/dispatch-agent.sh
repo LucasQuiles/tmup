@@ -250,9 +250,12 @@ if [[ -f "$GRID_STATE" ]]; then
     die "Failed to acquire grid state lock — another operation in progress"
   fi
 
-  # Pull pane status from the grid state under the held flock. Uses a single
-  # jq pass and flags "pane not found" as an empty result distinct from a
-  # found-but-no-status pane (we reject both, so a single empty check suffices).
+  # Pull pane status from the grid state under the held flock. A single jq
+  # pass returns empty EITHER when the pane index is missing from .panes[]
+  # OR when a matched pane carries no .status field. Both are fatal here,
+  # so one non-empty check covers both. tmup authors grid-state.json itself
+  # and always sets .status on every pane (see grid-setup.sh), so the
+  # "found but no status" branch is not a reachable runtime state.
   _pane_status=$(jq -r --argjson idx "$PANE_INDEX" '.panes[] | select(.index == $idx) | .status // ""' "$GRID_STATE")
   [[ -n "$_pane_status" ]] || {
     exec 9>&-
