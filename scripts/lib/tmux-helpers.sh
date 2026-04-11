@@ -45,13 +45,41 @@ capture_pane_scrollback() {
 
 codex_scrollback_shows_work() {
   local scrollback="${1:-}"
+  local prompt_text="${2:-}"
 
+  # `Working (` is Codex's active-work indicator and is not emitted as part of
+  # the user-typed prompt area, so it can be checked against the full scrollback.
   if echo "$scrollback" | grep -qF "Working ("; then
     return 0
   fi
 
-  # Tool execution lines are a second strong signal that Codex accepted the submit.
-  if echo "$scrollback" | grep -qiE \
+  # Tool execution lines are a second (weaker) signal that Codex accepted the
+  # submit. The weakness: the tool names below are also common English words
+  # inside dispatch prompts ("call update_plan when done", "apply_patch the
+  # file"). When we know the prompt text, strip any scrollback line whose
+  # trimmed content is contained in the prompt text so we don't match on the
+  # echo of the user's own submission.
+  local work_area="$scrollback"
+  if [[ -n "$prompt_text" ]]; then
+    # Strip any line whose content is an echo of the typed prompt. The input
+    # area may render as `❯ <text>`, `› <text>`, `│ > <text>`, or wrapped
+    # continuation without any marker, so we normalize each line by removing
+    # leading input markers + whitespace before the containment check.
+    work_area=$(awk -v p="$prompt_text" '
+      {
+        line = $0
+        # Strip leading input markers (❯, ›, │, >, box-drawing prefixes) + ws
+        sub(/^[[:space:]]*[❯›│|>[:space:]]+/, "", line)
+        sub(/^[[:space:]]+/, "", line)
+        sub(/[[:space:]]+$/, "", line)
+        if (length(line) < 4) { print; next }
+        if (index(p, line) > 0) { next }
+        print
+      }
+    ' <<<"$scrollback")
+  fi
+
+  if echo "$work_area" | grep -qiE \
     'functions\.[a-z_]+|multi_tool_use\.parallel|web\.(search_query|image_query|open|click|find|screenshot|sports|finance|weather|time)|apply_patch|exec_command|write_stdin|spawn_agent|send_input|wait_agent|read_mcp_resource|list_mcp_resources|list_mcp_resource_templates|update_plan'; then
     return 0
   fi
@@ -68,13 +96,13 @@ codex_scrollback_shows_idle_prompt() {
 }
 
 wait_for_codex_submit_confirmation() {
-  local session="${1:-}" pane_index="${2:-0}" delay_seconds="${3:-2}"
+  local session="${1:-}" pane_index="${2:-0}" delay_seconds="${3:-2}" prompt_text="${4:-}"
   local target="${session}:0.${pane_index}"
   local scrollback
 
   sleep "$delay_seconds"
   scrollback=$(capture_pane_scrollback "$target" "-40") || scrollback=""
-  codex_scrollback_shows_work "$scrollback"
+  codex_scrollback_shows_work "$scrollback" "$prompt_text"
 }
 
 # Check if a pane is at an idle shell prompt
@@ -155,7 +183,7 @@ send_codex_prompt_with_retry() {
       fi
 
       tmux send-keys -t "$target" Enter 2>/dev/null || true
-      if wait_for_codex_submit_confirmation "$session" "$pane_index" 2; then
+      if wait_for_codex_submit_confirmation "$session" "$pane_index" 2 "$prompt_text"; then
         return 0
       fi
     done
