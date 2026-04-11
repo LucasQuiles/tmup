@@ -54,3 +54,41 @@ export function getGridPaneCount(sessionDir?: string): { count: number; source: 
   }
   return { count: DEFAULT_PANE_COUNT, source: 'default-session-no-grid' };
 }
+
+/**
+ * Validate that a pane index corresponds to a real pane in the live grid.
+ * Prefers grid-state.json as authoritative (checks specific index existence,
+ * supports non-contiguous/sparse grids), falls back to count-based range check
+ * against DEFAULT_PANE_COUNT when no grid state is available.
+ *
+ * Matches the semantics of scripts/lib/validators.sh:validate_pane_index so
+ * shell and TypeScript entry points agree on what "valid" means.
+ */
+export function validatePaneIndexExists(
+  sessionDir: string | null | undefined,
+  paneIndex: number
+): { valid: true } | { valid: false; reason: string; validIndexes?: number[] } {
+  if (!Number.isInteger(paneIndex) || paneIndex < 0) {
+    return { valid: false, reason: `pane_index must be a non-negative integer, got: ${paneIndex}` };
+  }
+  if (sessionDir) {
+    const grid = readGridState(sessionDir);
+    if (grid && Array.isArray(grid.panes) && grid.panes.length > 0) {
+      const found = grid.panes.some(p => p.index === paneIndex);
+      if (found) return { valid: true };
+      return {
+        valid: false,
+        reason: `pane_index ${paneIndex} not in live grid`,
+        validIndexes: grid.panes.map(p => p.index).sort((a, b) => a - b),
+      };
+    }
+  }
+  // No grid state — fall back to default count range
+  if (paneIndex >= DEFAULT_PANE_COUNT) {
+    return {
+      valid: false,
+      reason: `pane_index ${paneIndex} out of range (max ${DEFAULT_PANE_COUNT - 1}, source: default)`,
+    };
+  }
+  return { valid: true };
+}

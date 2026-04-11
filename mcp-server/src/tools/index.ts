@@ -7,7 +7,7 @@ import {
   claimTask, claimSpecificTask, completeTask, failTask, cancelTask,
   sendMessage, getInbox, getUnreadCount, postCheckpoint,
   registerAgent, updateHeartbeat, getStaleAgents, recoverDeadClaim, getActiveAgents, getAgentByPaneIndex,
-  logEvent, getNextAction, getGridPaneCount, readGridState,
+  logEvent, getNextAction, getGridPaneCount, readGridState, validatePaneIndexExists,
   STALE_AGENT_THRESHOLD_SECONDS, MIN_PRIORITY, MAX_PRIORITY, TASK_STATUSES, FAILURE_REASONS, MESSAGE_TYPES,
 } from '@tmup/shared';
 import type { Database, TaskRow, TaskStatus } from '@tmup/shared';
@@ -662,11 +662,9 @@ export async function handleToolCall(
         const hbSessionId = getCurrentSessionId();
         if (hbSessionId) {
           const hbSessionDir = getSessionDir(hbSessionId);
-          if (hbSessionDir) {
-            const { count: hbGridPanes, source: hbGridSource } = getGridPaneCount(hbSessionDir);
-            if (hbGridSource !== 'default' && args.pane_index >= hbGridPanes) {
-              throw new Error(`pane_index ${args.pane_index} out of bounds (grid has ${hbGridPanes} panes)`);
-            }
+          const hbCheck = validatePaneIndexExists(hbSessionDir, args.pane_index);
+          if (!hbCheck.valid) {
+            throw new Error(hbCheck.reason);
           }
         }
         hbPaneIndex = args.pane_index;
@@ -713,9 +711,9 @@ export async function handleToolCall(
         // Validate against actual grid size when session exists
         const dispatchSessionId = getCurrentSessionId();
         const dispatchSessionDir = dispatchSessionId ? getSessionDir(dispatchSessionId) : undefined;
-        const { count: dispatchPaneCount, source: dispatchSource } = getGridPaneCount(dispatchSessionDir);
-        if (dispatchSource !== 'default' && rawPaneIndex >= dispatchPaneCount) {
-          throw new Error(`pane_index ${rawPaneIndex} out of range (grid has ${dispatchPaneCount} panes, max index: ${dispatchPaneCount - 1})`);
+        const dispatchCheck = validatePaneIndexExists(dispatchSessionDir, rawPaneIndex);
+        if (!dispatchCheck.valid) {
+          throw new Error(dispatchCheck.reason);
         }
         paneIndex = rawPaneIndex;
       }
@@ -809,9 +807,26 @@ export async function handleToolCall(
         // Mark agent shutdown AND release the claimed task back to pending.
         // Without the task unclaim, dead-claim recovery only scans active
         // stale agents — a shutdown agent's claimed task has no recovery path.
+        //
+        // Clone isolation provenance: when clone_isolation is true, the clone
+        // may have been created before the failure (clone-manager runs early
+        // in dispatch-agent.sh). Parse CLONE_DIR from the error's partial
+        // stdout so the task row still records where the isolated work
+        // started, even if dispatch ultimately failed. This gives operators
+        // a cleanup trail for orphaned clones.
         try {
           db.prepare("UPDATE agents SET status = 'shutdown' WHERE id = ?").run(agentId);
           db.prepare("UPDATE tasks SET status = 'pending', owner = NULL, failure_reason = 'launch_failed' WHERE id = ? AND owner = ?").run(taskId, agentId);
+          if (args.clone_isolation === true) {
+            const partialStdout = (launchErr as { stdout?: string | Buffer })?.stdout;
+            if (partialStdout) {
+              const stdoutStr = typeof partialStdout === 'string' ? partialStdout : partialStdout.toString('utf-8');
+              const cloneMatch = stdoutStr.match(/^CLONE_DIR=(.+)$/m);
+              if (cloneMatch) {
+                db.prepare('UPDATE tasks SET clone_dir = ? WHERE id = ?').run(cloneMatch[1].trim(), taskId);
+              }
+            }
+          }
           logEvent(db, agentId, 'task_unclaimed_on_launch_failure', { task_id: taskId });
         } catch (_) { /* best effort */ }
         throw new Error(`Dispatch registered agent ${agentId} but launch failed: ${msg}`);
@@ -871,9 +886,9 @@ export async function handleToolCall(
       // Validate against actual grid size when session exists
       const harvestSessionId = getCurrentSessionId();
       const harvestSessionDir = harvestSessionId ? getSessionDir(harvestSessionId) : undefined;
-      const { count: harvestPaneCount, source: harvestSource } = getGridPaneCount(harvestSessionDir);
-      if (harvestSource !== 'default' && paneIndex >= harvestPaneCount) {
-        throw new Error(`pane_index ${paneIndex} out of range (grid has ${harvestPaneCount} panes, max index: ${harvestPaneCount - 1})`);
+      const harvestCheck = validatePaneIndexExists(harvestSessionDir, paneIndex);
+      if (!harvestCheck.valid) {
+        throw new Error(harvestCheck.reason);
       }
       const lines = args.lines ?? 500;
       if (typeof lines !== 'number' || !Number.isInteger(lines) || lines < 1 || lines > 10000) {
@@ -1085,9 +1100,9 @@ export async function handleToolCall(
           throw new Error('pane_index required (non-negative integer) unless all=true');
         }
         const repromptSessionDir = getSessionDir(repromptSessionId);
-        const { count: repromptPaneCount, source: repromptSource } = getGridPaneCount(repromptSessionDir);
-        if (repromptSource !== 'default' && args.pane_index >= repromptPaneCount) {
-          throw new Error(`pane_index ${args.pane_index} out of range (grid has ${repromptPaneCount} panes)`);
+        const repromptCheck = validatePaneIndexExists(repromptSessionDir, args.pane_index);
+        if (!repromptCheck.valid) {
+          throw new Error(repromptCheck.reason);
         }
         scriptArgs.push('--pane', String(args.pane_index));
       }

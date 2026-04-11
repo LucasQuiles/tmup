@@ -3,7 +3,7 @@ import {
   claimTask, completeTask, failTask,
   sendMessage, getInbox, getUnreadCount, postCheckpoint,
   registerAgent, updateHeartbeat, getAgent,
-  getActiveTaskForAgent, getRecentEvents, getGridPaneCount,
+  getActiveTaskForAgent, getRecentEvents, getGridPaneCount, validatePaneIndexExists,
   FAILURE_REASONS, MESSAGE_TYPES, EVENT_TYPES,
 } from '@tmup/shared';
 import type { FailureReason, EventType } from '@tmup/shared';
@@ -203,9 +203,9 @@ export async function handleCommand(
 
       const existing = getAgent(db, agentId);
       if (!existing) {
-        const { count: gridPanes, source: gridSource } = getGridPaneCount(env.sessionDir);
-        if (gridSource !== 'default' && paneIndex >= gridPanes) {
-          throw new Error(`Invalid TMUP_PANE_INDEX: '${rawPaneIndex}' (grid has ${gridPanes} panes, max index: ${gridPanes - 1})`);
+        const cliCheck = validatePaneIndexExists(env.sessionDir, paneIndex);
+        if (!cliCheck.valid) {
+          throw new Error(`Invalid TMUP_PANE_INDEX: '${rawPaneIndex}' — ${cliCheck.reason}`);
         }
         registerAgent(db, agentId, paneIndex);
       }
