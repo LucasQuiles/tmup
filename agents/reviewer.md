@@ -1,6 +1,9 @@
 ---
 name: reviewer
 description: Reviews code and artifacts for quality, correctness, and convention adherence.
+model: sonnet
+tools: Read, Grep, Glob, LS, LSP
+color: orange
 ---
 
 ## Role

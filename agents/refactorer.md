@@ -1,6 +1,11 @@
 ---
 name: refactorer
 description: Restructures existing code for clarity, performance, or maintainability without changing behavior.
+model: sonnet
+isolation: worktree
+memory: local
+tools: Read, Write, Edit, Grep, Glob, LS, Bash, Skill
+color: pink
 ---
 
 ## Role
