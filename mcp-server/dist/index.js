@@ -16168,7 +16168,7 @@ var toolDefinitions = [
         role: { type: "string", description: "Agent role" },
         pane_index: { type: "number", description: "Specific pane (auto-select if omitted)" },
         working_dir: { type: "string", description: "Working directory (defaults to project_dir)" },
-        resume_session_id: { type: "string", description: "Codex session ID to resume instead of fresh launch (uses codex resume)" },
+        resume_session_id: { type: "string", description: "Codex session ID to resume instead of fresh launch (codex workers only \u2014 rejected for worker_type=claude_code, which is always fresh one-shot)" },
         worker_type: { type: "string", enum: ["codex", "claude_code"], description: "Worker type" },
         clone_isolation: { type: "boolean", description: "If true, dispatch worker into an isolated git clone (colony clone isolation)" }
       },
@@ -16647,10 +16647,13 @@ ${m.payload}
       if (paneIndex !== void 0) {
         dispatchArgs.push("--pane-index", String(paneIndex));
       }
+      const workerType = typeof args.worker_type === "string" ? args.worker_type : "codex";
       if (args.resume_session_id && typeof args.resume_session_id === "string") {
+        if (workerType === "claude_code") {
+          throw new Error(`resume_session_id is not supported for worker_type='claude_code' (one-shot workers cannot resume). Omit resume_session_id or use worker_type='codex'.`);
+        }
         dispatchArgs.push("--resume-session-id", args.resume_session_id);
       }
-      const workerType = typeof args.worker_type === "string" ? args.worker_type : "codex";
       dispatchArgs.push("--worker-type", workerType);
       db2.prepare("UPDATE tasks SET worker_type = ? WHERE id = ?").run(workerType, taskId);
       if (args.clone_isolation === true) {

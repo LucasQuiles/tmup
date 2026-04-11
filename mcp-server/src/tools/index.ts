@@ -242,7 +242,7 @@ export const toolDefinitions = [
         role: { type: 'string', description: 'Agent role' },
         pane_index: { type: 'number', description: 'Specific pane (auto-select if omitted)' },
         working_dir: { type: 'string', description: 'Working directory (defaults to project_dir)' },
-        resume_session_id: { type: 'string', description: 'Codex session ID to resume instead of fresh launch (uses codex resume)' },
+        resume_session_id: { type: 'string', description: 'Codex session ID to resume instead of fresh launch (codex workers only — rejected for worker_type=claude_code, which is always fresh one-shot)' },
         worker_type: { type: 'string', enum: ['codex','claude_code'], description: 'Worker type' },
         clone_isolation: { type: 'boolean', description: 'If true, dispatch worker into an isolated git clone (colony clone isolation)' },
       },
@@ -772,10 +772,18 @@ export async function handleToolCall(
       if (paneIndex !== undefined) {
         dispatchArgs.push('--pane-index', String(paneIndex));
       }
+      const workerType = typeof args.worker_type === 'string' ? args.worker_type : 'codex';
+
+      // Reject resume_session_id + claude_code combination.
+      // The claude_code launcher branch has no resume handling — it always
+      // runs as a fresh one-shot. Silently accepting resume_session_id would
+      // violate the public contract and produce unexpected fresh executions.
       if (args.resume_session_id && typeof args.resume_session_id === 'string') {
+        if (workerType === 'claude_code') {
+          throw new Error(`resume_session_id is not supported for worker_type='claude_code' (one-shot workers cannot resume). Omit resume_session_id or use worker_type='codex'.`);
+        }
         dispatchArgs.push('--resume-session-id', args.resume_session_id);
       }
-      const workerType = typeof args.worker_type === 'string' ? args.worker_type : 'codex';
       dispatchArgs.push('--worker-type', workerType);
 
       // Always persist worker_type on the task row (not only non-default).
