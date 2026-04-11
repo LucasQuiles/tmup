@@ -206,13 +206,15 @@ describe('schema-parity', () => {
 
     it('schema_version table records applied migrations', () => {
       const versions = db.prepare('SELECT version, description FROM schema_version ORDER BY version').all() as Array<{ version: number; description: string }>;
-      expect(versions.length).toBe(3);
+      expect(versions.length).toBe(4);
       expect(versions[0].version).toBe(1);
       expect(versions[0].description).toContain('dead states');
       expect(versions[1].version).toBe(2);
       expect(versions[1].description).toContain('schema constraints');
       expect(versions[2].version).toBe(3);
       expect(versions[2].description).toContain('P5');
+      expect(versions[3].version).toBe(4);
+      expect(versions[3].description).toContain('colony');
     });
   });
 

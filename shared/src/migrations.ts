@@ -256,6 +256,35 @@ export const migrations: Migration[] = [
       db.prepare('CREATE INDEX IF NOT EXISTS idx_lifecycle_events_type ON lifecycle_events(event_type, timestamp)').run();
     },
   },
+  {
+    version: 4,
+    description: 'Add SDLC-OS colony support: bead tracking, loop levels, worker types, corrections',
+    up: (db: Database) => {
+      // Colony columns on tasks table (spec §4.1)
+      db.prepare('ALTER TABLE tasks ADD COLUMN bead_id TEXT').run();
+      db.prepare("ALTER TABLE tasks ADD COLUMN sdlc_loop_level TEXT CHECK (sdlc_loop_level IS NULL OR sdlc_loop_level IN ('L0','L1','L2','L2.5','L2.75'))").run();
+      db.prepare('ALTER TABLE tasks ADD COLUMN output_path TEXT').run();
+      db.prepare('ALTER TABLE tasks ADD COLUMN clone_dir TEXT').run();
+      db.prepare("ALTER TABLE tasks ADD COLUMN worker_type TEXT DEFAULT 'codex' CHECK (worker_type IN ('codex','claude_code'))").run();
+      db.prepare('ALTER TABLE tasks ADD COLUMN bridge_synced INTEGER DEFAULT 0').run();
+
+      // Correction tracking table (spec §4.1)
+      db.prepare(`
+        CREATE TABLE IF NOT EXISTS task_corrections (
+          task_id TEXT NOT NULL REFERENCES tasks(id),
+          level TEXT NOT NULL CHECK (level IN ('L0','L1','L2','L2.5','L2.75')),
+          cycle INTEGER NOT NULL DEFAULT 0,
+          max_cycles INTEGER NOT NULL DEFAULT 2,
+          last_finding TEXT,
+          PRIMARY KEY (task_id, level)
+        )
+      `).run();
+
+      // Performance indexes
+      db.prepare('CREATE INDEX IF NOT EXISTS idx_tasks_bead ON tasks(bead_id) WHERE bead_id IS NOT NULL').run();
+      db.prepare('CREATE INDEX IF NOT EXISTS idx_tasks_colony ON tasks(sdlc_loop_level, status) WHERE sdlc_loop_level IS NOT NULL').run();
+    },
+  },
 ];
 
 /**
