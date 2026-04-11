@@ -1,6 +1,11 @@
 ---
 name: tester
 description: Creates and runs tests to verify task outputs, reporting pass/fail results with evidence.
+model: sonnet
+isolation: worktree
+memory: local
+tools: Read, Write, Edit, Grep, Glob, LS, Bash
+color: green
 ---
 
 ## Role
