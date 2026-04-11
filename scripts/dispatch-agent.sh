@@ -497,92 +497,94 @@ if ! tmux send-keys -t "$PANE_TARGET" "bash '$LAUNCHER'" Enter 2>/dev/null; then
 fi
 DISPATCH_COMMITTED=1
 
-# Trust prompt auto-accept — narrow check to exact pane only
-ATTEMPTS=$((CFG_TRUST_SECONDS / 2))
-[[ $ATTEMPTS -lt 1 ]] && ATTEMPTS=1
-for _attempt in $(seq 1 $ATTEMPTS); do
-  sleep 2
-  TRUST_CHECK=$(tmux capture-pane -t "$PANE_TARGET" -p -S -10 2>/dev/null || true)
-  # Narrow pattern: only accept the specific codex trust prompt ("Do you trust ...?")
-  # Anchored to start-of-line to avoid matching agent output paragraphs
-  if echo "$TRUST_CHECK" | grep -qiE "^\s*Do you trust\b"; then
-    tmux send-keys -t "$PANE_TARGET" Enter
-    echo "Trust prompt accepted (attempt $_attempt)"
-    break
-  fi
-  echo "$TRUST_CHECK" | grep -qF "Working (" && break
-done
-
 echo "Dispatched $ROLE to pane $PANE_INDEX (agent $AGENT_ID)"
 
-# Wait for codex to be ready for input (idle at its prompt)
-echo "Waiting for codex to become ready..."
-for _ready_attempt in $(seq 1 20); do
-  sleep 1
-  _ready_check=$(tmux capture-pane -t "$PANE_TARGET" -p -S -5 2>/dev/null || true)
-  if echo "$_ready_check" | grep -qE '❯|›'; then
-    echo "Codex ready in pane $PANE_INDEX (attempt $_ready_attempt)"
-    break
-  fi
-done
+if [[ "$WORKER_TYPE" != "claude_code" ]]; then
+  # Trust prompt auto-accept — narrow check to exact pane only
+  ATTEMPTS=$((CFG_TRUST_SECONDS / 2))
+  [[ $ATTEMPTS -lt 1 ]] && ATTEMPTS=1
+  for _attempt in $(seq 1 $ATTEMPTS); do
+    sleep 2
+    TRUST_CHECK=$(tmux capture-pane -t "$PANE_TARGET" -p -S -10 2>/dev/null || true)
+    # Narrow pattern: only accept the specific codex trust prompt ("Do you trust ...?")
+    # Anchored to start-of-line to avoid matching agent output paragraphs
+    if echo "$TRUST_CHECK" | grep -qiE "^\s*Do you trust\b"; then
+      tmux send-keys -t "$PANE_TARGET" Enter
+      echo "Trust prompt accepted (attempt $_attempt)"
+      break
+    fi
+    echo "$TRUST_CHECK" | grep -qF "Working (" && break
+  done
 
-# Send the initial prompt via tmux send-keys
-if [[ -f "$PROMPT_FILE" ]]; then
-  _prompt_text=$(cat "$PROMPT_FILE")
-  if send_codex_prompt_with_retry "$SESSION_NAME" "$PANE_INDEX" "$_prompt_text" "dispatch"; then
-    rm -f "$PROMPT_FILE" 2>/dev/null || true
-    echo "Initial prompt confirmed in pane $PANE_INDEX"
-  else
-    rm -f "$PROMPT_FILE" 2>/dev/null || true
-    die "failed to confirm Codex accepted the initial prompt for pane $PANE_INDEX"
-  fi
-fi
+  # Wait for codex to be ready for input (idle at its prompt)
+  echo "Waiting for codex to become ready..."
+  for _ready_attempt in $(seq 1 20); do
+    sleep 1
+    _ready_check=$(tmux capture-pane -t "$PANE_TARGET" -p -S -5 2>/dev/null || true)
+    if echo "$_ready_check" | grep -qE '❯|›'; then
+      echo "Codex ready in pane $PANE_INDEX (attempt $_ready_attempt)"
+      break
+    fi
+  done
 
-# Capture Codex session ID for resume capability
-# Race mitigation: after reading the last history entry, verify its cwd matches
-# our WORKING_DIR. In multi-dispatch scenarios, another agent's entry could be
-# the last one — the cwd check prevents cross-contamination.
-CODEX_SID=""
-HISTORY_FILE="$HOME/.codex/history.jsonl"
-if [[ -f "$HISTORY_FILE" ]]; then
-  sleep 2  # Wait for codex to register the session
-  _last_entry=$(tail -1 "$HISTORY_FILE" 2>/dev/null) || _last_entry=""
-  if [[ -n "$_last_entry" ]]; then
-    _entry_cwd=$(echo "$_last_entry" | jq -r '.cwd // ""' 2>/dev/null) || _entry_cwd=""
-    CODEX_SID=$(echo "$_last_entry" | jq -r '.session_id // ""' 2>/dev/null) || CODEX_SID=""
-    # Correlation check: reject if entry's working directory doesn't match ours
-    if [[ -n "$_entry_cwd" && "$_entry_cwd" != "$WORKING_DIR" ]]; then
-      echo "Session ID skipped: history entry cwd '$_entry_cwd' != working dir '$WORKING_DIR'" >&2
-      CODEX_SID=""
+  # Send the initial prompt via tmux send-keys
+  if [[ -f "$PROMPT_FILE" ]]; then
+    _prompt_text=$(cat "$PROMPT_FILE")
+    if send_codex_prompt_with_retry "$SESSION_NAME" "$PANE_INDEX" "$_prompt_text" "dispatch"; then
+      rm -f "$PROMPT_FILE" 2>/dev/null || true
+      echo "Initial prompt confirmed in pane $PANE_INDEX"
+    else
+      rm -f "$PROMPT_FILE" 2>/dev/null || true
+      die "failed to confirm Codex accepted the initial prompt for pane $PANE_INDEX"
     fi
   fi
-  unset _last_entry _entry_cwd
-  if [[ -n "$CODEX_SID" && "$CODEX_SID" != "null" ]]; then
-    # Store in grid-state.json pane entry
-    if [[ -f "$GRID_STATE" ]]; then
-      exec 9>"$LOCK_FILE"
-      if flock -w 5 9 2>/dev/null; then
-        _temp=$(mktemp "$STATE_DIR/grid/grid-state.XXXXXX" 2>/dev/null) || _temp=""
-        if [[ -n "$_temp" ]]; then
-          if jq --argjson idx "$PANE_INDEX" --arg csid "$CODEX_SID" \
-            '(.panes[] | select(.index == $idx)).codex_session_id = $csid' \
-            "$GRID_STATE" > "$_temp" 2>/dev/null && [[ -s "$_temp" ]]; then
-            mv "$_temp" "$GRID_STATE"
-          else
-            rm -f "$_temp"
+
+  # Capture Codex session ID for resume capability
+  # Race mitigation: after reading the last history entry, verify its cwd matches
+  # our WORKING_DIR. In multi-dispatch scenarios, another agent's entry could be
+  # the last one — the cwd check prevents cross-contamination.
+  CODEX_SID=""
+  HISTORY_FILE="$HOME/.codex/history.jsonl"
+  if [[ -f "$HISTORY_FILE" ]]; then
+    sleep 2  # Wait for codex to register the session
+    _last_entry=$(tail -1 "$HISTORY_FILE" 2>/dev/null) || _last_entry=""
+    if [[ -n "$_last_entry" ]]; then
+      _entry_cwd=$(echo "$_last_entry" | jq -r '.cwd // ""' 2>/dev/null) || _entry_cwd=""
+      CODEX_SID=$(echo "$_last_entry" | jq -r '.session_id // ""' 2>/dev/null) || CODEX_SID=""
+      # Correlation check: reject if entry's working directory doesn't match ours
+      if [[ -n "$_entry_cwd" && "$_entry_cwd" != "$WORKING_DIR" ]]; then
+        echo "Session ID skipped: history entry cwd '$_entry_cwd' != working dir '$WORKING_DIR'" >&2
+        CODEX_SID=""
+      fi
+    fi
+    unset _last_entry _entry_cwd
+    if [[ -n "$CODEX_SID" && "$CODEX_SID" != "null" ]]; then
+      # Store in grid-state.json pane entry
+      if [[ -f "$GRID_STATE" ]]; then
+        exec 9>"$LOCK_FILE"
+        if flock -w 5 9 2>/dev/null; then
+          _temp=$(mktemp "$STATE_DIR/grid/grid-state.XXXXXX" 2>/dev/null) || _temp=""
+          if [[ -n "$_temp" ]]; then
+            if jq --argjson idx "$PANE_INDEX" --arg csid "$CODEX_SID" \
+              '(.panes[] | select(.index == $idx)).codex_session_id = $csid' \
+              "$GRID_STATE" > "$_temp" 2>/dev/null && [[ -s "$_temp" ]]; then
+              mv "$_temp" "$GRID_STATE"
+            else
+              rm -f "$_temp"
+            fi
           fi
         fi
+        exec 9>&- 2>/dev/null || true
       fi
-      exec 9>&- 2>/dev/null || true
+
+      # Store in agents table via heartbeat
+      CLI_PATH="$PLUGIN_DIR/cli/dist/tmup-cli.js"
+      TMUP_AGENT_ID="$AGENT_ID" TMUP_DB="$DB_PATH" TMUP_PANE_INDEX="$PANE_INDEX" \
+        TMUP_SESSION_NAME="$SESSION_NAME" TMUP_SESSION_DIR="$STATE_DIR" \
+        node "$CLI_PATH" heartbeat --codex-session-id "$CODEX_SID" 2>/dev/null || true
+
+      echo "Codex session ID: $CODEX_SID"
+      echo "Resume: codex resume $CODEX_SID"
     fi
-
-    # Store in agents table via heartbeat
-    CLI_PATH="$PLUGIN_DIR/cli/dist/tmup-cli.js"
-    TMUP_AGENT_ID="$AGENT_ID" TMUP_DB="$DB_PATH" TMUP_PANE_INDEX="$PANE_INDEX" \
-      TMUP_SESSION_NAME="$SESSION_NAME" TMUP_SESSION_DIR="$STATE_DIR" \
-      node "$CLI_PATH" heartbeat --codex-session-id "$CODEX_SID" 2>/dev/null || true
-
-    echo "Codex session ID: $CODEX_SID"
-    echo "Resume: codex resume $CODEX_SID"
   fi
 fi

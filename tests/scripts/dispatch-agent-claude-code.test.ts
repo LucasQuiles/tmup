@@ -188,6 +188,37 @@ describe('dispatch-agent.sh worker-type claude_code', () => {
     }
   });
 
+  it('completes claude_code dispatch without entering the codex post-launch flow', () => {
+    writeNonCodexTmuxStub();
+
+    const output = execFileSync('bash', [
+      DISPATCH_AGENT_SH,
+      '--session', sessionName,
+      '--role', 'tester',
+      '--prompt', 'Claude code post-launch gate verification',
+      '--agent-id', 'agent-gate',
+      '--db-path', path.join(stateDir, 'tmup.db'),
+      '--working-dir', workingDir,
+      '--pane-index', '1',
+      '--worker-type', 'claude_code',
+    ], {
+      env: {
+        ...process.env,
+        HOME: tmpHome,
+        PATH: `${fakeBin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+      },
+      encoding: 'utf-8',
+      timeout: 30000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    expect(output).toContain('Dispatched tester to pane 1 (agent agent-gate)');
+    expect(output).not.toContain('Waiting for codex to become ready');
+    expect(output).not.toContain('Codex ready in pane');
+    expect(output).not.toContain('Initial prompt confirmed');
+    expect(output).not.toContain('Codex session ID:');
+  });
+
   it('claude_code worker does not source clone-manager.sh when --clone-isolation is omitted', () => {
     const output = execFileSync('bash', [
       DISPATCH_AGENT_SH,
@@ -242,6 +273,31 @@ case "$cmd" in
     ;;
   capture-pane)
     printf 'Working (fake)\\n\u276f\\n'
+    ;;
+  *)
+    printf 'unexpected tmux command: %s\\n' "$cmd" >&2
+    exit 1
+    ;;
+esac
+`);
+  }
+
+  function writeNonCodexTmuxStub(): void {
+    const sendKeysLog = shellQuote(path.join(tmuxStateDir, 'send-keys.log'));
+    writeExecutable('tmux', `#!/bin/bash
+set -euo pipefail
+cmd="\${1:-}"
+shift || true
+
+case "$cmd" in
+  display-message)
+    printf 'bash\\n'
+    ;;
+  send-keys)
+    printf '%s\\n' "$*" >> ${sendKeysLog}
+    ;;
+  capture-pane)
+    printf '$ \\n'
     ;;
   *)
     printf 'unexpected tmux command: %s\\n' "$cmd" >&2
