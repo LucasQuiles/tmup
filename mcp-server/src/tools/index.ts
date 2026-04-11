@@ -234,7 +234,7 @@ export const toolDefinitions = [
   },
   {
     name: 'tmup_dispatch',
-    description: 'Dispatch a Codex worker to a tmux pane. Registers agent, claims task, and launches Codex process atomically.',
+    description: 'Start or resume an interactive Codex session in a tmux pane. The session persists until the process exits. Registers agent and claims task atomically. Use this for fresh or resumed worker lanes; if a pane already has the right live context, prefer tmup_harvest plus tmup_reprompt instead of Bash, codex exec, or redispatching a replacement worker.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -251,7 +251,7 @@ export const toolDefinitions = [
   },
   {
     name: 'tmup_harvest',
-    description: 'Capture terminal scrollback from a pane (ANSI stripped). Fallback monitoring.',
+    description: 'Capture terminal scrollback from a pane (ANSI stripped). Use this to inspect a live worker lane before deciding whether to reprompt, wait, or resume.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -288,13 +288,13 @@ export const toolDefinitions = [
   },
   {
     name: 'tmup_reprompt',
-    description: 'Send a follow-up prompt to a running agent. Harvests pane output first, then sends the new prompt via tmux. Only sends to idle agents (not actively working).',
+    description: 'Send follow-up text into a running interactive Codex session via tmux send-keys (literal mode). Guarded: agent must be idle or queueable, pane must host a session (not bare shell). This is the supervisory control path for an existing worker lane and the only way to send text into the worker pane. Structured messaging uses tmup_send_message separately.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         pane_index: { type: 'number', description: 'Pane index to reprompt (required unless all=true)' },
         prompt: { type: 'string', description: 'Follow-up prompt text to send' },
-        all: { type: 'boolean', description: 'Send to all idle agent panes (ignores pane_index)' },
+        all: { type: 'boolean', description: 'Send to all idle or queueable agent panes (ignores pane_index)' },
         harvest_first: { type: 'boolean', description: 'Capture scrollback before sending new prompt (default: true)' },
       },
       required: ['prompt'],
@@ -787,6 +787,8 @@ export async function handleToolCall(
         subject: task.subject,
         description: task.description,
         launched: true,
+        session_mode: 'interactive',
+        follow_up_via: 'tmup_reprompt',
         launch_output: launchResult,
       });
     }

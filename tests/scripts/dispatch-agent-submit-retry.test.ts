@@ -41,18 +41,21 @@ describe('dispatch-agent.sh Codex submit verification', () => {
     writeTmuxStub();
     writeExecutable('sleep', '#!/bin/bash\nexit 0\n');
     writeExecutable('yq', '#!/bin/bash\nprintf \'null\\n\'\n');
+    // flock is Linux-only — stub it for cross-platform tests (signal-traps test does the same)
+    writeExecutable('flock', '#!/bin/bash\nexit 0\n');
 
     for (const commandName of [
       'awk',
       'cat',
       'chmod',
       'dirname',
-      'flock',
       'grep',
       'jq',
       'mktemp',
       'mv',
+      'perl',
       'rm',
+      'sed',
       'seq',
       'tail',
       'touch',

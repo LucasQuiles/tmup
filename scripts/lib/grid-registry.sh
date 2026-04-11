@@ -2,7 +2,32 @@
 # grid-registry.sh — Multi-grid registry for tmup (project-to-session mapping)
 
 _REGISTRY_FILE="$HOME/.local/state/tmup/registry.json"
-_REGISTRY_LOCK="$HOME/.local/state/tmup/registry.lock"
+_REGISTRY_LOCK_DIR="$HOME/.local/state/tmup/registry.lock.d"
+
+_registry_lock() {
+  local _attempts=0
+  while ! mkdir "$_REGISTRY_LOCK_DIR" 2>/dev/null; do
+    # Stale lock recovery: if lock dir is older than 10s, remove it
+    if [[ -d "$_REGISTRY_LOCK_DIR" ]]; then
+      local _lock_age
+      _lock_age=$(find "$_REGISTRY_LOCK_DIR" -maxdepth 0 -mmin +0.17 2>/dev/null)
+      if [[ -n "$_lock_age" ]]; then
+        rmdir "$_REGISTRY_LOCK_DIR" 2>/dev/null || true
+        continue
+      fi
+    fi
+    _attempts=$((_attempts + 1))
+    if [[ $_attempts -ge 50 ]]; then
+      return 1
+    fi
+    sleep 0.1
+  done
+  trap '_registry_unlock' EXIT INT TERM
+}
+
+_registry_unlock() {
+  rmdir "$_REGISTRY_LOCK_DIR" 2>/dev/null || true
+}
 
 _registry_init() {
   mkdir -p "$(dirname "$_REGISTRY_FILE")"
@@ -31,16 +56,14 @@ registry_register() {
   fi
   local timestamp
   timestamp=$(date -Iseconds)
-  exec 7>"$_REGISTRY_LOCK"
-  if ! flock -w 5 7 2>/dev/null; then
+  if ! _registry_lock; then
     echo "grid-registry: failed to acquire lock for register" >&2
-    exec 7>&- 2>/dev/null
     return 1
   fi
   local temp
   temp=$(mktemp "$HOME/.local/state/tmup/registry.XXXXXX") || {
     echo "grid-registry: failed to create temp file" >&2
-    exec 7>&- 2>/dev/null
+    _registry_unlock
     return 1
   }
   if jq --arg sn "$session_name" --arg pd "$project_dir" --arg dp "$db_path" --arg ts "$timestamp" \
@@ -50,25 +73,23 @@ registry_register() {
   else
     rm -f "$temp"
     echo "grid-registry: failed to write registry entry for '$session_name'" >&2
-    exec 7>&- 2>/dev/null
+    _registry_unlock
     return 1
   fi
-  exec 7>&- 2>/dev/null || true
+  _registry_unlock
 }
 
 registry_deregister() {
   local session_name="$1"
   [[ -f "$_REGISTRY_FILE" ]] || return 0
-  exec 7>"$_REGISTRY_LOCK"
-  if ! flock -w 5 7 2>/dev/null; then
+  if ! _registry_lock; then
     echo "grid-registry: failed to acquire lock for deregister" >&2
-    exec 7>&- 2>/dev/null
     return 1
   fi
   local temp
   temp=$(mktemp "$HOME/.local/state/tmup/registry.XXXXXX") || {
     echo "grid-registry: failed to create temp file" >&2
-    exec 7>&- 2>/dev/null
+    _registry_unlock
     return 1
   }
   if jq --arg sn "$session_name" 'del(.sessions[$sn])' \
@@ -77,10 +98,10 @@ registry_deregister() {
   else
     rm -f "$temp"
     echo "grid-registry: failed to write registry for deregister '$session_name'" >&2
-    exec 7>&- 2>/dev/null
+    _registry_unlock
     return 1
   fi
-  exec 7>&- 2>/dev/null || true
+  _registry_unlock
 }
 
 registry_lookup() {

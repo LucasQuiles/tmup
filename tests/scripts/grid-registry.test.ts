@@ -12,7 +12,7 @@ describe('grid-registry.sh', () => {
   let registryFile: string;
 
   beforeEach(() => {
-    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tmup-reg-'));
+    tmpHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tmup-reg-')));
     fs.mkdirSync(path.join(tmpHome, '.local/state/tmup'), { recursive: true });
     registryFile = path.join(tmpHome, '.local/state/tmup/registry.json');
   });
