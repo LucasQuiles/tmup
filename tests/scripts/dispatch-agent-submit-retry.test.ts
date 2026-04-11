@@ -123,12 +123,68 @@ describe('dispatch-agent.sh Codex submit verification', () => {
     expect(sendLog.filter((line) => line.includes(' C-c'))).toHaveLength(3);
   });
 
+  // Regression: C-1 — submit confirmation must not false-positive when the
+  // echoed prompt text contains a Codex tool name (update_plan, apply_patch,
+  // etc.). Before the fix, the scrollback regex matched against the typed
+  // prompt itself and reported "accepted" without Codex actually starting any
+  // work. This test feeds scrollback that only contains the echoed prompt
+  // line (no Working (...) marker, no real tool-call output) and asserts the
+  // retry loop exhausts instead of silently succeeding on the echo.
+  it('does not false-positive when echoed prompt contains tool names (C-1 regression)', () => {
+    // Codex scrollback after typing the prompt but before Enter is accepted:
+    // the input area shows `❯ <prompt text>` with tool names in it, and
+    // nothing else is happening yet. Every capture in this sequence models a
+    // pane stuck in that state — no Working (...), no tool-call output.
+    writeCaptureSequence([
+      'Working (boot)\\n',
+      '❯ call update_plan when done and apply_patch the README\\n',
+      '❯ call update_plan when done and apply_patch the README\\n',
+      '❯ call update_plan when done and apply_patch the README\\n',
+      '❯ call update_plan when done and apply_patch the README\\n',
+      '❯ call update_plan when done and apply_patch the README\\n',
+      '❯ call update_plan when done and apply_patch the README\\n',
+      '❯ call update_plan when done and apply_patch the README\\n',
+      '❯ call update_plan when done and apply_patch the README\\n',
+      '❯ call update_plan when done and apply_patch the README\\n',
+      '❯ call update_plan when done and apply_patch the README\\n',
+    ]);
+
+    let failure: { status?: number; stderr?: Buffer | string } | undefined;
+    try {
+      execFileSync('/bin/bash', dispatchArgsWithPrompt(
+        'agent-c1-regression',
+        'call update_plan when done and apply_patch the README'
+      ), {
+        env: shellEnv(),
+        encoding: 'utf-8',
+        timeout: 30000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (error: any) {
+      failure = error;
+    }
+
+    // If the fix is working: retry loop exhausts → status 1, stderr mentions
+    // the confirmation failure, 3 full retries happened (3 literal sends +
+    // 3 C-c interrupts).
+    // If the fix regresses: status 0 (first submit attempt reports success).
+    expect(failure?.status).toBe(1);
+    expect(String(failure?.stderr ?? '')).toContain('failed to confirm Codex accepted the initial prompt');
+
+    const sendLog = readSendLog();
+    expect(sendLog.filter((line) => line.startsWith('-l ') || line.includes(' -l '))).toHaveLength(3);
+  });
+
   function dispatchArgs(agentId: string): string[] {
+    return dispatchArgsWithPrompt(agentId, 'Dispatch retry verification');
+  }
+
+  function dispatchArgsWithPrompt(agentId: string, prompt: string): string[] {
     return [
       DISPATCH_AGENT_SH,
       '--session', sessionName,
       '--role', 'tester',
-      '--prompt', 'Dispatch retry verification',
+      '--prompt', prompt,
       '--agent-id', agentId,
       '--db-path', path.join(stateDir, 'tmup.db'),
       '--working-dir', PLUGIN_DIR,
