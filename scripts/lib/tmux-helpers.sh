@@ -296,9 +296,8 @@ send_reprompt() {
       echo "send_reprompt: failed to send Tab to $target" >&2
       return 1
     }
-    # Verify the queue was accepted — scrollback should still show active work
-    # (if it went idle, the Tab likely didn't register as a queue action)
-    sleep 1
+    # Verify queue acceptance — scrollback should still show active work
+    sleep 0.2
     local _queue_check
     _queue_check=$(capture_pane_scrollback "$target" "-10") || _queue_check=""
     if codex_scrollback_shows_active_work "$_queue_check"; then

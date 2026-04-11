@@ -194,15 +194,15 @@ export async function handleCommand(
         throw new Error('Invalid codex session ID format (must be alphanumeric + hyphens)');
       }
 
-      // Register agent if not exists
+      // Parse pane_index once — used for both registration and heartbeat correction
+      const rawPaneIndex = env.paneIndex ?? '0';
+      const paneIndex = parseInt(rawPaneIndex, 10);
+      if (isNaN(paneIndex) || paneIndex < 0) {
+        throw new Error(`Invalid TMUP_PANE_INDEX: '${rawPaneIndex}' (must be a non-negative integer)`);
+      }
+
       const existing = getAgent(db, agentId);
       if (!existing) {
-        const rawPaneIndex = env.paneIndex ?? '0';
-        const paneIndex = parseInt(rawPaneIndex, 10);
-        if (isNaN(paneIndex) || paneIndex < 0) {
-          throw new Error(`Invalid TMUP_PANE_INDEX: '${rawPaneIndex}' (must be a non-negative integer)`);
-        }
-        // Validate against actual grid size when session dir is available
         const { count: gridPanes, source: gridSource } = getGridPaneCount(env.sessionDir);
         if (gridSource !== 'default' && paneIndex >= gridPanes) {
           throw new Error(`Invalid TMUP_PANE_INDEX: '${rawPaneIndex}' (grid has ${gridPanes} panes, max index: ${gridPanes - 1})`);
@@ -210,11 +210,8 @@ export async function handleCommand(
         registerAgent(db, agentId, paneIndex);
       }
 
-      // Always pass pane_index from env so auto-selected panes (-1 at registration)
-      // get corrected to the real pane on first heartbeat.
-      const hbPaneIndex = env.paneIndex ? parseInt(env.paneIndex, 10) : undefined;
-      const validPaneIndex = hbPaneIndex !== undefined && !isNaN(hbPaneIndex) && hbPaneIndex >= 0 ? hbPaneIndex : undefined;
-      updateHeartbeat(db, agentId, codexSessionId, validPaneIndex);
+      // Pass pane_index so auto-selected panes (-1 at registration) get corrected
+      updateHeartbeat(db, agentId, codexSessionId, paneIndex);
       return { ok: true };
     }
 

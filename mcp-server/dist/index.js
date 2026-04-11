@@ -8161,22 +8161,13 @@ function registerAgent(db2, agentId, paneIndex, role) {
   logEvent(db2, agentId, "agent_registered", { pane_index: paneIndex, role });
 }
 function updateHeartbeat(db2, agentId, codexSessionId, paneIndex) {
-  let result;
-  if (codexSessionId !== void 0 && paneIndex !== void 0) {
-    result = db2.prepare(`
-      UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), codex_session_id = ?, pane_index = ?
-      WHERE id = ?
-    `).run(codexSessionId, paneIndex, agentId);
-  } else if (codexSessionId !== void 0) {
-    result = db2.prepare(`
-      UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), codex_session_id = ?
-      WHERE id = ?
-    `).run(codexSessionId, agentId);
-  } else if (paneIndex !== void 0) {
-    result = db2.prepare("UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), pane_index = ? WHERE id = ?").run(paneIndex, agentId);
-  } else {
-    result = db2.prepare("UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(agentId);
-  }
+  const result = db2.prepare(`
+    UPDATE agents SET
+      last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+      codex_session_id = COALESCE(?, codex_session_id),
+      pane_index = COALESCE(?, pane_index)
+    WHERE id = ?
+  `).run(codexSessionId ?? null, paneIndex ?? null, agentId);
   if (result.changes === 0) {
     throw new Error(`Agent ${agentId} not found \u2014 heartbeat requires prior registration`);
   }
