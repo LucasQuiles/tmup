@@ -16722,7 +16722,7 @@ ${m.payload}
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "pipe"]
         });
-        const cleaned = raw.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
+        const cleaned = raw.replace(/\x1b\[[\x30-\x3F]*[\x20-\x2F]*[\x40-\x7E]/g, "").replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
         let codexSessionId;
         if (harvestSessionDir) {
           try {
@@ -16847,7 +16847,7 @@ ${m.payload}
             "-S",
             "-500"
           ], { timeout: 5e3, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
-          harvestedOutput = raw.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
+          harvestedOutput = raw.replace(/\x1b\[[\x30-\x3F]*[\x20-\x2F]*[\x40-\x7E]/g, "").replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
         } catch {
         }
       }

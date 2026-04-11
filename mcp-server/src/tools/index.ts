@@ -855,7 +855,7 @@ export async function handleToolCall(
           stdio: ['pipe', 'pipe', 'pipe'],
         });
         // Strip ANSI escape codes
-        const cleaned = raw.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
+        const cleaned = raw.replace(/\x1b\[[\x30-\x3F]*[\x20-\x2F]*[\x40-\x7E]/g, '').replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '');
 
         // Include codex session ID from grid state for resume
         let codexSessionId: string | undefined;
@@ -1000,7 +1000,7 @@ export async function handleToolCall(
           const raw = execFileSync('tmux', [
             'capture-pane', '-t', `${repromptSessionId}:0.${args.pane_index}`, '-p', '-S', '-500',
           ], { timeout: 5000, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
-          harvestedOutput = raw.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
+          harvestedOutput = raw.replace(/\x1b\[[\x30-\x3F]*[\x20-\x2F]*[\x40-\x7E]/g, '').replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '');
         } catch { /* non-fatal */ }
       }
 
