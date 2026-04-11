@@ -16160,7 +16160,7 @@ var toolDefinitions = [
   },
   {
     name: "tmup_dispatch",
-    description: "Start or resume an interactive Codex session in a tmux pane. The session persists until the process exits. Registers agent and claims task atomically. Use this for fresh or resumed worker lanes; if a pane already has the right live context, prefer tmup_harvest plus tmup_reprompt instead of Bash, codex exec, or redispatching a replacement worker.",
+    description: "Dispatch a worker to a tmux pane. Two worker types: (1) codex (default) \u2014 interactive session that persists until process exits, supports tmup_reprompt and tmup_harvest as follow-up channels; (2) claude_code \u2014 one-shot execution, stdin/stdout, NO reprompt or harvest support. For interactive codex workers, if a pane already has the right live context, prefer tmup_harvest plus tmup_reprompt over redispatch.",
     inputSchema: {
       type: "object",
       properties: {
@@ -16652,6 +16652,9 @@ ${m.payload}
       }
       const workerType = typeof args.worker_type === "string" ? args.worker_type : "codex";
       dispatchArgs.push("--worker-type", workerType);
+      if (workerType !== "codex") {
+        db2.prepare("UPDATE tasks SET worker_type = ? WHERE id = ?").run(workerType, taskId);
+      }
       if (args.clone_isolation === true) {
         dispatchArgs.push("--clone-isolation");
       }
@@ -16678,6 +16681,7 @@ ${m.payload}
         const paneMatch = launchResult.match(/to pane (\d+)/);
         if (paneMatch) resolvedPane = parseInt(paneMatch[1], 10);
       }
+      const isClaudeCode = workerType === "claude_code";
       return json({
         ok: true,
         agent_id: agentId,
@@ -16687,8 +16691,9 @@ ${m.payload}
         subject: task.subject,
         description: task.description,
         launched: true,
-        session_mode: "interactive",
-        follow_up_via: "tmup_reprompt",
+        worker_type: workerType,
+        session_mode: isClaudeCode ? "one_shot" : "interactive",
+        follow_up_via: isClaudeCode ? "not_supported" : "tmup_reprompt",
         launch_output: launchResult
       });
     }
@@ -16834,6 +16839,17 @@ ${m.payload}
       }
       const repromptSessionId = getCurrentSessionId();
       if (!repromptSessionId) throw new Error("No active session");
+      if (typeof args.pane_index === "number") {
+        const paneAgent = getAgentByPaneIndex(db2, args.pane_index);
+        if (paneAgent) {
+          const ownedTask = db2.prepare(
+            "SELECT worker_type FROM tasks WHERE owner = ? AND status = 'claimed' ORDER BY claimed_at DESC LIMIT 1"
+          ).get(paneAgent.id);
+          if (ownedTask?.worker_type === "claude_code") {
+            throw new Error(`Cannot reprompt pane ${args.pane_index}: claude_code workers are one-shot and do not support tmup_reprompt. Dispatch a fresh worker with the follow-up task instead.`);
+          }
+        }
+      }
       const pluginRoot = resolve(dirname(process.argv[1] || ""), "../..");
       const scriptPath = join(pluginRoot, "scripts", "reprompt-agent.sh");
       let harvestedOutput;

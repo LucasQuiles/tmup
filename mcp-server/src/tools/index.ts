@@ -6,7 +6,7 @@ import {
   createTask, createTaskBatch, updateTask,
   claimTask, claimSpecificTask, completeTask, failTask, cancelTask,
   sendMessage, getInbox, getUnreadCount, postCheckpoint,
-  registerAgent, updateHeartbeat, getStaleAgents, recoverDeadClaim, getActiveAgents,
+  registerAgent, updateHeartbeat, getStaleAgents, recoverDeadClaim, getActiveAgents, getAgentByPaneIndex,
   logEvent, getNextAction, getGridPaneCount, readGridState,
   STALE_AGENT_THRESHOLD_SECONDS, MIN_PRIORITY, MAX_PRIORITY, TASK_STATUSES, FAILURE_REASONS, MESSAGE_TYPES,
 } from '@tmup/shared';
@@ -234,7 +234,7 @@ export const toolDefinitions = [
   },
   {
     name: 'tmup_dispatch',
-    description: 'Start or resume an interactive Codex session in a tmux pane. The session persists until the process exits. Registers agent and claims task atomically. Use this for fresh or resumed worker lanes; if a pane already has the right live context, prefer tmup_harvest plus tmup_reprompt instead of Bash, codex exec, or redispatching a replacement worker.',
+    description: 'Dispatch a worker to a tmux pane. Two worker types: (1) codex (default) — interactive session that persists until process exits, supports tmup_reprompt and tmup_harvest as follow-up channels; (2) claude_code — one-shot execution, stdin/stdout, NO reprompt or harvest support. For interactive codex workers, if a pane already has the right live context, prefer tmup_harvest plus tmup_reprompt over redispatch.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -777,6 +777,13 @@ export async function handleToolCall(
       }
       const workerType = typeof args.worker_type === 'string' ? args.worker_type : 'codex';
       dispatchArgs.push('--worker-type', workerType);
+
+      // Persist worker_type on the task row so downstream tools (tmup_reprompt,
+      // tmup_harvest) can gate behavior by worker type. The column defaults to
+      // 'codex' in the schema; non-default values must be written explicitly.
+      if (workerType !== 'codex') {
+        db.prepare("UPDATE tasks SET worker_type = ? WHERE id = ?").run(workerType, taskId);
+      }
       if (args.clone_isolation === true) {
         dispatchArgs.push('--clone-isolation');
       }
@@ -810,6 +817,9 @@ export async function handleToolCall(
         if (paneMatch) resolvedPane = parseInt(paneMatch[1], 10);
       }
 
+      // Contract differs by worker type: codex is interactive (reprompt-capable),
+      // claude_code is one-shot (no reprompt, no harvest — model calls MCP heartbeat)
+      const isClaudeCode = workerType === 'claude_code';
       return json({
         ok: true,
         agent_id: agentId,
@@ -819,8 +829,9 @@ export async function handleToolCall(
         subject: task.subject,
         description: task.description,
         launched: true,
-        session_mode: 'interactive',
-        follow_up_via: 'tmup_reprompt',
+        worker_type: workerType,
+        session_mode: isClaudeCode ? 'one_shot' : 'interactive',
+        follow_up_via: isClaudeCode ? 'not_supported' : 'tmup_reprompt',
         launch_output: launchResult,
       });
     }
@@ -989,6 +1000,22 @@ export async function handleToolCall(
 
       const repromptSessionId = getCurrentSessionId();
       if (!repromptSessionId) throw new Error('No active session');
+
+      // Reject claude_code panes — they are one-shot workers without an
+      // interactive session to reprompt into. Callers should dispatch a
+      // new worker for follow-up work on claude_code lanes.
+      // worker_type lives on tasks, so join agent → task by owner.
+      if (typeof args.pane_index === 'number') {
+        const paneAgent = getAgentByPaneIndex(db, args.pane_index);
+        if (paneAgent) {
+          const ownedTask = db.prepare(
+            "SELECT worker_type FROM tasks WHERE owner = ? AND status = 'claimed' ORDER BY claimed_at DESC LIMIT 1"
+          ).get(paneAgent.id) as { worker_type: string } | undefined;
+          if (ownedTask?.worker_type === 'claude_code') {
+            throw new Error(`Cannot reprompt pane ${args.pane_index}: claude_code workers are one-shot and do not support tmup_reprompt. Dispatch a fresh worker with the follow-up task instead.`);
+          }
+        }
+      }
 
       const pluginRoot = resolve(dirname(process.argv[1] || ''), '../..');
       const scriptPath = join(pluginRoot, 'scripts', 'reprompt-agent.sh');
