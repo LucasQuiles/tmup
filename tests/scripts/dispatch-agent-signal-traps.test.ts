@@ -38,9 +38,28 @@ describe('dispatch-agent.sh trap cleanup', () => {
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.mkdirSync(tmuxStateDir, { recursive: true });
 
-    writeExecutable('flock', `#!/bin/bash
-exit 0
-`);
+    writeExecutable('flock', '#!/bin/bash\nexit 0\n');
+    writeExecutable('sleep', '#!/bin/bash\nexit 0\n');
+    writeExecutable('yq', '#!/bin/bash\nprintf \'null\\n\'\n');
+
+    for (const commandName of [
+      'awk',
+      'cat',
+      'chmod',
+      'dirname',
+      'grep',
+      'jq',
+      'mktemp',
+      'mv',
+      'perl',
+      'rm',
+      'sed',
+      'seq',
+      'tail',
+      'touch',
+    ]) {
+      linkSystemBinary(commandName);
+    }
 
     writeGridState([
       { index: 1, pane_id: '%1', status: 'available' },
@@ -237,6 +256,19 @@ if [[ ! -f ${markerFile} ]]; then
 fi
 exec /usr/bin/sleep "$@"
 `);
+  }
+
+  function linkSystemBinary(fileName: string): void {
+    const filePath = path.join(fakeBin, fileName);
+    if (fs.existsSync(filePath)) {
+      return;
+    }
+
+    const systemPath = execFileSync('/bin/bash', ['-lc', `command -v ${fileName}`], {
+      encoding: 'utf-8',
+      env: process.env,
+    }).trim();
+    fs.symlinkSync(systemPath, filePath);
   }
 
   function shellQuote(value: string): string {
