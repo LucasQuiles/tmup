@@ -6817,7 +6817,7 @@ var init_constants = __esm({
     DEFAULT_PRIORITY = 50;
     DEFAULT_PANE_COUNT = 8;
     TASK_STATUSES = ["pending", "blocked", "claimed", "completed", "cancelled", "needs_review"];
-    FAILURE_REASONS = ["crash", "timeout", "logic_error", "artifact_missing", "dependency_invalid"];
+    FAILURE_REASONS = ["crash", "timeout", "logic_error", "artifact_missing", "dependency_invalid", "launch_failed"];
     MESSAGE_TYPES = ["direct", "broadcast", "finding", "blocker", "checkpoint", "shutdown"];
     EVENT_TYPES = [
       "task_created",
@@ -16233,7 +16233,8 @@ var toolDefinitions = [
       type: "object",
       properties: {
         agent_id: { type: "string", description: "Agent UUID" },
-        codex_session_id: { type: "string", description: "Optional Codex session ID to store" }
+        codex_session_id: { type: "string", description: "Optional Codex session ID to store" },
+        pane_index: { type: "number", description: "Actual pane index (corrects auto-selected -1 values)" }
       },
       required: ["agent_id"]
     }
@@ -16541,10 +16542,11 @@ ${m.payload}
       }
       const hbAgentId = args.agent_id;
       const hbCodexSessionId = typeof args.codex_session_id === "string" ? args.codex_session_id : void 0;
+      const hbPaneIndex = typeof args.pane_index === "number" && Number.isInteger(args.pane_index) && args.pane_index >= 0 ? args.pane_index : void 0;
       let lastErr;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          updateHeartbeat(db2, hbAgentId, hbCodexSessionId);
+          updateHeartbeat(db2, hbAgentId, hbCodexSessionId, hbPaneIndex);
           const now = Date.now();
           const nextDue = now + STALE_AGENT_THRESHOLD_SECONDS * 1e3 / 3;
           return json({ ok: true, next_heartbeat_due: new Date(nextDue).toISOString() });

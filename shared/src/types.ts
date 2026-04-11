@@ -17,7 +17,8 @@ export type FailureReason =
   | 'timeout'
   | 'logic_error'
   | 'artifact_missing'
-  | 'dependency_invalid';
+  | 'dependency_invalid'
+  | 'launch_failed';
 
 export type MessageType =
   | 'direct'

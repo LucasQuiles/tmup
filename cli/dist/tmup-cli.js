@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 var BACKOFF_BASE_SECONDS = 30;
 var MAX_ARTIFACT_SIZE_BYTES = 100 * 1024 * 1024;
 var DEFAULT_PANE_COUNT = 8;
-var FAILURE_REASONS = ["crash", "timeout", "logic_error", "artifact_missing", "dependency_invalid"];
+var FAILURE_REASONS = ["crash", "timeout", "logic_error", "artifact_missing", "dependency_invalid", "launch_failed"];
 var MESSAGE_TYPES = ["direct", "broadcast", "finding", "blocker", "checkpoint", "shutdown"];
 var EVENT_TYPES = [
   "task_created",

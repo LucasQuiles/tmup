@@ -33,7 +33,7 @@ export const DEFAULT_PANE_COUNT = 8;
 
 /** Runtime-validated enum arrays — canonical SSOT derived from types.ts unions. */
 export const TASK_STATUSES: readonly TaskStatus[] = ['pending', 'blocked', 'claimed', 'completed', 'cancelled', 'needs_review'] as const;
-export const FAILURE_REASONS: readonly FailureReason[] = ['crash', 'timeout', 'logic_error', 'artifact_missing', 'dependency_invalid'] as const;
+export const FAILURE_REASONS: readonly FailureReason[] = ['crash', 'timeout', 'logic_error', 'artifact_missing', 'dependency_invalid', 'launch_failed'] as const;
 export const MESSAGE_TYPES: readonly MessageType[] = ['direct', 'broadcast', 'finding', 'blocker', 'checkpoint', 'shutdown'] as const;
 export const EVENT_TYPES: readonly EventType[] = [
   'task_created', 'task_claimed', 'task_completed', 'task_failed',

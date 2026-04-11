@@ -1,7 +1,7 @@
 import type BetterSqlite3 from 'better-sqlite3';
 export type Database = BetterSqlite3.Database;
 export type TaskStatus = 'pending' | 'blocked' | 'claimed' | 'completed' | 'cancelled' | 'needs_review';
-export type FailureReason = 'crash' | 'timeout' | 'logic_error' | 'artifact_missing' | 'dependency_invalid';
+export type FailureReason = 'crash' | 'timeout' | 'logic_error' | 'artifact_missing' | 'dependency_invalid' | 'launch_failed';
 export type MessageType = 'direct' | 'broadcast' | 'finding' | 'blocker' | 'checkpoint' | 'shutdown';
 export type ArtifactStatus = 'pending' | 'published' | 'missing' | 'stale';
 export type AgentStatus = 'active' | 'idle' | 'shutdown';

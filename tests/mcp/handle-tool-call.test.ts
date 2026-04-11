@@ -252,9 +252,10 @@ describe('handleToolCall adapter integration', () => {
       expect(agent).toBeDefined();
       expect(agent?.status).toBe('shutdown');
 
-      const task = db.prepare('SELECT status, owner FROM tasks WHERE id = ?').get(taskId) as TaskRow;
-      expect(task.status).toBe('claimed');
-      expect(task.owner).toBe(agent?.id);
+      const task = db.prepare('SELECT status, owner, failure_reason FROM tasks WHERE id = ?').get(taskId) as TaskRow & { failure_reason: string | null };
+      expect(task.status).toBe('pending');
+      expect(task.owner).toBeNull();
+      expect(task.failure_reason).toBe('launch_failed');
     });
   });
 
