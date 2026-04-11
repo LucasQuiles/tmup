@@ -116,13 +116,14 @@ Registers agent, claims task, and launches an interactive Codex session in a pan
    "launch_output": "Dispatched implementer to pane 2 (agent uuid)"}
 ```
 
-With `resume_session_id`, uses `codex resume <ID>` instead of fresh launch while reapplying the same model, context, compaction, approval, sandbox, and subagent-cap flags.
+With `resume_session_id`, resumes the existing Codex session via `codex resume <ID>` internally while reapplying the full TMUP_CODEX_* runtime contract (model, context, compaction, approval, sandbox, reasoning effort, subagent caps). **Do not run bare `codex resume` — it bypasses the runtime contract.**
 
 ### tmup_harvest
 ```json
 {"pane_index": 3, "lines?": 200}
 → {"ok": true, "pane_index": 3, "lines": 200, "output": "...captured scrollback...",
-   "codex_session_id?": "abc123", "resume_command?": "codex resume abc123"}
+   "codex_session_id?": "abc123",
+   "resume_command?": "Use tmup_dispatch with resume_session_id: 'abc123' to resume with full runtime contract"}
 ```
 
 ### tmup_reprompt
@@ -145,7 +146,7 @@ Safety guards:
 {} / {"session_id?": "tmup-a3f1b2"} / {"force?": true}
 ```
 
-`tmup_resume` now returns `resume_commands` array with `codex resume <ID>` for each recovered task.
+`tmup_resume` returns a `resume_commands` array. Each entry instructs the caller to use `tmup_dispatch` with `resume_session_id` — **never** run bare `codex resume`, which would bypass the pinned runtime contract (model, sandbox, subagent caps).
 
 ## CLI Commands (tmup-cli)
 

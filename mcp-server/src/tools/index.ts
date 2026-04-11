@@ -651,7 +651,26 @@ export async function handleToolCall(
       }
       const hbAgentId = args.agent_id;
       const hbCodexSessionId = typeof args.codex_session_id === 'string' ? args.codex_session_id : undefined;
-      const hbPaneIndex = typeof args.pane_index === 'number' && Number.isInteger(args.pane_index) && args.pane_index >= 0 ? args.pane_index : undefined;
+
+      // Validate pane_index: reject invalid values explicitly (don't silently drop)
+      let hbPaneIndex: number | undefined;
+      if (args.pane_index !== undefined) {
+        if (typeof args.pane_index !== 'number' || !Number.isInteger(args.pane_index) || args.pane_index < 0) {
+          throw new Error(`pane_index must be a non-negative integer, got: ${JSON.stringify(args.pane_index)}`);
+        }
+        // Grid bounds check — matches CLI heartbeat validation
+        const hbSessionId = getCurrentSessionId();
+        if (hbSessionId) {
+          const hbSessionDir = getSessionDir(hbSessionId);
+          if (hbSessionDir) {
+            const { count: hbGridPanes, source: hbGridSource } = getGridPaneCount(hbSessionDir);
+            if (hbGridSource !== 'default' && args.pane_index >= hbGridPanes) {
+              throw new Error(`pane_index ${args.pane_index} out of bounds (grid has ${hbGridPanes} panes)`);
+            }
+          }
+        }
+        hbPaneIndex = args.pane_index;
+      }
 
       // Retry up to 3 times with 500ms backoff on SQLITE_BUSY
       let lastErr: unknown;
@@ -836,7 +855,7 @@ export async function handleToolCall(
           stdio: ['pipe', 'pipe', 'pipe'],
         });
         // Strip ANSI escape codes
-        const cleaned = raw.replace(/\x1b\[[0-9;]*m/g, '');
+        const cleaned = raw.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
 
         // Include codex session ID from grid state for resume
         let codexSessionId: string | undefined;
@@ -981,7 +1000,7 @@ export async function handleToolCall(
           const raw = execFileSync('tmux', [
             'capture-pane', '-t', `${repromptSessionId}:0.${args.pane_index}`, '-p', '-S', '-500',
           ], { timeout: 5000, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
-          harvestedOutput = raw.replace(/\x1b\[[0-9;]*m/g, '');
+          harvestedOutput = raw.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
         } catch { /* non-fatal */ }
       }
 
