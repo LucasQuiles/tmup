@@ -2,7 +2,7 @@
 
 > Multi-agent coordination for Claude Code + Codex CLI via SQLite WAL-backed task DAG
 > Version: 0.1.0 | 18 MCP tools | 9 CLI commands | 22 shared modules
-> 34 test files | All passing
+> 35 test files | All passing
 
 ---
 

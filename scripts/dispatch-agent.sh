@@ -312,7 +312,20 @@ _PROMPT_FILE=$(printf '%q' "$PROMPT_FILE")
 rm -f "\$0" 2>/dev/null || true
 
 if [[ "\$_WORKER_TYPE" == "claude_code" ]]; then
-  # Claude Code worker — uses MCP heartbeat, no background heartbeat loop needed
+  # Claude Code worker — platform-enforced background heartbeat (matches codex).
+  # The prompt tells the worker to call tmup_heartbeat via MCP, but that's
+  # policy-by-prompt. This background loop guarantees liveness so stale-agent
+  # recovery doesn't mistakenly reclaim a live one-shot lane.
+  (
+    while true; do
+      sleep "\$_HB_INTERVAL"
+      TMUP_AGENT_ID="\$TMUP_AGENT_ID" TMUP_DB="\$TMUP_DB" TMUP_PANE_INDEX="\$TMUP_PANE_INDEX" \\
+        TMUP_SESSION_NAME="\$TMUP_SESSION_NAME" TMUP_SESSION_DIR="\$TMUP_SESSION_DIR" \\
+        node "\$_CLI_PATH" heartbeat 2>/dev/null || true
+    done
+  ) &
+  _HB_PID=\$!
+
   cd "\$TMUP_WORKING_DIR" && claude -p \\
     --model sonnet \\
     --permission-mode bypassPermissions \\
@@ -320,7 +333,13 @@ if [[ "\$_WORKER_TYPE" == "claude_code" ]]; then
     --max-budget-usd 3.00 \\
     < "\$_PROMPT_FILE" \\
     > "\$TMUP_WORKING_DIR/session-output-\$TMUP_AGENT_ID.json" 2>&1
+  _EXIT=\$?
+
+  # Kill heartbeat loop when claude exits
+  kill "\$_HB_PID" 2>/dev/null
+  wait "\$_HB_PID" 2>/dev/null
   rm -f "\$_PROMPT_FILE" 2>/dev/null || true
+  exit "\$_EXIT"
 else
   # Codex worker — runtime contract pinned from policy.yaml-sourced env vars
   _INLINE_ARGS=()
