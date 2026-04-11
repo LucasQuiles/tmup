@@ -61,34 +61,42 @@ describe('system-inventory-parity', () => {
   });
 
   describe('index count matches live schema', () => {
-    it('documents 17 indexes', () => {
-      expect(inventoryDoc).toContain('17 indexes');
+    it('documents 19 indexes', () => {
+      expect(inventoryDoc).toContain('19 indexes');
     });
 
-    it('fresh DB has exactly 17 indexes', () => {
+    it('fresh DB has exactly 19 indexes', () => {
       const indexes = db.prepare(
         "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"
       ).all() as Array<{ name: string }>;
-      expect(indexes.length).toBe(17);
+      expect(indexes.length).toBe(19);
     });
   });
 
   describe('table count matches live schema', () => {
-    it('documents 16 tables', () => {
-      expect(inventoryDoc).toContain('16 tables');
+    it('documents 17 tables', () => {
+      expect(inventoryDoc).toContain('17 tables');
     });
 
-    it('fresh DB has exactly 16 tables', () => {
+    it('fresh DB has exactly 17 tables', () => {
       const tables = db.prepare(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
       ).all() as Array<{ name: string }>;
-      expect(tables.length).toBe(16);
+      expect(tables.length).toBe(17);
     });
   });
 
   describe('runnable test file count', () => {
     it('inventory documents the exact test file count', () => {
-      const testsDir = path.resolve(__dirname, '..');
+      // Must match the globs in vitest.config.ts:
+      //   include: ['tests/**/*.test.ts', 'shared/src/**/*.test.ts']
+      // If this drifts, the inventory headline will undercount the true
+      // runnable suite (e.g. shared/src/migrations.test.ts).
+      const pluginRoot = path.resolve(__dirname, '../..');
+      const scanRoots = [
+        path.join(pluginRoot, 'tests'),
+        path.join(pluginRoot, 'shared/src'),
+      ];
       const testFiles: string[] = [];
 
       function findTestFiles(dir: string) {
@@ -102,8 +110,13 @@ describe('system-inventory-parity', () => {
         }
       }
 
-      findTestFiles(testsDir);
-      // Extract documented count from inventory (e.g. "28 test files")
+      for (const root of scanRoots) {
+        if (fs.existsSync(root)) {
+          findTestFiles(root);
+        }
+      }
+
+      // Extract documented count from inventory (e.g. "33 test files")
       const countMatch = inventoryDoc.match(/(\d+)\s+test files/);
       expect(countMatch).not.toBeNull();
       const documentedCount = parseInt(countMatch![1], 10);

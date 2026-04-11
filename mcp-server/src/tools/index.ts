@@ -243,6 +243,8 @@ export const toolDefinitions = [
         pane_index: { type: 'number', description: 'Specific pane (auto-select if omitted)' },
         working_dir: { type: 'string', description: 'Working directory (defaults to project_dir)' },
         resume_session_id: { type: 'string', description: 'Codex session ID to resume instead of fresh launch (uses codex resume)' },
+        worker_type: { type: 'string', enum: ['codex','claude_code'], description: 'Worker type' },
+        clone_isolation: { type: 'boolean', description: 'If true, dispatch worker into an isolated git clone (colony clone isolation)' },
       },
       required: ['task_id', 'role'],
     },
@@ -296,6 +298,18 @@ export const toolDefinitions = [
         harvest_first: { type: 'boolean', description: 'Capture scrollback before sending new prompt (default: true)' },
       },
       required: ['prompt'],
+    },
+  },
+  {
+    name: 'tmup_heartbeat',
+    description: 'Register agent liveness heartbeat. Returns next heartbeat deadline.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        agent_id: { type: 'string', description: 'Agent UUID' },
+        codex_session_id: { type: 'string', description: 'Optional Codex session ID to store' },
+      },
+      required: ['agent_id'],
     },
   },
 ];
@@ -628,6 +642,35 @@ export async function handleToolCall(
       return json({ ok: true, messages: framed });
     }
 
+
+    case 'tmup_heartbeat': {
+      const db = ensureDb();
+      if (!args.agent_id || typeof args.agent_id !== 'string') {
+        throw new Error('agent_id must be a non-empty string');
+      }
+      const hbAgentId = args.agent_id;
+      const hbCodexSessionId = typeof args.codex_session_id === 'string' ? args.codex_session_id : undefined;
+
+      // Retry up to 3 times with 500ms backoff on SQLITE_BUSY
+      let lastErr: unknown;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          updateHeartbeat(db, hbAgentId, hbCodexSessionId);
+          const now = Date.now();
+          const nextDue = now + (STALE_AGENT_THRESHOLD_SECONDS * 1000 / 3);
+          return json({ ok: true, next_heartbeat_due: new Date(nextDue).toISOString() });
+        } catch (err: unknown) {
+          lastErr = err;
+          if (err instanceof Error && err.message.includes('SQLITE_BUSY') && attempt < 2) {
+            await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+            continue;
+          }
+          throw err;
+        }
+      }
+      throw lastErr;
+    }
+
     case 'tmup_dispatch': {
       const db = ensureDb();
 
@@ -710,6 +753,11 @@ export async function handleToolCall(
       }
       if (args.resume_session_id && typeof args.resume_session_id === 'string') {
         dispatchArgs.push('--resume-session-id', args.resume_session_id);
+      }
+      const workerType = typeof args.worker_type === 'string' ? args.worker_type : 'codex';
+      dispatchArgs.push('--worker-type', workerType);
+      if (args.clone_isolation === true) {
+        dispatchArgs.push('--clone-isolation');
       }
 
       let launchResult: string;

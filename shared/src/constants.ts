@@ -2,6 +2,7 @@ import type {
   EventType, FailureReason, MessageType, TaskStatus,
   PlanStatus, ReviewDisposition, AttemptStatus, EvidenceType,
   ExecutionTargetType, LifecycleEventType, CollaborationPattern,
+  CynefinDomain, SdlcLoopLevel, SdlcPhase, WorkerType,
 } from './types.js';
 
 /** Exponential backoff base for retry delays (seconds). Used by failTask and recoverDeadClaim. */
@@ -52,6 +53,30 @@ export const EVIDENCE_TYPES: readonly EvidenceType[] = ['diff', 'test_result', '
 
 /** Execution target enums (P5.4) */
 export const EXECUTION_TARGET_TYPES: readonly ExecutionTargetType[] = ['tmux_pane', 'local_shell', 'codex_cloud'] as const;
+
+export const CYNEFIN_DOMAINS: readonly CynefinDomain[] = ['clear', 'complicated', 'complex', 'chaotic', 'confusion'] as const;
+export const SDLC_LOOP_LEVELS: readonly SdlcLoopLevel[] = ['L0', 'L1', 'L2', 'L2.5', 'L2.75'] as const;
+export const SDLC_PHASES: readonly SdlcPhase[] = ['frame', 'scout', 'architect', 'execute', 'synthesize'] as const;
+export const WORKER_TYPES: readonly WorkerType[] = ['codex', 'claude_code'] as const;
+
+/** Per-session budget ceiling for Conductor sessions (spec §8). */
+export const CONDUCTOR_BUDGET_USD = 10.0;
+
+/** Per-worker budget ceiling (spec §8). */
+export const WORKER_BUDGET_SONNET_USD = 3.0;
+export const WORKER_BUDGET_HAIKU_USD = 0.5;
+
+/** Per-bead budget ceiling (spec §8). */
+export const BEAD_BUDGET_USD = 50.0;
+
+/** Heartbeat stale thresholds by Cynefin domain in seconds (spec §3.3, SC-COL-20). */
+export const HEARTBEAT_THRESHOLDS: Record<CynefinDomain, number> = {
+  clear: 300,       // 5 minutes
+  complicated: 900, // 15 minutes
+  complex: 1800,    // 30 minutes
+  chaotic: 300,     // 5 minutes (fast cycle)
+  confusion: 900,   // 15 minutes
+};
 
 /** Lifecycle bridge enums (P5.1) */
 export const LIFECYCLE_EVENT_TYPES: readonly LifecycleEventType[] = [

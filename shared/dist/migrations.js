@@ -1,3 +1,4 @@
+import { SDLC_LOOP_LEVELS, WORKER_TYPES } from './constants.js';
 /**
  * Get the current schema version from the database.
  * Returns 0 if the schema_version table doesn't exist (fresh or pre-migration DB).
@@ -222,6 +223,40 @@ export const migrations = [
             db.prepare('CREATE INDEX IF NOT EXISTS idx_evidence_packets_attempt ON evidence_packets(attempt_id)').run();
             db.prepare('CREATE INDEX IF NOT EXISTS idx_lifecycle_events_session ON lifecycle_events(session_id)').run();
             db.prepare('CREATE INDEX IF NOT EXISTS idx_lifecycle_events_type ON lifecycle_events(event_type, timestamp)').run();
+        },
+    },
+    {
+        version: 4,
+        description: 'Add SDLC-OS colony support: bead tracking, loop levels, worker types, corrections',
+        up: (db) => {
+            // Source-of-truth for SDLC loop levels and worker types lives in
+            // shared/src/types.ts (SdlcLoopLevel, WorkerType) and is re-exported
+            // as runtime-indexable arrays from shared/src/constants.ts. Template
+            // the CHECK constraints from those constants so the SQL and the TS
+            // enum cannot drift.
+            const loopLevelList = SDLC_LOOP_LEVELS.map((l) => `'${l}'`).join(',');
+            const workerTypeList = WORKER_TYPES.map((w) => `'${w}'`).join(',');
+            // Colony columns on tasks table (spec §4.1)
+            db.prepare('ALTER TABLE tasks ADD COLUMN bead_id TEXT').run();
+            db.prepare(`ALTER TABLE tasks ADD COLUMN sdlc_loop_level TEXT CHECK (sdlc_loop_level IS NULL OR sdlc_loop_level IN (${loopLevelList}))`).run();
+            db.prepare('ALTER TABLE tasks ADD COLUMN output_path TEXT').run();
+            db.prepare('ALTER TABLE tasks ADD COLUMN clone_dir TEXT').run();
+            db.prepare(`ALTER TABLE tasks ADD COLUMN worker_type TEXT DEFAULT 'codex' CHECK (worker_type IN (${workerTypeList}))`).run();
+            db.prepare('ALTER TABLE tasks ADD COLUMN bridge_synced INTEGER DEFAULT 0').run();
+            // Correction tracking table (spec §4.1)
+            db.prepare(`
+        CREATE TABLE IF NOT EXISTS task_corrections (
+          task_id TEXT NOT NULL REFERENCES tasks(id),
+          level TEXT NOT NULL CHECK (level IN (${loopLevelList})),
+          cycle INTEGER NOT NULL DEFAULT 0,
+          max_cycles INTEGER NOT NULL DEFAULT 2,
+          last_finding TEXT,
+          PRIMARY KEY (task_id, level)
+        )
+      `).run();
+            // Performance indexes
+            db.prepare('CREATE INDEX IF NOT EXISTS idx_tasks_bead ON tasks(bead_id) WHERE bead_id IS NOT NULL').run();
+            db.prepare('CREATE INDEX IF NOT EXISTS idx_tasks_colony ON tasks(sdlc_loop_level, status) WHERE sdlc_loop_level IS NOT NULL').run();
         },
     },
 ];
