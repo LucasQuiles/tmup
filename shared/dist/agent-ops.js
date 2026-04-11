@@ -11,13 +11,22 @@ export function registerAgent(db, agentId, paneIndex, role) {
   `).run(agentId, paneIndex, role ?? null);
     logEvent(db, agentId, 'agent_registered', { pane_index: paneIndex, role });
 }
-export function updateHeartbeat(db, agentId, codexSessionId) {
+export function updateHeartbeat(db, agentId, codexSessionId, paneIndex) {
     let result;
-    if (codexSessionId !== undefined) {
+    if (codexSessionId !== undefined && paneIndex !== undefined) {
+        result = db.prepare(`
+      UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), codex_session_id = ?, pane_index = ?
+      WHERE id = ?
+    `).run(codexSessionId, paneIndex, agentId);
+    }
+    else if (codexSessionId !== undefined) {
         result = db.prepare(`
       UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), codex_session_id = ?
       WHERE id = ?
     `).run(codexSessionId, agentId);
+    }
+    else if (paneIndex !== undefined) {
+        result = db.prepare("UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), pane_index = ? WHERE id = ?").run(paneIndex, agentId);
     }
     else {
         result = db.prepare("UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(agentId);

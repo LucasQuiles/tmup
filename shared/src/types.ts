@@ -48,7 +48,8 @@ export type EventType =
   | 'session_init'
   | 'session_pause'
   | 'session_resume'
-  | 'session_teardown';
+  | 'session_teardown'
+  | 'task_unclaimed_on_launch_failure';
 
 export type ArtifactDirection = 'produces' | 'requires';
 

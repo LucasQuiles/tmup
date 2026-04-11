@@ -121,7 +121,7 @@ WORKING_DIR="$(cd "$WORKING_DIR" && pwd -P)" || die "Failed to resolve working d
 
 # Clone isolation: create isolated git clone for colony workers (council M4)
 if [[ "$CLONE_ISOLATION" -eq 1 ]]; then
-  _CLONE_MANAGER="${SDLC_OS_PLUGIN:-/home/q/.claude/plugins/sdlc-os}/colony/clone-manager.sh"
+  _CLONE_MANAGER="${SDLC_OS_PLUGIN:-$HOME/.claude/plugins/sdlc-os}/colony/clone-manager.sh"
   if [[ -f "$_CLONE_MANAGER" ]]; then
     source "$_CLONE_MANAGER"
     WORKING_DIR="$(colony_clone_create "$WORKING_DIR" "$SESSION_NAME" "$AGENT_ID")" || die "Failed to create isolated clone"

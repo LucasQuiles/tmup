@@ -8160,13 +8160,20 @@ function registerAgent(db2, agentId, paneIndex, role) {
   `).run(agentId, paneIndex, role ?? null);
   logEvent(db2, agentId, "agent_registered", { pane_index: paneIndex, role });
 }
-function updateHeartbeat(db2, agentId, codexSessionId) {
+function updateHeartbeat(db2, agentId, codexSessionId, paneIndex) {
   let result;
-  if (codexSessionId !== void 0) {
+  if (codexSessionId !== void 0 && paneIndex !== void 0) {
+    result = db2.prepare(`
+      UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), codex_session_id = ?, pane_index = ?
+      WHERE id = ?
+    `).run(codexSessionId, paneIndex, agentId);
+  } else if (codexSessionId !== void 0) {
     result = db2.prepare(`
       UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), codex_session_id = ?
       WHERE id = ?
     `).run(codexSessionId, agentId);
+  } else if (paneIndex !== void 0) {
+    result = db2.prepare("UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), pane_index = ? WHERE id = ?").run(paneIndex, agentId);
   } else {
     result = db2.prepare("UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(agentId);
   }
@@ -16651,15 +16658,22 @@ ${m.payload}
         const msg = launchErr instanceof Error ? launchErr.message : String(launchErr);
         try {
           db2.prepare("UPDATE agents SET status = 'shutdown' WHERE id = ?").run(agentId);
+          db2.prepare("UPDATE tasks SET status = 'pending', owner = NULL, failure_reason = 'launch_failed' WHERE id = ? AND owner = ?").run(taskId, agentId);
+          logEvent(db2, agentId, "task_unclaimed_on_launch_failure", { task_id: taskId });
         } catch (_) {
         }
         throw new Error(`Dispatch registered agent ${agentId} but launch failed: ${msg}`);
+      }
+      let resolvedPane = paneIndex ?? "auto";
+      if (resolvedPane === "auto") {
+        const paneMatch = launchResult.match(/to pane (\d+)/);
+        if (paneMatch) resolvedPane = parseInt(paneMatch[1], 10);
       }
       return json({
         ok: true,
         agent_id: agentId,
         task_id: taskId,
-        pane_index: paneIndex ?? "auto",
+        pane_index: resolvedPane,
         role,
         subject: task.subject,
         description: task.description,

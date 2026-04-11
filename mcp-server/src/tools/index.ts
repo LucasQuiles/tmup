@@ -771,18 +771,29 @@ export async function handleToolCall(
       } catch (launchErr: unknown) {
         const msg = launchErr instanceof Error ? launchErr.message : String(launchErr);
         // Agent is registered and task is claimed but launch failed.
-        // Mark agent shutdown so dead-claim recovery can reassign.
+        // Mark agent shutdown AND release the claimed task back to pending.
+        // Without the task unclaim, dead-claim recovery only scans active
+        // stale agents — a shutdown agent's claimed task has no recovery path.
         try {
           db.prepare("UPDATE agents SET status = 'shutdown' WHERE id = ?").run(agentId);
+          db.prepare("UPDATE tasks SET status = 'pending', owner = NULL, failure_reason = 'launch_failed' WHERE id = ? AND owner = ?").run(taskId, agentId);
+          logEvent(db, agentId, 'task_unclaimed_on_launch_failure', { task_id: taskId });
         } catch (_) { /* best effort */ }
         throw new Error(`Dispatch registered agent ${agentId} but launch failed: ${msg}`);
+      }
+
+      // Extract actual pane from dispatch output when pane was auto-selected
+      let resolvedPane: number | string = paneIndex ?? 'auto';
+      if (resolvedPane === 'auto') {
+        const paneMatch = launchResult.match(/to pane (\d+)/);
+        if (paneMatch) resolvedPane = parseInt(paneMatch[1], 10);
       }
 
       return json({
         ok: true,
         agent_id: agentId,
         task_id: taskId,
-        pane_index: paneIndex ?? 'auto',
+        pane_index: resolvedPane,
         role,
         subject: task.subject,
         description: task.description,

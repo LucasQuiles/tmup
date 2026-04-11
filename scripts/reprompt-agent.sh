@@ -44,7 +44,7 @@ if [[ "$ALL" == "true" ]]; then
   for i in $(seq 0 $((CFG_TOTAL_PANES - 1))); do
     cmd=$(get_pane_command "$SESSION_NAME" "$i" 2>/dev/null) || continue
     case "$cmd" in bash|zsh|sh|"") echo "Pane $i: shell (skipped)"; continue ;; esac
-    if is_agent_idle "$SESSION_NAME" "$i"; then
+    if is_agent_idle "$SESSION_NAME" "$i" || is_agent_queueable "$SESSION_NAME" "$i"; then
       if send_reprompt "$SESSION_NAME" "$i" "$PROMPT" 2>/dev/null; then
         echo "Pane $i: sent"
         sent=$((sent + 1))

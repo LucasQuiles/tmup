@@ -660,13 +660,20 @@ function registerAgent(db, agentId, paneIndex, role) {
   `).run(agentId, paneIndex, role ?? null);
   logEvent(db, agentId, "agent_registered", { pane_index: paneIndex, role });
 }
-function updateHeartbeat(db, agentId, codexSessionId) {
+function updateHeartbeat(db, agentId, codexSessionId, paneIndex) {
   let result;
-  if (codexSessionId !== void 0) {
+  if (codexSessionId !== void 0 && paneIndex !== void 0) {
+    result = db.prepare(`
+      UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), codex_session_id = ?, pane_index = ?
+      WHERE id = ?
+    `).run(codexSessionId, paneIndex, agentId);
+  } else if (codexSessionId !== void 0) {
     result = db.prepare(`
       UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), codex_session_id = ?
       WHERE id = ?
     `).run(codexSessionId, agentId);
+  } else if (paneIndex !== void 0) {
+    result = db.prepare("UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), pane_index = ? WHERE id = ?").run(paneIndex, agentId);
   } else {
     result = db.prepare("UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(agentId);
   }
@@ -876,7 +883,9 @@ async function handleCommand(db, command, args, env) {
         }
         registerAgent(db, agentId, paneIndex);
       }
-      updateHeartbeat(db, agentId, codexSessionId);
+      const hbPaneIndex = env.paneIndex ? parseInt(env.paneIndex, 10) : void 0;
+      const validPaneIndex = hbPaneIndex !== void 0 && !isNaN(hbPaneIndex) && hbPaneIndex >= 0 ? hbPaneIndex : void 0;
+      updateHeartbeat(db, agentId, codexSessionId, validPaneIndex);
       return { ok: true };
     }
     case "status": {
