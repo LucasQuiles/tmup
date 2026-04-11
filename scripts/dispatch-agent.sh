@@ -129,6 +129,7 @@ if [[ "$CLONE_ISOLATION" -eq 1 ]]; then
   if [[ -f "$_CLONE_MANAGER" ]]; then
     source "$_CLONE_MANAGER"
     WORKING_DIR="$(colony_clone_create "$WORKING_DIR" "$SESSION_NAME" "$AGENT_ID")" || die "Failed to create isolated clone"
+    [[ -n "${WORKING_DIR//[[:space:]]/}" ]] || die "colony_clone_create returned empty or whitespace-only clone path (exit 0 with degenerate stdout)"
     colony_clone_verify "$WORKING_DIR" || die "Clone verification failed"
     # Emit structured line so MCP handler can persist clone_dir on the task row
     echo "CLONE_DIR=$WORKING_DIR"

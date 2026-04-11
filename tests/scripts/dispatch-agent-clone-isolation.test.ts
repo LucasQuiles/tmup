@@ -376,6 +376,136 @@ colony_clone_verify() {
     expect(log).toContain('verify failing for');
   });
 
+  it('fails closed when colony_clone_create exits 0 but emits nothing to stdout', () => {
+    // Defensive guard against the latent fail-open hole: if a
+    // (buggy / future-refactored / third-party-shimmed) clone-manager exits
+    // zero but emits empty stdout, WORKING_DIR would be the empty string
+    // and control would fall through to colony_clone_verify. The dispatcher
+    // must now short-circuit with an explicit named error that blames the
+    // real culprit (colony_clone_create), not the downstream verify step.
+    const callLogSilent = shellQuote(path.join(tmuxStateDir, 'clone-manager-silent.log'));
+    fs.writeFileSync(
+      path.join(sdlcOsPlugin, 'colony/clone-manager.sh'),
+      `#!/bin/bash
+colony_clone_create() {
+  echo "create exited 0 with empty stdout" >> ${callLogSilent}
+  return 0
+}
+colony_clone_verify() {
+  echo "verify should never run" >> ${callLogSilent}
+  return 0
+}
+`
+    );
+
+    let failure: { status?: number; stderr?: Buffer | string } | undefined;
+    try {
+      execFileSync('bash', [
+        DISPATCH_AGENT_SH,
+        '--session', sessionName,
+        '--role', 'tester',
+        '--prompt', 'empty stdout guard verification',
+        '--agent-id', 'agent-silent-create',
+        '--db-path', path.join(stateDir, 'tmup.db'),
+        '--working-dir', PLUGIN_DIR,
+        '--pane-index', '1',
+        '--clone-isolation',
+      ], {
+        env: {
+          ...process.env,
+          HOME: tmpHome,
+          SDLC_OS_PLUGIN: sdlcOsPlugin,
+          PATH: `${fakeBin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+        },
+        encoding: 'utf-8',
+        timeout: 30000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (error: any) {
+      failure = error;
+    }
+
+    expect(failure?.status).not.toBe(0);
+    const stderr = String(failure?.stderr ?? '');
+
+    // The new explicit guard fires with a message that names the real culprit.
+    // Message is "empty or whitespace-only" so it covers both the empty-stdout
+    // case (this test) and the whitespace-only case (next test).
+    expect(stderr).toContain('colony_clone_create returned empty or whitespace-only clone path');
+
+    // Negative guards: downstream error paths must NOT be reached
+    expect(stderr).not.toContain('Clone verification failed');
+    expect(stderr).not.toContain('Failed to create isolated clone');
+    expect(stderr).not.toContain('colony_clone_verify: clone_dir required');
+
+    // Log shows create was called; verify was never reached
+    const log = fs.readFileSync(path.join(tmuxStateDir, 'clone-manager-silent.log'), 'utf-8');
+    expect(log).toContain('create exited 0 with empty stdout');
+    expect(log).not.toContain('verify should never run');
+  });
+
+  it('fails closed when colony_clone_create exits 0 but emits whitespace-only stdout', () => {
+    // Tighter guard on the same fail-open path: whitespace-only output also
+    // bypasses a naive `[[ -n "$WORKING_DIR" ]]` check. The upgraded guard
+    // uses `${WORKING_DIR//[[:space:]]/}` to strip all whitespace characters
+    // (space, tab, newline) before the non-empty check. A clone-manager that
+    // emits only spaces must still fail closed with the explicit named error.
+    const callLogWs = shellQuote(path.join(tmuxStateDir, 'clone-manager-whitespace.log'));
+    fs.writeFileSync(
+      path.join(sdlcOsPlugin, 'colony/clone-manager.sh'),
+      `#!/bin/bash
+colony_clone_create() {
+  echo "create emitted whitespace-only stdout" >> ${callLogWs}
+  # Three literal spaces, then newline. Command substitution strips the
+  # trailing newline; the surviving value is three spaces.
+  echo "   "
+  return 0
+}
+colony_clone_verify() {
+  echo "verify should never run" >> ${callLogWs}
+  return 0
+}
+`
+    );
+
+    let failure: { status?: number; stderr?: Buffer | string } | undefined;
+    try {
+      execFileSync('bash', [
+        DISPATCH_AGENT_SH,
+        '--session', sessionName,
+        '--role', 'tester',
+        '--prompt', 'whitespace-only stdout guard verification',
+        '--agent-id', 'agent-ws-create',
+        '--db-path', path.join(stateDir, 'tmup.db'),
+        '--working-dir', PLUGIN_DIR,
+        '--pane-index', '1',
+        '--clone-isolation',
+      ], {
+        env: {
+          ...process.env,
+          HOME: tmpHome,
+          SDLC_OS_PLUGIN: sdlcOsPlugin,
+          PATH: `${fakeBin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+        },
+        encoding: 'utf-8',
+        timeout: 30000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (error: any) {
+      failure = error;
+    }
+
+    expect(failure?.status).not.toBe(0);
+    const stderr = String(failure?.stderr ?? '');
+    expect(stderr).toContain('colony_clone_create returned empty or whitespace-only clone path');
+    expect(stderr).not.toContain('Clone verification failed');
+    expect(stderr).not.toContain('Failed to create isolated clone');
+
+    const log = fs.readFileSync(path.join(tmuxStateDir, 'clone-manager-whitespace.log'), 'utf-8');
+    expect(log).toContain('create emitted whitespace-only stdout');
+    expect(log).not.toContain('verify should never run');
+  });
+
   function writeTmuxStub(): void {
     const sendKeysLog = shellQuote(path.join(tmuxStateDir, 'send-keys.log'));
     writeExecutable('tmux', `#!/bin/bash
