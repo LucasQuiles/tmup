@@ -16542,7 +16542,23 @@ ${m.payload}
       }
       const hbAgentId = args.agent_id;
       const hbCodexSessionId = typeof args.codex_session_id === "string" ? args.codex_session_id : void 0;
-      const hbPaneIndex = typeof args.pane_index === "number" && Number.isInteger(args.pane_index) && args.pane_index >= 0 ? args.pane_index : void 0;
+      let hbPaneIndex;
+      if (args.pane_index !== void 0) {
+        if (typeof args.pane_index !== "number" || !Number.isInteger(args.pane_index) || args.pane_index < 0) {
+          throw new Error(`pane_index must be a non-negative integer, got: ${JSON.stringify(args.pane_index)}`);
+        }
+        const hbSessionId = getCurrentSessionId();
+        if (hbSessionId) {
+          const hbSessionDir = getSessionDir(hbSessionId);
+          if (hbSessionDir) {
+            const { count: hbGridPanes, source: hbGridSource } = getGridPaneCount(hbSessionDir);
+            if (hbGridSource !== "default" && args.pane_index >= hbGridPanes) {
+              throw new Error(`pane_index ${args.pane_index} out of bounds (grid has ${hbGridPanes} panes)`);
+            }
+          }
+        }
+        hbPaneIndex = args.pane_index;
+      }
       let lastErr;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
@@ -16706,7 +16722,7 @@ ${m.payload}
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "pipe"]
         });
-        const cleaned = raw.replace(/\x1b\[[0-9;]*m/g, "");
+        const cleaned = raw.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
         let codexSessionId;
         if (harvestSessionDir) {
           try {
@@ -16831,7 +16847,7 @@ ${m.payload}
             "-S",
             "-500"
           ], { timeout: 5e3, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
-          harvestedOutput = raw.replace(/\x1b\[[0-9;]*m/g, "");
+          harvestedOutput = raw.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
         } catch {
         }
       }
