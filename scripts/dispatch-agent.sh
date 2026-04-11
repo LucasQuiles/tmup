@@ -187,12 +187,23 @@ $PLAN_FIRST_LINE
 - Do not ask the lead to spawn a replacement worker if this pane already has the relevant context; expect harvest-and-reprompt instead.
 - Keep your scope clean. Do not contaminate this lane with unrelated workstreams.
 
-## tmux Input Model
+$(if [[ "$WORKER_TYPE" == "claude_code" ]]; then cat <<CLAUDE_MODEL
+## Execution Model — ONE-SHOT
+- This is a single-turn execution, not an interactive session.
+- You will receive this full prompt via stdin and emit your output to stdout, then exit.
+- There is no follow-up via tmup_reprompt or tmup_harvest for this worker type.
+- Complete the task end-to-end in this single invocation, including any multi-step planning.
+- Call the MCP heartbeat tool periodically so the lead can track liveness; no background heartbeat runs on your behalf.
+CLAUDE_MODEL
+else cat <<CODEX_MODEL
+## tmux Input Model — INTERACTIVE SESSION
 - Follow-up instructions arrive through \`tmux send-keys\` via \`tmup_reprompt\`.
 - The supervisor may harvest pane output and reprompt you while the session remains alive.
 - When the interface is queueable, the supervisor may queue input while you are still working.
 - Never tell the lead to type shell commands directly into the pane to continue your work.
 - Treat reprompts as authoritative updates to objective, priority, or constraints.
+CODEX_MODEL
+fi)
 
 ## Process Context
 - You are operating inside a supervised SDLC workflow: discover, plan, implement, verify, review, and document.

@@ -18,7 +18,12 @@ SESSION_NAME="${CFG_SESSION_NAME:-}"
 [[ -n "$SESSION_NAME" ]] || { echo "No active session" >&2; exit 1; }
 
 ACCEPTED=0
-for pane_idx in $(seq 0 $((CFG_TOTAL_PANES - 1))); do
+# Prefer live grid-state.json over CFG_TOTAL_PANES — the live grid may have
+# non-contiguous indexes or differ from current config.
+_GRID_STATE="$CFG_STATE_DIR/grid/grid-state.json"
+_PANE_INDEXES=$(jq -r '.panes[].index' "$_GRID_STATE" 2>/dev/null) || _PANE_INDEXES=$(seq 0 $((CFG_TOTAL_PANES - 1)))
+
+for pane_idx in $_PANE_INDEXES; do
   CAPTURE=$(tmux capture-pane -t "$SESSION_NAME:0.$pane_idx" -p -S -10 2>/dev/null || true)
   # Narrow pattern: only match the specific codex trust prompt ("Do you trust ...?")
   if echo "$CAPTURE" | grep -qiE "^\s*Do you trust\b"; then
