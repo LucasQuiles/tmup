@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   retry_count INTEGER NOT NULL DEFAULT 0,
   failure_reason TEXT
     CHECK (failure_reason IS NULL OR failure_reason IN
-           ('crash','timeout','logic_error','artifact_missing','dependency_invalid')),
+           ('crash','timeout','logic_error','artifact_missing','dependency_invalid','launch_failed')),
   retry_after TEXT,
   result_summary TEXT CHECK (result_summary IS NULL OR length(result_summary) <= 10000),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),

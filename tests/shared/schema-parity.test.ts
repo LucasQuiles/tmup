@@ -47,7 +47,7 @@ function extractSqlEnumValues(schemaSql: string, tableName: string, columnName: 
  */
 const TS_ENUMS: Record<string, string[]> = {
   TaskStatus: ['pending', 'blocked', 'claimed', 'completed', 'cancelled', 'needs_review'],
-  FailureReason: ['crash', 'timeout', 'logic_error', 'artifact_missing', 'dependency_invalid'],
+  FailureReason: ['crash', 'timeout', 'logic_error', 'artifact_missing', 'dependency_invalid', 'launch_failed'],
   MessageType: ['direct', 'broadcast', 'finding', 'blocker', 'checkpoint', 'shutdown'],
   ArtifactStatus: ['pending', 'published', 'missing', 'stale'],
   AgentStatus: ['active', 'idle', 'shutdown'],

@@ -308,6 +308,7 @@ export const toolDefinitions = [
       properties: {
         agent_id: { type: 'string', description: 'Agent UUID' },
         codex_session_id: { type: 'string', description: 'Optional Codex session ID to store' },
+        pane_index: { type: 'number', description: 'Actual pane index (corrects auto-selected -1 values)' },
       },
       required: ['agent_id'],
     },
@@ -650,12 +651,13 @@ export async function handleToolCall(
       }
       const hbAgentId = args.agent_id;
       const hbCodexSessionId = typeof args.codex_session_id === 'string' ? args.codex_session_id : undefined;
+      const hbPaneIndex = typeof args.pane_index === 'number' && Number.isInteger(args.pane_index) && args.pane_index >= 0 ? args.pane_index : undefined;
 
       // Retry up to 3 times with 500ms backoff on SQLITE_BUSY
       let lastErr: unknown;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          updateHeartbeat(db, hbAgentId, hbCodexSessionId);
+          updateHeartbeat(db, hbAgentId, hbCodexSessionId, hbPaneIndex);
           const now = Date.now();
           const nextDue = now + (STALE_AGENT_THRESHOLD_SECONDS * 1000 / 3);
           return json({ ok: true, next_heartbeat_due: new Date(nextDue).toISOString() });
