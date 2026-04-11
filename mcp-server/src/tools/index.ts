@@ -817,11 +817,29 @@ export async function handleToolCall(
         throw new Error(`Dispatch registered agent ${agentId} but launch failed: ${msg}`);
       }
 
-      // Extract actual pane from dispatch output when pane was auto-selected
+      // Extract resolved metadata from dispatch output and persist:
+      // (a) actual pane_index — auto-selected workers register with -1,
+      //     so writing the real pane here closes the correction window
+      //     that previously depended on heartbeat (which claude_code
+      //     workers don't call with pane_index);
+      // (b) clone_dir when clone_isolation was requested — the schema
+      //     has a tasks.clone_dir column specifically for this purpose.
       let resolvedPane: number | string = paneIndex ?? 'auto';
       if (resolvedPane === 'auto') {
         const paneMatch = launchResult.match(/to pane (\d+)/);
         if (paneMatch) resolvedPane = parseInt(paneMatch[1], 10);
+      }
+      // Always correct the agent row's pane_index from dispatch output,
+      // not just when auto-selected — dispatch output is authoritative.
+      if (typeof resolvedPane === 'number') {
+        db.prepare('UPDATE agents SET pane_index = ? WHERE id = ?').run(resolvedPane, agentId);
+      }
+      // Persist clone_dir when clone_isolation was used
+      if (args.clone_isolation === true) {
+        const cloneMatch = launchResult.match(/^CLONE_DIR=(.+)$/m);
+        if (cloneMatch) {
+          db.prepare('UPDATE tasks SET clone_dir = ? WHERE id = ?').run(cloneMatch[1].trim(), taskId);
+        }
       }
 
       // Contract differs by worker type: codex is interactive (reprompt-capable),

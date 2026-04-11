@@ -16682,6 +16682,15 @@ ${m.payload}
         const paneMatch = launchResult.match(/to pane (\d+)/);
         if (paneMatch) resolvedPane = parseInt(paneMatch[1], 10);
       }
+      if (typeof resolvedPane === "number") {
+        db2.prepare("UPDATE agents SET pane_index = ? WHERE id = ?").run(resolvedPane, agentId);
+      }
+      if (args.clone_isolation === true) {
+        const cloneMatch = launchResult.match(/^CLONE_DIR=(.+)$/m);
+        if (cloneMatch) {
+          db2.prepare("UPDATE tasks SET clone_dir = ? WHERE id = ?").run(cloneMatch[1].trim(), taskId);
+        }
+      }
       const isClaudeCode = workerType === "claude_code";
       return json({
         ok: true,
