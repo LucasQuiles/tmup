@@ -130,6 +130,8 @@ if [[ "$CLONE_ISOLATION" -eq 1 ]]; then
     source "$_CLONE_MANAGER"
     WORKING_DIR="$(colony_clone_create "$WORKING_DIR" "$SESSION_NAME" "$AGENT_ID")" || die "Failed to create isolated clone"
     colony_clone_verify "$WORKING_DIR" || die "Clone verification failed"
+    # Emit structured line so MCP handler can persist clone_dir on the task row
+    echo "CLONE_DIR=$WORKING_DIR"
   else
     die "Clone isolation requested but clone-manager.sh not found at $_CLONE_MANAGER"
   fi
