@@ -6801,6 +6801,87 @@ var require_dist = __commonJS({
   }
 });
 
+// ../shared/dist/constants.js
+var BACKOFF_BASE_SECONDS, MAX_DEPENDENCY_DEPTH, MAX_ARTIFACT_SIZE_BYTES, STALE_AGENT_THRESHOLD_SECONDS, HEARTBEAT_INTERVAL_SECONDS, CLAIMED_DURATION_WARNING_SECONDS, MIN_PRIORITY, MAX_PRIORITY, DEFAULT_PRIORITY, DEFAULT_PANE_COUNT, TASK_STATUSES, FAILURE_REASONS, MESSAGE_TYPES, EVENT_TYPES, PLAN_STATUSES, REVIEW_DISPOSITIONS, ATTEMPT_STATUSES, EVIDENCE_TYPES, EXECUTION_TARGET_TYPES, CYNEFIN_DOMAINS, SDLC_LOOP_LEVELS, SDLC_PHASES, WORKER_TYPES, CONDUCTOR_BUDGET_USD, WORKER_BUDGET_SONNET_USD, WORKER_BUDGET_HAIKU_USD, BEAD_BUDGET_USD, HEARTBEAT_THRESHOLDS, LIFECYCLE_EVENT_TYPES, COLLABORATION_PATTERNS;
+var init_constants = __esm({
+  "../shared/dist/constants.js"() {
+    "use strict";
+    BACKOFF_BASE_SECONDS = 30;
+    MAX_DEPENDENCY_DEPTH = 100;
+    MAX_ARTIFACT_SIZE_BYTES = 100 * 1024 * 1024;
+    STALE_AGENT_THRESHOLD_SECONDS = 300;
+    HEARTBEAT_INTERVAL_SECONDS = 60;
+    CLAIMED_DURATION_WARNING_SECONDS = 1800;
+    MIN_PRIORITY = 0;
+    MAX_PRIORITY = 100;
+    DEFAULT_PRIORITY = 50;
+    DEFAULT_PANE_COUNT = 8;
+    TASK_STATUSES = ["pending", "blocked", "claimed", "completed", "cancelled", "needs_review"];
+    FAILURE_REASONS = ["crash", "timeout", "logic_error", "artifact_missing", "dependency_invalid"];
+    MESSAGE_TYPES = ["direct", "broadcast", "finding", "blocker", "checkpoint", "shutdown"];
+    EVENT_TYPES = [
+      "task_created",
+      "task_claimed",
+      "task_completed",
+      "task_failed",
+      "task_cancelled",
+      "task_unblocked",
+      "dependency_traversal_truncated",
+      "task_updated",
+      "agent_registered",
+      "agent_shutdown",
+      "agent_heartbeat_stale",
+      "dispatch",
+      "harvest",
+      "session_init",
+      "session_pause",
+      "session_resume",
+      "session_teardown"
+    ];
+    PLAN_STATUSES = ["proposed", "challenged", "operational", "superseded"];
+    REVIEW_DISPOSITIONS = ["approved", "challenged", "rejected"];
+    ATTEMPT_STATUSES = ["running", "succeeded", "failed", "abandoned"];
+    EVIDENCE_TYPES = ["diff", "test_result", "build_log", "screenshot", "review_comment", "artifact_checksum"];
+    EXECUTION_TARGET_TYPES = ["tmux_pane", "local_shell", "codex_cloud"];
+    CYNEFIN_DOMAINS = ["clear", "complicated", "complex", "chaotic", "confusion"];
+    SDLC_LOOP_LEVELS = ["L0", "L1", "L2", "L2.5", "L2.75"];
+    SDLC_PHASES = ["frame", "scout", "architect", "execute", "synthesize"];
+    WORKER_TYPES = ["codex", "claude_code"];
+    CONDUCTOR_BUDGET_USD = 10;
+    WORKER_BUDGET_SONNET_USD = 3;
+    WORKER_BUDGET_HAIKU_USD = 0.5;
+    BEAD_BUDGET_USD = 50;
+    HEARTBEAT_THRESHOLDS = {
+      clear: 300,
+      // 5 minutes
+      complicated: 900,
+      // 15 minutes
+      complex: 1800,
+      // 30 minutes
+      chaotic: 300,
+      // 5 minutes (fast cycle)
+      confusion: 900
+      // 15 minutes
+    };
+    LIFECYCLE_EVENT_TYPES = [
+      "claude_session_start",
+      "claude_session_end",
+      "claude_precompact",
+      "claude_task_completed",
+      "claude_subagent_stop"
+    ];
+    COLLABORATION_PATTERNS = [
+      "research",
+      "plan",
+      "implement",
+      "review",
+      "test",
+      "audit",
+      "document"
+    ];
+  }
+});
+
 // ../shared/dist/migrations.js
 function getSchemaVersion(db2) {
   try {
@@ -6844,6 +6925,7 @@ var migrations;
 var init_migrations = __esm({
   "../shared/dist/migrations.js"() {
     "use strict";
+    init_constants();
     migrations = [
       {
         version: 1,
@@ -7015,6 +7097,32 @@ var init_migrations = __esm({
           db2.prepare("CREATE INDEX IF NOT EXISTS idx_lifecycle_events_session ON lifecycle_events(session_id)").run();
           db2.prepare("CREATE INDEX IF NOT EXISTS idx_lifecycle_events_type ON lifecycle_events(event_type, timestamp)").run();
         }
+      },
+      {
+        version: 4,
+        description: "Add SDLC-OS colony support: bead tracking, loop levels, worker types, corrections",
+        up: (db2) => {
+          const loopLevelList = SDLC_LOOP_LEVELS.map((l) => `'${l}'`).join(",");
+          const workerTypeList = WORKER_TYPES.map((w) => `'${w}'`).join(",");
+          db2.prepare("ALTER TABLE tasks ADD COLUMN bead_id TEXT").run();
+          db2.prepare(`ALTER TABLE tasks ADD COLUMN sdlc_loop_level TEXT CHECK (sdlc_loop_level IS NULL OR sdlc_loop_level IN (${loopLevelList}))`).run();
+          db2.prepare("ALTER TABLE tasks ADD COLUMN output_path TEXT").run();
+          db2.prepare("ALTER TABLE tasks ADD COLUMN clone_dir TEXT").run();
+          db2.prepare(`ALTER TABLE tasks ADD COLUMN worker_type TEXT DEFAULT 'codex' CHECK (worker_type IN (${workerTypeList}))`).run();
+          db2.prepare("ALTER TABLE tasks ADD COLUMN bridge_synced INTEGER DEFAULT 0").run();
+          db2.prepare(`
+        CREATE TABLE IF NOT EXISTS task_corrections (
+          task_id TEXT NOT NULL REFERENCES tasks(id),
+          level TEXT NOT NULL CHECK (level IN (${loopLevelList})),
+          cycle INTEGER NOT NULL DEFAULT 0,
+          max_cycles INTEGER NOT NULL DEFAULT 2,
+          last_finding TEXT,
+          PRIMARY KEY (task_id, level)
+        )
+      `).run();
+          db2.prepare("CREATE INDEX IF NOT EXISTS idx_tasks_bead ON tasks(bead_id) WHERE bead_id IS NOT NULL").run();
+          db2.prepare("CREATE INDEX IF NOT EXISTS idx_tasks_colony ON tasks(sdlc_loop_level, status) WHERE sdlc_loop_level IS NOT NULL").run();
+        }
       }
     ];
   }
@@ -7137,67 +7245,6 @@ var init_event_ops = __esm({
   "../shared/dist/event-ops.js"() {
     "use strict";
     EVENT_PRUNE_BATCH_SIZE = 1e3;
-  }
-});
-
-// ../shared/dist/constants.js
-var BACKOFF_BASE_SECONDS, MAX_DEPENDENCY_DEPTH, MAX_ARTIFACT_SIZE_BYTES, STALE_AGENT_THRESHOLD_SECONDS, HEARTBEAT_INTERVAL_SECONDS, CLAIMED_DURATION_WARNING_SECONDS, MIN_PRIORITY, MAX_PRIORITY, DEFAULT_PRIORITY, DEFAULT_PANE_COUNT, TASK_STATUSES, FAILURE_REASONS, MESSAGE_TYPES, EVENT_TYPES, PLAN_STATUSES, REVIEW_DISPOSITIONS, ATTEMPT_STATUSES, EVIDENCE_TYPES, EXECUTION_TARGET_TYPES, LIFECYCLE_EVENT_TYPES, COLLABORATION_PATTERNS;
-var init_constants = __esm({
-  "../shared/dist/constants.js"() {
-    "use strict";
-    BACKOFF_BASE_SECONDS = 30;
-    MAX_DEPENDENCY_DEPTH = 100;
-    MAX_ARTIFACT_SIZE_BYTES = 100 * 1024 * 1024;
-    STALE_AGENT_THRESHOLD_SECONDS = 300;
-    HEARTBEAT_INTERVAL_SECONDS = 60;
-    CLAIMED_DURATION_WARNING_SECONDS = 1800;
-    MIN_PRIORITY = 0;
-    MAX_PRIORITY = 100;
-    DEFAULT_PRIORITY = 50;
-    DEFAULT_PANE_COUNT = 8;
-    TASK_STATUSES = ["pending", "blocked", "claimed", "completed", "cancelled", "needs_review"];
-    FAILURE_REASONS = ["crash", "timeout", "logic_error", "artifact_missing", "dependency_invalid"];
-    MESSAGE_TYPES = ["direct", "broadcast", "finding", "blocker", "checkpoint", "shutdown"];
-    EVENT_TYPES = [
-      "task_created",
-      "task_claimed",
-      "task_completed",
-      "task_failed",
-      "task_cancelled",
-      "task_unblocked",
-      "dependency_traversal_truncated",
-      "task_updated",
-      "agent_registered",
-      "agent_shutdown",
-      "agent_heartbeat_stale",
-      "dispatch",
-      "harvest",
-      "session_init",
-      "session_pause",
-      "session_resume",
-      "session_teardown"
-    ];
-    PLAN_STATUSES = ["proposed", "challenged", "operational", "superseded"];
-    REVIEW_DISPOSITIONS = ["approved", "challenged", "rejected"];
-    ATTEMPT_STATUSES = ["running", "succeeded", "failed", "abandoned"];
-    EVIDENCE_TYPES = ["diff", "test_result", "build_log", "screenshot", "review_comment", "artifact_checksum"];
-    EXECUTION_TARGET_TYPES = ["tmux_pane", "local_shell", "codex_cloud"];
-    LIFECYCLE_EVENT_TYPES = [
-      "claude_session_start",
-      "claude_session_end",
-      "claude_precompact",
-      "claude_task_completed",
-      "claude_subagent_stop"
-    ];
-    COLLABORATION_PATTERNS = [
-      "research",
-      "plan",
-      "implement",
-      "review",
-      "test",
-      "audit",
-      "document"
-    ];
   }
 });
 
@@ -8681,8 +8728,11 @@ var dist_exports = {};
 __export(dist_exports, {
   ATTEMPT_STATUSES: () => ATTEMPT_STATUSES,
   BACKOFF_BASE_SECONDS: () => BACKOFF_BASE_SECONDS,
+  BEAD_BUDGET_USD: () => BEAD_BUDGET_USD,
   CLAIMED_DURATION_WARNING_SECONDS: () => CLAIMED_DURATION_WARNING_SECONDS,
   COLLABORATION_PATTERNS: () => COLLABORATION_PATTERNS,
+  CONDUCTOR_BUDGET_USD: () => CONDUCTOR_BUDGET_USD,
+  CYNEFIN_DOMAINS: () => CYNEFIN_DOMAINS,
   DEFAULT_PANE_COUNT: () => DEFAULT_PANE_COUNT,
   DEFAULT_PRIORITY: () => DEFAULT_PRIORITY,
   EVENT_TYPES: () => EVENT_TYPES,
@@ -8690,6 +8740,7 @@ __export(dist_exports, {
   EXECUTION_TARGET_TYPES: () => EXECUTION_TARGET_TYPES,
   FAILURE_REASONS: () => FAILURE_REASONS,
   HEARTBEAT_INTERVAL_SECONDS: () => HEARTBEAT_INTERVAL_SECONDS,
+  HEARTBEAT_THRESHOLDS: () => HEARTBEAT_THRESHOLDS,
   KNOWN_CAPABILITIES: () => KNOWN_CAPABILITIES,
   LIFECYCLE_EVENT_TYPES: () => LIFECYCLE_EVENT_TYPES,
   MAX_ARTIFACT_SIZE_BYTES: () => MAX_ARTIFACT_SIZE_BYTES,
@@ -8700,8 +8751,13 @@ __export(dist_exports, {
   PATTERN_REGISTRY: () => PATTERN_REGISTRY,
   PLAN_STATUSES: () => PLAN_STATUSES,
   REVIEW_DISPOSITIONS: () => REVIEW_DISPOSITIONS,
+  SDLC_LOOP_LEVELS: () => SDLC_LOOP_LEVELS,
+  SDLC_PHASES: () => SDLC_PHASES,
   STALE_AGENT_THRESHOLD_SECONDS: () => STALE_AGENT_THRESHOLD_SECONDS,
   TASK_STATUSES: () => TASK_STATUSES,
+  WORKER_BUDGET_HAIKU_USD: () => WORKER_BUDGET_HAIKU_USD,
+  WORKER_BUDGET_SONNET_USD: () => WORKER_BUDGET_SONNET_USD,
+  WORKER_TYPES: () => WORKER_TYPES,
   addDependency: () => addDependency,
   addEvidence: () => addEvidence,
   addPlanReview: () => addPlanReview,
@@ -16114,7 +16170,9 @@ var toolDefinitions = [
         role: { type: "string", description: "Agent role" },
         pane_index: { type: "number", description: "Specific pane (auto-select if omitted)" },
         working_dir: { type: "string", description: "Working directory (defaults to project_dir)" },
-        resume_session_id: { type: "string", description: "Codex session ID to resume instead of fresh launch (uses codex resume)" }
+        resume_session_id: { type: "string", description: "Codex session ID to resume instead of fresh launch (uses codex resume)" },
+        worker_type: { type: "string", enum: ["codex", "claude_code"], description: "Worker type" },
+        clone_isolation: { type: "boolean", description: "If true, dispatch worker into an isolated git clone (colony clone isolation)" }
       },
       required: ["task_id", "role"]
     }
@@ -16168,6 +16226,18 @@ var toolDefinitions = [
         harvest_first: { type: "boolean", description: "Capture scrollback before sending new prompt (default: true)" }
       },
       required: ["prompt"]
+    }
+  },
+  {
+    name: "tmup_heartbeat",
+    description: "Register agent liveness heartbeat. Returns next heartbeat deadline.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        agent_id: { type: "string", description: "Agent UUID" },
+        codex_session_id: { type: "string", description: "Optional Codex session ID to store" }
+      },
+      required: ["agent_id"]
     }
   }
 ];
@@ -16466,6 +16536,31 @@ ${m.payload}
       }));
       return json({ ok: true, messages: framed });
     }
+    case "tmup_heartbeat": {
+      const db2 = ensureDb();
+      if (!args.agent_id || typeof args.agent_id !== "string") {
+        throw new Error("agent_id must be a non-empty string");
+      }
+      const hbAgentId = args.agent_id;
+      const hbCodexSessionId = typeof args.codex_session_id === "string" ? args.codex_session_id : void 0;
+      let lastErr;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          updateHeartbeat(db2, hbAgentId, hbCodexSessionId);
+          const now = Date.now();
+          const nextDue = now + STALE_AGENT_THRESHOLD_SECONDS * 1e3 / 3;
+          return json({ ok: true, next_heartbeat_due: new Date(nextDue).toISOString() });
+        } catch (err) {
+          lastErr = err;
+          if (err instanceof Error && err.message.includes("SQLITE_BUSY") && attempt < 2) {
+            await new Promise((resolve2) => setTimeout(resolve2, 500 * (attempt + 1)));
+            continue;
+          }
+          throw err;
+        }
+      }
+      throw lastErr;
+    }
     case "tmup_dispatch": {
       const db2 = ensureDb();
       const taskId = args.task_id;
@@ -16538,6 +16633,11 @@ ${m.payload}
       }
       if (args.resume_session_id && typeof args.resume_session_id === "string") {
         dispatchArgs.push("--resume-session-id", args.resume_session_id);
+      }
+      const workerType = typeof args.worker_type === "string" ? args.worker_type : "codex";
+      dispatchArgs.push("--worker-type", workerType);
+      if (args.clone_isolation === true) {
+        dispatchArgs.push("--clone-isolation");
       }
       let launchResult;
       try {

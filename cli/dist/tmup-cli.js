@@ -6,6 +6,34 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// ../shared/dist/constants.js
+var BACKOFF_BASE_SECONDS = 30;
+var MAX_ARTIFACT_SIZE_BYTES = 100 * 1024 * 1024;
+var DEFAULT_PANE_COUNT = 8;
+var FAILURE_REASONS = ["crash", "timeout", "logic_error", "artifact_missing", "dependency_invalid"];
+var MESSAGE_TYPES = ["direct", "broadcast", "finding", "blocker", "checkpoint", "shutdown"];
+var EVENT_TYPES = [
+  "task_created",
+  "task_claimed",
+  "task_completed",
+  "task_failed",
+  "task_cancelled",
+  "task_unblocked",
+  "dependency_traversal_truncated",
+  "task_updated",
+  "agent_registered",
+  "agent_shutdown",
+  "agent_heartbeat_stale",
+  "dispatch",
+  "harvest",
+  "session_init",
+  "session_pause",
+  "session_resume",
+  "session_teardown"
+];
+var SDLC_LOOP_LEVELS = ["L0", "L1", "L2", "L2.5", "L2.75"];
+var WORKER_TYPES = ["codex", "claude_code"];
+
 // ../shared/dist/migrations.js
 function getSchemaVersion(db) {
   try {
@@ -200,6 +228,32 @@ var migrations = [
       db.prepare("CREATE INDEX IF NOT EXISTS idx_lifecycle_events_session ON lifecycle_events(session_id)").run();
       db.prepare("CREATE INDEX IF NOT EXISTS idx_lifecycle_events_type ON lifecycle_events(event_type, timestamp)").run();
     }
+  },
+  {
+    version: 4,
+    description: "Add SDLC-OS colony support: bead tracking, loop levels, worker types, corrections",
+    up: (db) => {
+      const loopLevelList = SDLC_LOOP_LEVELS.map((l) => `'${l}'`).join(",");
+      const workerTypeList = WORKER_TYPES.map((w) => `'${w}'`).join(",");
+      db.prepare("ALTER TABLE tasks ADD COLUMN bead_id TEXT").run();
+      db.prepare(`ALTER TABLE tasks ADD COLUMN sdlc_loop_level TEXT CHECK (sdlc_loop_level IS NULL OR sdlc_loop_level IN (${loopLevelList}))`).run();
+      db.prepare("ALTER TABLE tasks ADD COLUMN output_path TEXT").run();
+      db.prepare("ALTER TABLE tasks ADD COLUMN clone_dir TEXT").run();
+      db.prepare(`ALTER TABLE tasks ADD COLUMN worker_type TEXT DEFAULT 'codex' CHECK (worker_type IN (${workerTypeList}))`).run();
+      db.prepare("ALTER TABLE tasks ADD COLUMN bridge_synced INTEGER DEFAULT 0").run();
+      db.prepare(`
+        CREATE TABLE IF NOT EXISTS task_corrections (
+          task_id TEXT NOT NULL REFERENCES tasks(id),
+          level TEXT NOT NULL CHECK (level IN (${loopLevelList})),
+          cycle INTEGER NOT NULL DEFAULT 0,
+          max_cycles INTEGER NOT NULL DEFAULT 2,
+          last_finding TEXT,
+          PRIMARY KEY (task_id, level)
+        )
+      `).run();
+      db.prepare("CREATE INDEX IF NOT EXISTS idx_tasks_bead ON tasks(bead_id) WHERE bead_id IS NOT NULL").run();
+      db.prepare("CREATE INDEX IF NOT EXISTS idx_tasks_colony ON tasks(sdlc_loop_level, status) WHERE sdlc_loop_level IS NOT NULL").run();
+    }
   }
 ];
 function runMigrations(db) {
@@ -294,32 +348,6 @@ function getRecentEvents(db, eventType, limit = 50) {
   }
   return db.prepare("SELECT * FROM events ORDER BY id DESC LIMIT ?").all(limit);
 }
-
-// ../shared/dist/constants.js
-var BACKOFF_BASE_SECONDS = 30;
-var MAX_ARTIFACT_SIZE_BYTES = 100 * 1024 * 1024;
-var DEFAULT_PANE_COUNT = 8;
-var FAILURE_REASONS = ["crash", "timeout", "logic_error", "artifact_missing", "dependency_invalid"];
-var MESSAGE_TYPES = ["direct", "broadcast", "finding", "blocker", "checkpoint", "shutdown"];
-var EVENT_TYPES = [
-  "task_created",
-  "task_claimed",
-  "task_completed",
-  "task_failed",
-  "task_cancelled",
-  "task_unblocked",
-  "dependency_traversal_truncated",
-  "task_updated",
-  "agent_registered",
-  "agent_shutdown",
-  "agent_heartbeat_stale",
-  "dispatch",
-  "harvest",
-  "session_init",
-  "session_pause",
-  "session_resume",
-  "session_teardown"
-];
 
 // ../shared/dist/dep-resolver.js
 function findUnblockedDependents(db, completedTaskId) {

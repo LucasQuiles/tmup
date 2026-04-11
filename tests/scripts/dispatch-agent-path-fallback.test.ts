@@ -69,7 +69,9 @@ printf 'null\\n'
       'jq',
       'mktemp',
       'mv',
+      'perl',
       'rm',
+      'sed',
       'seq',
       'touch',
     ]) {

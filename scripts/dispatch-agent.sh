@@ -40,6 +40,16 @@ _dispatch_cleanup() {
   rm -f "${PROMPT_FILE:-}" "${LAUNCHER:-}" 2>/dev/null || true
 }
 
+_respawn_available_pane() {
+  local pane_target="$1"
+  local pane_index="$2"
+  local pane_cmd="$3"
+
+  echo "Pane $pane_index marked available but still running $pane_cmd; respawning it"
+  respawn_pane "$pane_target" || return 1
+  wait_for_shell_ready "$SESSION_NAME" "$pane_index" 5
+}
+
 _release_pane_reservation() {
   [[ "${RESERVATION_ACTIVE:-0}" -eq 1 ]] || return 0
   [[ -f "${GRID_STATE:-}" ]] || return 0
@@ -79,7 +89,7 @@ trap '_dispatch_teardown 130' INT
 trap '_dispatch_teardown 143' TERM
 
 # Parse arguments
-ROLE="" PROMPT="" PANE_INDEX="" WORKING_DIR="" AGENT_ID="" TASK_ID="" DB_PATH="" RESUME_SESSION_ID=""
+ROLE="" PROMPT="" PANE_INDEX="" WORKING_DIR="" AGENT_ID="" TASK_ID="" DB_PATH="" RESUME_SESSION_ID="" WORKER_TYPE="codex" CLONE_ISOLATION=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -92,6 +102,8 @@ while [[ $# -gt 0 ]]; do
     --db-path) DB_PATH="$2"; shift 2 ;;
     --session) shift 2 ;;
     --resume-session-id) RESUME_SESSION_ID="$2"; shift 2 ;;
+    --worker-type) WORKER_TYPE="$2"; shift 2 ;;
+    --clone-isolation) CLONE_ISOLATION=1; shift ;;
     *) die "Unknown option: $1" ;;
   esac
 done
@@ -106,6 +118,19 @@ SESSION_NAME="$CFG_SESSION_NAME"
 [[ -n "$WORKING_DIR" ]] || die "--working-dir required (will not fall back to pwd)"
 validate_working_dir "$WORKING_DIR" || die "Invalid working directory: $WORKING_DIR"
 WORKING_DIR="$(cd "$WORKING_DIR" && pwd -P)" || die "Failed to resolve working directory: $WORKING_DIR"
+
+# Clone isolation: create isolated git clone for colony workers (council M4)
+if [[ "$CLONE_ISOLATION" -eq 1 ]]; then
+  _CLONE_MANAGER="${SDLC_OS_PLUGIN:-/home/q/.claude/plugins/sdlc-os}/colony/clone-manager.sh"
+  if [[ -f "$_CLONE_MANAGER" ]]; then
+    source "$_CLONE_MANAGER"
+    WORKING_DIR="$(colony_clone_create "$WORKING_DIR" "$SESSION_NAME" "$AGENT_ID")" || die "Failed to create isolated clone"
+    colony_clone_verify "$WORKING_DIR" || die "Clone verification failed"
+  else
+    die "Clone isolation requested but clone-manager.sh not found at $_CLONE_MANAGER"
+  fi
+  unset _CLONE_MANAGER
+fi
 
 validate_role "$ROLE"
 
@@ -258,69 +283,82 @@ $(if [[ -n "$TASK_ID" ]]; then printf 'export TMUP_TASK_ID=%q' "$TASK_ID"; fi)
 $(if [[ -n "$RESUME_SESSION_ID" ]]; then printf 'export RESUME_SESSION_ID=%q' "$RESUME_SESSION_ID"; fi)
 _CLI_PATH=$(printf '%q' "$PLUGIN_DIR/cli/dist/tmup-cli.js")
 _HB_INTERVAL=${CFG_HEARTBEAT_INTERVAL:-60}
+_WORKER_TYPE=$(printf '%q' "$WORKER_TYPE")
+_PROMPT_FILE=$(printf '%q' "$PROMPT_FILE")
 
-# Read prompt into memory, then clean up prompt file
-_PROMPT=\$(cat $(printf '%q' "$PROMPT_FILE"))
-rm -f $(printf '%q' "$PROMPT_FILE") 2>/dev/null || true
-
-# Start background heartbeat loop
-(
-  while true; do
-    sleep "\$_HB_INTERVAL"
-    TMUP_AGENT_ID="\$TMUP_AGENT_ID" TMUP_DB="\$TMUP_DB" TMUP_PANE_INDEX="\$TMUP_PANE_INDEX" \\
-      TMUP_SESSION_NAME="\$TMUP_SESSION_NAME" TMUP_SESSION_DIR="\$TMUP_SESSION_DIR" \\
-      node "\$_CLI_PATH" heartbeat 2>/dev/null || true
-  done
-) &
-_HB_PID=\$!
-
-# Run codex as foreground process (not exec — so heartbeat can be cleaned up)
-_INLINE_ARGS=()
-if [[ "\${TMUP_CODEX_NO_ALT_SCREEN}" == "true" ]]; then
-  _INLINE_ARGS+=(--no-alt-screen)
-fi
-
-_COMMON_ARGS=(
-  -m "\$TMUP_CODEX_MODEL"
-  -c "model_context_window=\$TMUP_CODEX_CONTEXT_WINDOW"
-  -c "model_auto_compact_token_limit=\$TMUP_CODEX_AUTO_COMPACT"
-  -a "\$TMUP_CODEX_APPROVAL_POLICY"
-  -s "\$TMUP_CODEX_SANDBOX"
-  -c "model_reasoning_effort=\$TMUP_CODEX_REASONING_EFFORT"
-  -c "model_reasoning_summary=\$TMUP_CODEX_REASONING_SUMMARY"
-  -c "plan_mode_reasoning_effort=\$TMUP_CODEX_PLAN_REASONING"
-  -c "model_verbosity=\$TMUP_CODEX_VERBOSITY"
-  -c "service_tier=\$TMUP_CODEX_SERVICE_TIER"
-  -c "tool_output_token_limit=\$TMUP_CODEX_TOOL_OUTPUT_LIMIT"
-  -c "web_search=\$TMUP_CODEX_WEB_SEARCH"
-  -c "history.persistence=\$TMUP_CODEX_HISTORY"
-  -c "features.undo=\$TMUP_CODEX_UNDO"
-  -c "shell_environment_policy.inherit=\$TMUP_CODEX_SHELL_INHERIT"
-  -c "features.shell_snapshot=\$TMUP_CODEX_SHELL_SNAPSHOT"
-  -c "features.enable_request_compression=\$TMUP_CODEX_REQUEST_COMPRESSION"
-  -c "tui.notifications=\$TMUP_CODEX_NOTIFICATIONS"
-  -c "background_terminal_max_timeout=\$TMUP_CODEX_BACKGROUND_TERMINAL_TIMEOUT"
-  -c "agents.max_threads=\$TMUP_CODEX_MAX_THREADS"
-  -c "agents.max_depth=\$TMUP_CODEX_MAX_DEPTH"
-  -c "agents.job_max_runtime_seconds=\$TMUP_CODEX_JOB_TIMEOUT"
-  -C "\$TMUP_WORKING_DIR"
-)
-_COMMON_ARGS+=("\${_INLINE_ARGS[@]}")
-
-if [[ -n "\${RESUME_SESSION_ID:-}" ]]; then
-  # Reapply the current runtime contract on resume so recovered panes stay pinned
-  # to the configured model, context, compaction, approval, sandbox, and subagent caps.
-  "\$CODEX_BIN" "\${_COMMON_ARGS[@]}" resume "\$RESUME_SESSION_ID"
-else
-  "\$CODEX_BIN" "\${_COMMON_ARGS[@]}" "\$_PROMPT"
-fi
-_EXIT=\$?
-
-# Kill heartbeat loop when codex exits
-kill "\$_HB_PID" 2>/dev/null
-wait "\$_HB_PID" 2>/dev/null
 rm -f "\$0" 2>/dev/null || true
-exit "\$_EXIT"
+
+if [[ "\$_WORKER_TYPE" == "claude_code" ]]; then
+  # Claude Code worker — uses MCP heartbeat, no background heartbeat loop needed
+  cd "\$TMUP_WORKING_DIR" && claude -p \\
+    --model sonnet \\
+    --permission-mode bypassPermissions \\
+    --plugin-dir $(printf '%q' "$PLUGIN_DIR") \\
+    --max-budget-usd 3.00 \\
+    < "\$_PROMPT_FILE" \\
+    > "\$TMUP_WORKING_DIR/session-output.json" 2>&1
+else
+  # Codex worker — runtime contract pinned from policy.yaml-sourced env vars
+  _INLINE_ARGS=()
+  if [[ "\${TMUP_CODEX_NO_ALT_SCREEN}" == "true" ]]; then
+    _INLINE_ARGS+=(--no-alt-screen)
+  fi
+
+  _COMMON_ARGS=(
+    -m "\$TMUP_CODEX_MODEL"
+    -c "model_context_window=\$TMUP_CODEX_CONTEXT_WINDOW"
+    -c "model_auto_compact_token_limit=\$TMUP_CODEX_AUTO_COMPACT"
+    -a "\$TMUP_CODEX_APPROVAL_POLICY"
+    -s "\$TMUP_CODEX_SANDBOX"
+    -c "model_reasoning_effort=\$TMUP_CODEX_REASONING_EFFORT"
+    -c "model_reasoning_summary=\$TMUP_CODEX_REASONING_SUMMARY"
+    -c "plan_mode_reasoning_effort=\$TMUP_CODEX_PLAN_REASONING"
+    -c "model_verbosity=\$TMUP_CODEX_VERBOSITY"
+    -c "service_tier=\$TMUP_CODEX_SERVICE_TIER"
+    -c "tool_output_token_limit=\$TMUP_CODEX_TOOL_OUTPUT_LIMIT"
+    -c "web_search=\$TMUP_CODEX_WEB_SEARCH"
+    -c "history.persistence=\$TMUP_CODEX_HISTORY"
+    -c "features.undo=\$TMUP_CODEX_UNDO"
+    -c "shell_environment_policy.inherit=\$TMUP_CODEX_SHELL_INHERIT"
+    -c "features.shell_snapshot=\$TMUP_CODEX_SHELL_SNAPSHOT"
+    -c "features.enable_request_compression=\$TMUP_CODEX_REQUEST_COMPRESSION"
+    -c "tui.notifications=\$TMUP_CODEX_NOTIFICATIONS"
+    -c "background_terminal_max_timeout=\$TMUP_CODEX_BACKGROUND_TERMINAL_TIMEOUT"
+    -c "agents.max_threads=\$TMUP_CODEX_MAX_THREADS"
+    -c "agents.max_depth=\$TMUP_CODEX_MAX_DEPTH"
+    -c "agents.job_max_runtime_seconds=\$TMUP_CODEX_JOB_TIMEOUT"
+    -C "\$TMUP_WORKING_DIR"
+  )
+  _COMMON_ARGS+=("\${_INLINE_ARGS[@]}")
+
+  # Background heartbeat — child of launcher, dies with codex
+  (
+    while true; do
+      sleep "\$_HB_INTERVAL"
+      TMUP_AGENT_ID="\$TMUP_AGENT_ID" TMUP_DB="\$TMUP_DB" TMUP_PANE_INDEX="\$TMUP_PANE_INDEX" \\
+        TMUP_SESSION_NAME="\$TMUP_SESSION_NAME" TMUP_SESSION_DIR="\$TMUP_SESSION_DIR" \\
+        node "\$_CLI_PATH" heartbeat 2>/dev/null || true
+    done
+  ) &
+  _HB_PID=\$!
+
+  # Run codex as foreground child — interactive session, no prompt arg.
+  # Outer dispatch-agent.sh waits for codex to be ready, then sends the
+  # initial prompt via send_codex_prompt_with_retry (interactive session model).
+  if [[ -n "\${RESUME_SESSION_ID:-}" ]]; then
+    # Reapply the current runtime contract on resume so recovered panes stay pinned
+    # to the configured model, context, compaction, approval, sandbox, and subagent caps.
+    "\$CODEX_BIN" "\${_COMMON_ARGS[@]}" resume "\$RESUME_SESSION_ID"
+  else
+    "\$CODEX_BIN" "\${_COMMON_ARGS[@]}"
+  fi
+  _EXIT=\$?
+
+  # Kill heartbeat loop when codex exits
+  kill "\$_HB_PID" 2>/dev/null
+  wait "\$_HB_PID" 2>/dev/null
+  exit "\$_EXIT"
+fi
 WRAPPER
 chmod 700 "$LAUNCHER"
 
@@ -335,12 +373,33 @@ if [[ -f "$GRID_STATE" ]]; then
     die "Failed to acquire grid state lock — another operation in progress"
   fi
 
+  # Pull pane status from the grid state under the held flock. A single jq
+  # pass returns empty EITHER when the pane index is missing from .panes[]
+  # OR when a matched pane carries no .status field. Both are fatal here,
+  # so one non-empty check covers both. tmup authors grid-state.json itself
+  # and always sets .status on every pane (see grid-setup.sh), so the
+  # "found but no status" branch is not a reachable runtime state.
+  _pane_status=$(jq -r --argjson idx "$PANE_INDEX" '.panes[] | select(.index == $idx) | .status // ""' "$GRID_STATE")
+  [[ -n "$_pane_status" ]] || {
+    exec 9>&-
+    _dispatch_cleanup
+    die "Pane $PANE_INDEX not found in grid state"
+  }
+
   # Verify pane is at shell prompt WHILE HOLDING LOCK (prevent TOCTOU race)
   PANE_CMD=$(tmux display-message -t "$PANE_TARGET" -p '#{pane_current_command}' 2>/dev/null || echo "")
   if is_agent_process "$PANE_CMD"; then
-    exec 9>&-
-    _dispatch_cleanup
-    die "Pane $PANE_INDEX has a running agent ($PANE_CMD)"
+    if [[ "$_pane_status" == "available" ]]; then
+      if ! _respawn_available_pane "$PANE_TARGET" "$PANE_INDEX" "$PANE_CMD"; then
+        exec 9>&-
+        _dispatch_cleanup
+        die "Pane $PANE_INDEX is marked available but could not be reset from $PANE_CMD"
+      fi
+    else
+      exec 9>&-
+      _dispatch_cleanup
+      die "Pane $PANE_INDEX has a running agent ($PANE_CMD)"
+    fi
   fi
 
   _temp=$(mktemp "$STATE_DIR/grid/grid-state.XXXXXX") || {
@@ -411,6 +470,29 @@ for _attempt in $(seq 1 $ATTEMPTS); do
 done
 
 echo "Dispatched $ROLE to pane $PANE_INDEX (agent $AGENT_ID)"
+
+# Wait for codex to be ready for input (idle at its prompt)
+echo "Waiting for codex to become ready..."
+for _ready_attempt in $(seq 1 20); do
+  sleep 1
+  _ready_check=$(tmux capture-pane -t "$PANE_TARGET" -p -S -5 2>/dev/null || true)
+  if echo "$_ready_check" | grep -qE '❯|›'; then
+    echo "Codex ready in pane $PANE_INDEX (attempt $_ready_attempt)"
+    break
+  fi
+done
+
+# Send the initial prompt via tmux send-keys
+if [[ -f "$PROMPT_FILE" ]]; then
+  _prompt_text=$(cat "$PROMPT_FILE")
+  if send_codex_prompt_with_retry "$SESSION_NAME" "$PANE_INDEX" "$_prompt_text" "dispatch"; then
+    rm -f "$PROMPT_FILE" 2>/dev/null || true
+    echo "Initial prompt confirmed in pane $PANE_INDEX"
+  else
+    rm -f "$PROMPT_FILE" 2>/dev/null || true
+    die "failed to confirm Codex accepted the initial prompt for pane $PANE_INDEX"
+  fi
+fi
 
 # Capture Codex session ID for resume capability
 # Race mitigation: after reading the last history entry, verify its cwd matches
