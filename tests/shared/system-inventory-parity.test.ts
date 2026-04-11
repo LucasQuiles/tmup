@@ -88,7 +88,15 @@ describe('system-inventory-parity', () => {
 
   describe('runnable test file count', () => {
     it('inventory documents the exact test file count', () => {
-      const testsDir = path.resolve(__dirname, '..');
+      // Must match the globs in vitest.config.ts:
+      //   include: ['tests/**/*.test.ts', 'shared/src/**/*.test.ts']
+      // If this drifts, the inventory headline will undercount the true
+      // runnable suite (e.g. shared/src/migrations.test.ts).
+      const pluginRoot = path.resolve(__dirname, '../..');
+      const scanRoots = [
+        path.join(pluginRoot, 'tests'),
+        path.join(pluginRoot, 'shared/src'),
+      ];
       const testFiles: string[] = [];
 
       function findTestFiles(dir: string) {
@@ -102,8 +110,13 @@ describe('system-inventory-parity', () => {
         }
       }
 
-      findTestFiles(testsDir);
-      // Extract documented count from inventory (e.g. "28 test files")
+      for (const root of scanRoots) {
+        if (fs.existsSync(root)) {
+          findTestFiles(root);
+        }
+      }
+
+      // Extract documented count from inventory (e.g. "33 test files")
       const countMatch = inventoryDoc.match(/(\d+)\s+test files/);
       expect(countMatch).not.toBeNull();
       const documentedCount = parseInt(countMatch![1], 10);

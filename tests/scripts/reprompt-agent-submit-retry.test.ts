@@ -104,6 +104,45 @@ describe('reprompt-agent.sh Codex submit verification', () => {
     expect(sendLog.filter((line) => line.startsWith('-l ') || line.includes(' -l '))).toHaveLength(1);
   });
 
+  // Regression: C-1 idle-path — is_agent_idle must not reject an actually
+  // idle pane just because its scrollback contains echoed tool-name text
+  // from a prior turn. Pre-fix, codex_scrollback_shows_idle_prompt delegated
+  // to codex_scrollback_shows_work which matched the `update_plan` tool-name
+  // regex against the stale prompt echo, flipping the idle check to
+  // "not idle" and causing reprompt-agent.sh to fail with
+  // "pane X is not at an idle Codex prompt". Post-fix, the idle path uses
+  // codex_scrollback_shows_active_work which only looks for `Working (`,
+  // the one signal Codex cannot emit as echoed user input.
+  it('accepts idle pane whose scrollback echoes prior tool-name prompt (C-1 idle-path regression)', () => {
+    writeCaptureSequence([
+      // Capture 1 — is_agent_idle check:
+      // The pane is idle (no Working marker, `❯` present) but scrollback
+      // still shows the echoed prior prompt which contains tool-call words.
+      // Pre-fix this would flip to "not idle" and abort the reprompt.
+      '❯ call update_plan when done and apply_patch the README\\n',
+      // Capture 2 — wait_for_codex_submit_confirmation after Enter:
+      // Codex accepted the reprompt and started working.
+      'Working (accepted)\\n',
+    ]);
+
+    execFileSync('/bin/bash', [
+      REPROMPT_AGENT_SH,
+      '--session', 'test-session',
+      '--pane', '3',
+      '--prompt', 'Follow-up after prior turn',
+    ], {
+      env: shellEnv(),
+      encoding: 'utf-8',
+      timeout: 30000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    // Reprompt must have proceeded past the idle check and submitted once.
+    const sendLog = readSendLog();
+    expect(sendLog.filter((line) => line.includes(' Enter'))).toHaveLength(1);
+    expect(sendLog.filter((line) => line.startsWith('-l ') || line.includes(' -l '))).toHaveLength(1);
+  });
+
   function shellEnv(): NodeJS.ProcessEnv {
     return {
       ...process.env,
