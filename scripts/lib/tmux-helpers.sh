@@ -1,12 +1,16 @@
 #!/bin/bash
 # tmux-helpers.sh — Tmux utility functions for tmup
 
-# Check if a process in a pane is an agent (not a shell)
+# Check if a process in a pane is an agent (not a shell).
+# Uses a shell-allowlist approach: known idle shells are "free", everything
+# else (codex, claude, node, git, python, any child process) is treated as
+# occupied. This aligns with the MCP liveness checker which also treats
+# unknown pane commands as alive.
 is_agent_process() {
   local cmd="${1:-}"
   case "$cmd" in
-    codex|claude|node|npm|npx) return 0 ;;
-    *) return 1 ;;
+    bash|zsh|sh|fish|"") return 1 ;;  # shell prompt = not an agent
+    *) return 0 ;;                     # anything else = agent or agent child
   esac
 }
 
@@ -288,8 +292,20 @@ send_reprompt() {
       return 1
     }
     sleep 0.2
-    tmux send-keys -t "$target" Tab 2>/dev/null || true
-    return 0
+    tmux send-keys -t "$target" Tab 2>/dev/null || {
+      echo "send_reprompt: failed to send Tab to $target" >&2
+      return 1
+    }
+    # Verify the queue was accepted — scrollback should still show active work
+    # (if it went idle, the Tab likely didn't register as a queue action)
+    sleep 1
+    local _queue_check
+    _queue_check=$(capture_pane_scrollback "$target" "-10") || _queue_check=""
+    if codex_scrollback_shows_active_work "$_queue_check"; then
+      return 0
+    fi
+    echo "send_reprompt: Tab sent but could not confirm queue acceptance on $target" >&2
+    return 1
   fi
 
   send_codex_prompt_with_retry "$session" "$pane_index" "$prompt_text" "reprompt"
