@@ -661,22 +661,13 @@ function registerAgent(db, agentId, paneIndex, role) {
   logEvent(db, agentId, "agent_registered", { pane_index: paneIndex, role });
 }
 function updateHeartbeat(db, agentId, codexSessionId, paneIndex) {
-  let result;
-  if (codexSessionId !== void 0 && paneIndex !== void 0) {
-    result = db.prepare(`
-      UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), codex_session_id = ?, pane_index = ?
-      WHERE id = ?
-    `).run(codexSessionId, paneIndex, agentId);
-  } else if (codexSessionId !== void 0) {
-    result = db.prepare(`
-      UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), codex_session_id = ?
-      WHERE id = ?
-    `).run(codexSessionId, agentId);
-  } else if (paneIndex !== void 0) {
-    result = db.prepare("UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), pane_index = ? WHERE id = ?").run(paneIndex, agentId);
-  } else {
-    result = db.prepare("UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(agentId);
-  }
+  const result = db.prepare(`
+    UPDATE agents SET
+      last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+      codex_session_id = COALESCE(?, codex_session_id),
+      pane_index = COALESCE(?, pane_index)
+    WHERE id = ?
+  `).run(codexSessionId ?? null, paneIndex ?? null, agentId);
   if (result.changes === 0) {
     throw new Error(`Agent ${agentId} not found \u2014 heartbeat requires prior registration`);
   }
@@ -870,22 +861,20 @@ async function handleCommand(db, command, args, env) {
       if (codexSessionId && !/^[a-zA-Z0-9-]+$/.test(codexSessionId)) {
         throw new Error("Invalid codex session ID format (must be alphanumeric + hyphens)");
       }
+      const rawPaneIndex = env.paneIndex ?? "0";
+      const paneIndex = parseInt(rawPaneIndex, 10);
+      if (isNaN(paneIndex) || paneIndex < 0) {
+        throw new Error(`Invalid TMUP_PANE_INDEX: '${rawPaneIndex}' (must be a non-negative integer)`);
+      }
       const existing = getAgent(db, agentId);
       if (!existing) {
-        const rawPaneIndex = env.paneIndex ?? "0";
-        const paneIndex = parseInt(rawPaneIndex, 10);
-        if (isNaN(paneIndex) || paneIndex < 0) {
-          throw new Error(`Invalid TMUP_PANE_INDEX: '${rawPaneIndex}' (must be a non-negative integer)`);
-        }
         const { count: gridPanes, source: gridSource } = getGridPaneCount(env.sessionDir);
         if (gridSource !== "default" && paneIndex >= gridPanes) {
           throw new Error(`Invalid TMUP_PANE_INDEX: '${rawPaneIndex}' (grid has ${gridPanes} panes, max index: ${gridPanes - 1})`);
         }
         registerAgent(db, agentId, paneIndex);
       }
-      const hbPaneIndex = env.paneIndex ? parseInt(env.paneIndex, 10) : void 0;
-      const validPaneIndex = hbPaneIndex !== void 0 && !isNaN(hbPaneIndex) && hbPaneIndex >= 0 ? hbPaneIndex : void 0;
-      updateHeartbeat(db, agentId, codexSessionId, validPaneIndex);
+      updateHeartbeat(db, agentId, codexSessionId, paneIndex);
       return { ok: true };
     }
     case "status": {
