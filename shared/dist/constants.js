@@ -35,6 +35,25 @@ export const ATTEMPT_STATUSES = ['running', 'succeeded', 'failed', 'abandoned'];
 export const EVIDENCE_TYPES = ['diff', 'test_result', 'build_log', 'screenshot', 'review_comment', 'artifact_checksum'];
 /** Execution target enums (P5.4) */
 export const EXECUTION_TARGET_TYPES = ['tmux_pane', 'local_shell', 'codex_cloud'];
+export const CYNEFIN_DOMAINS = ['clear', 'complicated', 'complex', 'chaotic', 'confusion'];
+export const SDLC_LOOP_LEVELS = ['L0', 'L1', 'L2', 'L2.5', 'L2.75'];
+export const SDLC_PHASES = ['frame', 'scout', 'architect', 'execute', 'synthesize'];
+export const WORKER_TYPES = ['codex', 'claude_code'];
+/** Per-session budget ceiling for Conductor sessions (spec §8). */
+export const CONDUCTOR_BUDGET_USD = 10.0;
+/** Per-worker budget ceiling (spec §8). */
+export const WORKER_BUDGET_SONNET_USD = 3.0;
+export const WORKER_BUDGET_HAIKU_USD = 0.5;
+/** Per-bead budget ceiling (spec §8). */
+export const BEAD_BUDGET_USD = 50.0;
+/** Heartbeat stale thresholds by Cynefin domain in seconds (spec §3.3, SC-COL-20). */
+export const HEARTBEAT_THRESHOLDS = {
+    clear: 300, // 5 minutes
+    complicated: 900, // 15 minutes
+    complex: 1800, // 30 minutes
+    chaotic: 300, // 5 minutes (fast cycle)
+    confusion: 900, // 15 minutes
+};
 /** Lifecycle bridge enums (P5.1) */
 export const LIFECYCLE_EVENT_TYPES = [
     'claude_session_start', 'claude_session_end', 'claude_precompact',
