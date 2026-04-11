@@ -306,7 +306,7 @@ describe('handleToolCall adapter integration', () => {
         task_id: taskId,
         role: 'tester',
         pane_index: 2,
-      })).rejects.toThrow('pane_index 2 out of range');
+      })).rejects.toThrow('pane_index 2 not in live grid');
     });
 
     it('rejects invalid harvest arguments before touching tmux', async () => {
@@ -320,7 +320,7 @@ describe('handleToolCall adapter integration', () => {
 
       await expect(handleToolCall('tmup_harvest', {
         pane_index: 2,
-      })).rejects.toThrow('pane_index 2 out of range');
+      })).rejects.toThrow('pane_index 2 not in live grid');
 
       expect(childProcessMock.execFileSync).not.toHaveBeenCalled();
     });
@@ -412,7 +412,7 @@ describe('handleToolCall adapter integration', () => {
       const { projectDir, sessionId } = createAdapterSession();
       writeGridState(sessionId, projectDir, 4);
       await expect(handleToolCall('tmup_reprompt', { prompt: 'hello', pane_index: 4 }))
-        .rejects.toThrow('pane_index 4 out of range');
+        .rejects.toThrow('pane_index 4 not in live grid');
     });
 
     it('calls reprompt-agent.sh with correct args for single-pane mode', async () => {

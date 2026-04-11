@@ -13,7 +13,7 @@ export type { MaintenanceResult } from './maintenance.js';
 export { getNextAction } from './next-action.js';
 export type { NextAction, NextActionKind } from './next-action.js';
 export { BACKOFF_BASE_SECONDS, MAX_DEPENDENCY_DEPTH, MAX_ARTIFACT_SIZE_BYTES, STALE_AGENT_THRESHOLD_SECONDS, HEARTBEAT_INTERVAL_SECONDS, CLAIMED_DURATION_WARNING_SECONDS, MIN_PRIORITY, MAX_PRIORITY, DEFAULT_PRIORITY, DEFAULT_PANE_COUNT, TASK_STATUSES, FAILURE_REASONS, MESSAGE_TYPES, EVENT_TYPES } from './constants.js';
-export { readGridState, getGridPaneCount } from './grid-state.js';
+export { readGridState, getGridPaneCount, validatePaneIndexExists } from './grid-state.js';
 export type { GridState } from './grid-state.js';
 export { getSchemaVersion, runMigrations } from './migrations.js';
 export { createPlan, updatePlanStatus, getPlan, listPlans, addPlanReview, addResearchPacket, getResearchPackets, linkPlanTask, getPlanTaskIds } from './plan-ops.js';

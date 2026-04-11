@@ -8390,6 +8390,31 @@ function getGridPaneCount(sessionDir) {
   }
   return { count: DEFAULT_PANE_COUNT, source: "default-session-no-grid" };
 }
+function validatePaneIndexExists(sessionDir, paneIndex) {
+  if (!Number.isInteger(paneIndex) || paneIndex < 0) {
+    return { valid: false, reason: `pane_index must be a non-negative integer, got: ${paneIndex}` };
+  }
+  if (sessionDir) {
+    const grid = readGridState(sessionDir);
+    if (grid && Array.isArray(grid.panes) && grid.panes.length > 0) {
+      const found = grid.panes.some((p) => p.index === paneIndex);
+      if (found)
+        return { valid: true };
+      return {
+        valid: false,
+        reason: `pane_index ${paneIndex} not in live grid`,
+        validIndexes: grid.panes.map((p) => p.index).sort((a, b) => a - b)
+      };
+    }
+  }
+  if (paneIndex >= DEFAULT_PANE_COUNT) {
+    return {
+      valid: false,
+      reason: `pane_index ${paneIndex} out of range (max ${DEFAULT_PANE_COUNT - 1}, source: default)`
+    };
+  }
+  return { valid: true };
+}
 var init_grid_state = __esm({
   "../shared/dist/grid-state.js"() {
     "use strict";
@@ -8842,6 +8867,7 @@ __export(dist_exports, {
   updatePlanStatus: () => updatePlanStatus,
   updateTask: () => updateTask,
   validateArtifactPath: () => validateArtifactPath,
+  validatePaneIndexExists: () => validatePaneIndexExists,
   validatePatternRoles: () => validatePatternRoles,
   validateSessionName: () => validateSessionName,
   verifyArtifact: () => verifyArtifact
@@ -16550,11 +16576,9 @@ ${m.payload}
         const hbSessionId = getCurrentSessionId();
         if (hbSessionId) {
           const hbSessionDir = getSessionDir(hbSessionId);
-          if (hbSessionDir) {
-            const { count: hbGridPanes, source: hbGridSource } = getGridPaneCount(hbSessionDir);
-            if (hbGridSource !== "default" && args.pane_index >= hbGridPanes) {
-              throw new Error(`pane_index ${args.pane_index} out of bounds (grid has ${hbGridPanes} panes)`);
-            }
+          const hbCheck = validatePaneIndexExists(hbSessionDir, args.pane_index);
+          if (!hbCheck.valid) {
+            throw new Error(hbCheck.reason);
           }
         }
         hbPaneIndex = args.pane_index;
@@ -16595,9 +16619,9 @@ ${m.payload}
         }
         const dispatchSessionId = getCurrentSessionId();
         const dispatchSessionDir = dispatchSessionId ? getSessionDir(dispatchSessionId) : void 0;
-        const { count: dispatchPaneCount, source: dispatchSource } = getGridPaneCount(dispatchSessionDir);
-        if (dispatchSource !== "default" && rawPaneIndex >= dispatchPaneCount) {
-          throw new Error(`pane_index ${rawPaneIndex} out of range (grid has ${dispatchPaneCount} panes, max index: ${dispatchPaneCount - 1})`);
+        const dispatchCheck = validatePaneIndexExists(dispatchSessionDir, rawPaneIndex);
+        if (!dispatchCheck.valid) {
+          throw new Error(dispatchCheck.reason);
         }
         paneIndex = rawPaneIndex;
       }
@@ -16672,6 +16696,16 @@ ${m.payload}
         try {
           db2.prepare("UPDATE agents SET status = 'shutdown' WHERE id = ?").run(agentId);
           db2.prepare("UPDATE tasks SET status = 'pending', owner = NULL, failure_reason = 'launch_failed' WHERE id = ? AND owner = ?").run(taskId, agentId);
+          if (args.clone_isolation === true) {
+            const partialStdout = launchErr?.stdout;
+            if (partialStdout) {
+              const stdoutStr = typeof partialStdout === "string" ? partialStdout : partialStdout.toString("utf-8");
+              const cloneMatch = stdoutStr.match(/^CLONE_DIR=(.+)$/m);
+              if (cloneMatch) {
+                db2.prepare("UPDATE tasks SET clone_dir = ? WHERE id = ?").run(cloneMatch[1].trim(), taskId);
+              }
+            }
+          }
           logEvent(db2, agentId, "task_unclaimed_on_launch_failure", { task_id: taskId });
         } catch (_) {
         }
@@ -16715,9 +16749,9 @@ ${m.payload}
       }
       const harvestSessionId = getCurrentSessionId();
       const harvestSessionDir = harvestSessionId ? getSessionDir(harvestSessionId) : void 0;
-      const { count: harvestPaneCount, source: harvestSource } = getGridPaneCount(harvestSessionDir);
-      if (harvestSource !== "default" && paneIndex >= harvestPaneCount) {
-        throw new Error(`pane_index ${paneIndex} out of range (grid has ${harvestPaneCount} panes, max index: ${harvestPaneCount - 1})`);
+      const harvestCheck = validatePaneIndexExists(harvestSessionDir, paneIndex);
+      if (!harvestCheck.valid) {
+        throw new Error(harvestCheck.reason);
       }
       const lines = args.lines ?? 500;
       if (typeof lines !== "number" || !Number.isInteger(lines) || lines < 1 || lines > 1e4) {
@@ -16900,9 +16934,9 @@ ${m.payload}
           throw new Error("pane_index required (non-negative integer) unless all=true");
         }
         const repromptSessionDir = getSessionDir(repromptSessionId);
-        const { count: repromptPaneCount, source: repromptSource } = getGridPaneCount(repromptSessionDir);
-        if (repromptSource !== "default" && args.pane_index >= repromptPaneCount) {
-          throw new Error(`pane_index ${args.pane_index} out of range (grid has ${repromptPaneCount} panes)`);
+        const repromptCheck = validatePaneIndexExists(repromptSessionDir, args.pane_index);
+        if (!repromptCheck.valid) {
+          throw new Error(repromptCheck.reason);
         }
         scriptArgs.push("--pane", String(args.pane_index));
       }

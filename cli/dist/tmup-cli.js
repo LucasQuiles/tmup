@@ -696,15 +696,30 @@ function readGridState(sessionDir) {
     return null;
   }
 }
-function getGridPaneCount(sessionDir) {
-  if (!sessionDir) {
-    return { count: DEFAULT_PANE_COUNT, source: "default" };
+function validatePaneIndexExists(sessionDir, paneIndex) {
+  if (!Number.isInteger(paneIndex) || paneIndex < 0) {
+    return { valid: false, reason: `pane_index must be a non-negative integer, got: ${paneIndex}` };
   }
-  const gridState = readGridState(sessionDir);
-  if (gridState) {
-    return { count: gridState.panes.length, source: "grid-state" };
+  if (sessionDir) {
+    const grid = readGridState(sessionDir);
+    if (grid && Array.isArray(grid.panes) && grid.panes.length > 0) {
+      const found = grid.panes.some((p) => p.index === paneIndex);
+      if (found)
+        return { valid: true };
+      return {
+        valid: false,
+        reason: `pane_index ${paneIndex} not in live grid`,
+        validIndexes: grid.panes.map((p) => p.index).sort((a, b) => a - b)
+      };
+    }
   }
-  return { count: DEFAULT_PANE_COUNT, source: "default-session-no-grid" };
+  if (paneIndex >= DEFAULT_PANE_COUNT) {
+    return {
+      valid: false,
+      reason: `pane_index ${paneIndex} out of range (max ${DEFAULT_PANE_COUNT - 1}, source: default)`
+    };
+  }
+  return { valid: true };
 }
 
 // src/commands/index.ts
@@ -868,9 +883,9 @@ async function handleCommand(db, command, args, env) {
       }
       const existing = getAgent(db, agentId);
       if (!existing) {
-        const { count: gridPanes, source: gridSource } = getGridPaneCount(env.sessionDir);
-        if (gridSource !== "default" && paneIndex >= gridPanes) {
-          throw new Error(`Invalid TMUP_PANE_INDEX: '${rawPaneIndex}' (grid has ${gridPanes} panes, max index: ${gridPanes - 1})`);
+        const cliCheck = validatePaneIndexExists(env.sessionDir, paneIndex);
+        if (!cliCheck.valid) {
+          throw new Error(`Invalid TMUP_PANE_INDEX: '${rawPaneIndex}' \u2014 ${cliCheck.reason}`);
         }
         registerAgent(db, agentId, paneIndex);
       }
