@@ -46,10 +46,7 @@ _respawn_available_pane() {
   local pane_cmd="$3"
 
   echo "Pane $pane_index marked available but still running $pane_cmd; respawning it"
-  if ! tmux respawn-pane -k -t "$pane_target" 2>/dev/null; then
-    return 1
-  fi
-
+  respawn_pane "$pane_target" || return 1
   wait_for_shell_ready "$SESSION_NAME" "$pane_index" 5
 }
 
@@ -376,13 +373,18 @@ if [[ -f "$GRID_STATE" ]]; then
     die "Failed to acquire grid state lock — another operation in progress"
   fi
 
-  _pane_state=$(jq -c --argjson idx "$PANE_INDEX" '.panes[] | select(.index == $idx)' "$GRID_STATE")
-  [[ -n "$_pane_state" ]] || {
+  # Pull pane status from the grid state under the held flock. A single jq
+  # pass returns empty EITHER when the pane index is missing from .panes[]
+  # OR when a matched pane carries no .status field. Both are fatal here,
+  # so one non-empty check covers both. tmup authors grid-state.json itself
+  # and always sets .status on every pane (see grid-setup.sh), so the
+  # "found but no status" branch is not a reachable runtime state.
+  _pane_status=$(jq -r --argjson idx "$PANE_INDEX" '.panes[] | select(.index == $idx) | .status // ""' "$GRID_STATE")
+  [[ -n "$_pane_status" ]] || {
     exec 9>&-
     _dispatch_cleanup
     die "Pane $PANE_INDEX not found in grid state"
   }
-  _pane_status=$(jq -r '.status // empty' <<< "$_pane_state")
 
   # Verify pane is at shell prompt WHILE HOLDING LOCK (prevent TOCTOU race)
   PANE_CMD=$(tmux display-message -t "$PANE_TARGET" -p '#{pane_current_command}' 2>/dev/null || echo "")
