@@ -43,22 +43,33 @@ capture_pane_scrollback() {
   tmux capture-pane -t "$target" -p -S "$start" 2>/dev/null | strip_ansi
 }
 
+# Active-work detector: checks ONLY for Codex's `Working (...)` spinner, the
+# one signal Codex emits when it is currently processing a request. This
+# string cannot appear inside a user-typed prompt echo (it is drawn by the
+# TUI, not from scrollback history), so it is safe to match against raw
+# scrollback without any prompt-exclusion filtering. Use this for idleness
+# checks (is_agent_idle / send_reprompt guard).
+codex_scrollback_shows_active_work() {
+  local scrollback="${1:-}"
+  echo "$scrollback" | grep -qF "Working ("
+}
+
+# Submit-accepted detector: checks for `Working (` OR tool-call output. The
+# tool-call regex is needed for the race where Codex executes a tool call
+# faster than our 2-second poll and `Working (` has already cleared by
+# capture time. Because tool names (update_plan, apply_patch, exec_command,
+# ...) are also common English words inside dispatch prompts, this function
+# takes an optional prompt_text arg and strips any scrollback line whose
+# normalized content echoes the prompt before running the tool-name regex.
+# Use this for submit-confirmation checks (wait_for_codex_submit_confirmation).
 codex_scrollback_shows_work() {
   local scrollback="${1:-}"
   local prompt_text="${2:-}"
 
-  # `Working (` is Codex's active-work indicator and is not emitted as part of
-  # the user-typed prompt area, so it can be checked against the full scrollback.
-  if echo "$scrollback" | grep -qF "Working ("; then
+  if codex_scrollback_shows_active_work "$scrollback"; then
     return 0
   fi
 
-  # Tool execution lines are a second (weaker) signal that Codex accepted the
-  # submit. The weakness: the tool names below are also common English words
-  # inside dispatch prompts ("call update_plan when done", "apply_patch the
-  # file"). When we know the prompt text, strip any scrollback line whose
-  # trimmed content is contained in the prompt text so we don't match on the
-  # echo of the user's own submission.
   local work_area="$scrollback"
   if [[ -n "$prompt_text" ]]; then
     # Strip any line whose content is an echo of the typed prompt. The input
@@ -87,9 +98,13 @@ codex_scrollback_shows_work() {
   return 1
 }
 
+# Idle-prompt detector: pane is idle if Codex is NOT actively working and
+# the input prompt marker is visible. Uses the strict `Working (` check, not
+# the tool-name regex — tool names appearing in scrollback from completed
+# prior turns (or echoed user prompts) must NOT block idleness detection.
 codex_scrollback_shows_idle_prompt() {
   local scrollback="${1:-}"
-  if codex_scrollback_shows_work "$scrollback"; then
+  if codex_scrollback_shows_active_work "$scrollback"; then
     return 1
   fi
   echo "$scrollback" | grep -qE '❯|›'
