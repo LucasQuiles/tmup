@@ -1,4 +1,4 @@
-import type { EventType, FailureReason, MessageType, TaskStatus, PlanStatus, ReviewDisposition, AttemptStatus, EvidenceType, ExecutionTargetType, LifecycleEventType, CollaborationPattern } from './types.js';
+import type { EventType, FailureReason, MessageType, TaskStatus, PlanStatus, ReviewDisposition, AttemptStatus, EvidenceType, ExecutionTargetType, LifecycleEventType, CollaborationPattern, CynefinDomain, SdlcLoopLevel, SdlcPhase, WorkerType } from './types.js';
 /** Exponential backoff base for retry delays (seconds). Used by failTask and recoverDeadClaim. */
 export declare const BACKOFF_BASE_SECONDS = 30;
 /** Maximum depth for recursive dependency traversal to prevent DoS on deep DAGs. */
@@ -30,6 +30,19 @@ export declare const ATTEMPT_STATUSES: readonly AttemptStatus[];
 export declare const EVIDENCE_TYPES: readonly EvidenceType[];
 /** Execution target enums (P5.4) */
 export declare const EXECUTION_TARGET_TYPES: readonly ExecutionTargetType[];
+export declare const CYNEFIN_DOMAINS: readonly CynefinDomain[];
+export declare const SDLC_LOOP_LEVELS: readonly SdlcLoopLevel[];
+export declare const SDLC_PHASES: readonly SdlcPhase[];
+export declare const WORKER_TYPES: readonly WorkerType[];
+/** Per-session budget ceiling for Conductor sessions (spec §8). */
+export declare const CONDUCTOR_BUDGET_USD = 10;
+/** Per-worker budget ceiling (spec §8). */
+export declare const WORKER_BUDGET_SONNET_USD = 3;
+export declare const WORKER_BUDGET_HAIKU_USD = 0.5;
+/** Per-bead budget ceiling (spec §8). */
+export declare const BEAD_BUDGET_USD = 50;
+/** Heartbeat stale thresholds by Cynefin domain in seconds (spec §3.3, SC-COL-20). */
+export declare const HEARTBEAT_THRESHOLDS: Record<CynefinDomain, number>;
 /** Lifecycle bridge enums (P5.1) */
 export declare const LIFECYCLE_EVENT_TYPES: readonly LifecycleEventType[];
 /** Collaboration patterns (P5.6) */

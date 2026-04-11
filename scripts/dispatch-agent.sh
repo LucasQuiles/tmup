@@ -40,6 +40,19 @@ _dispatch_cleanup() {
   rm -f "${PROMPT_FILE:-}" "${LAUNCHER:-}" 2>/dev/null || true
 }
 
+_respawn_available_pane() {
+  local pane_target="$1"
+  local pane_index="$2"
+  local pane_cmd="$3"
+
+  echo "Pane $pane_index marked available but still running $pane_cmd; respawning it"
+  if ! tmux respawn-pane -k -t "$pane_target" 2>/dev/null; then
+    return 1
+  fi
+
+  wait_for_shell_ready "$SESSION_NAME" "$pane_index" 5
+}
+
 _release_pane_reservation() {
   [[ "${RESERVATION_ACTIVE:-0}" -eq 1 ]] || return 0
   [[ -f "${GRID_STATE:-}" ]] || return 0
@@ -240,12 +253,28 @@ if [[ -f "$GRID_STATE" ]]; then
     die "Failed to acquire grid state lock — another operation in progress"
   fi
 
+  _pane_state=$(jq -c --argjson idx "$PANE_INDEX" '.panes[] | select(.index == $idx)' "$GRID_STATE")
+  [[ -n "$_pane_state" ]] || {
+    exec 9>&-
+    _dispatch_cleanup
+    die "Pane $PANE_INDEX not found in grid state"
+  }
+  _pane_status=$(jq -r '.status // empty' <<< "$_pane_state")
+
   # Verify pane is at shell prompt WHILE HOLDING LOCK (prevent TOCTOU race)
   PANE_CMD=$(tmux display-message -t "$PANE_TARGET" -p '#{pane_current_command}' 2>/dev/null || echo "")
   if is_agent_process "$PANE_CMD"; then
-    exec 9>&-
-    _dispatch_cleanup
-    die "Pane $PANE_INDEX has a running agent ($PANE_CMD)"
+    if [[ "$_pane_status" == "available" ]]; then
+      if ! _respawn_available_pane "$PANE_TARGET" "$PANE_INDEX" "$PANE_CMD"; then
+        exec 9>&-
+        _dispatch_cleanup
+        die "Pane $PANE_INDEX is marked available but could not be reset from $PANE_CMD"
+      fi
+    else
+      exec 9>&-
+      _dispatch_cleanup
+      die "Pane $PANE_INDEX has a running agent ($PANE_CMD)"
+    fi
   fi
 
   _temp=$(mktemp "$STATE_DIR/grid/grid-state.XXXXXX") || {
@@ -330,14 +359,14 @@ done
 
 # Send the initial prompt via tmux send-keys
 if [[ -f "$PROMPT_FILE" ]]; then
-  # Use send-keys -l (literal) to avoid key interpretation
-  tmux send-keys -l -t "$PANE_TARGET" "$(cat "$PROMPT_FILE")" 2>/dev/null || true
-  sleep 0.3
-  tmux send-keys -t "$PANE_TARGET" Enter 2>/dev/null || true
-  sleep 0.2
-  tmux send-keys -t "$PANE_TARGET" Enter 2>/dev/null || true
-  rm -f "$PROMPT_FILE" 2>/dev/null || true
-  echo "Initial prompt sent to pane $PANE_INDEX"
+  _prompt_text=$(cat "$PROMPT_FILE")
+  if send_codex_prompt_with_retry "$SESSION_NAME" "$PANE_INDEX" "$_prompt_text" "dispatch"; then
+    rm -f "$PROMPT_FILE" 2>/dev/null || true
+    echo "Initial prompt confirmed in pane $PANE_INDEX"
+  else
+    rm -f "$PROMPT_FILE" 2>/dev/null || true
+    die "failed to confirm Codex accepted the initial prompt for pane $PANE_INDEX"
+  fi
 fi
 
 # Capture Codex session ID for resume capability

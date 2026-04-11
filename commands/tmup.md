@@ -21,6 +21,25 @@ allowed-tools:
   - mcp__tmup__tmup_resume
   - mcp__tmup__tmup_teardown
   - mcp__tmup__tmup_reprompt
+  - mcp__plugin_tmup_tmup__tmup_init
+  - mcp__plugin_tmup_tmup__tmup_status
+  - mcp__plugin_tmup_tmup__tmup_next_action
+  - mcp__plugin_tmup_tmup__tmup_task_create
+  - mcp__plugin_tmup_tmup__tmup_task_batch
+  - mcp__plugin_tmup_tmup__tmup_task_update
+  - mcp__plugin_tmup_tmup__tmup_claim
+  - mcp__plugin_tmup_tmup__tmup_complete
+  - mcp__plugin_tmup_tmup__tmup_fail
+  - mcp__plugin_tmup_tmup__tmup_cancel
+  - mcp__plugin_tmup_tmup__tmup_checkpoint
+  - mcp__plugin_tmup_tmup__tmup_send_message
+  - mcp__plugin_tmup_tmup__tmup_inbox
+  - mcp__plugin_tmup_tmup__tmup_dispatch
+  - mcp__plugin_tmup_tmup__tmup_harvest
+  - mcp__plugin_tmup_tmup__tmup_pause
+  - mcp__plugin_tmup_tmup__tmup_resume
+  - mcp__plugin_tmup_tmup__tmup_teardown
+  - mcp__plugin_tmup_tmup__tmup_reprompt
 ---
 
 # /tmup — Multi-Agent Coordination

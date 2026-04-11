@@ -62,27 +62,27 @@ describe('system-inventory-parity', () => {
 
   describe('index count matches live schema', () => {
     it('documents 17 indexes', () => {
-      expect(inventoryDoc).toContain('17 indexes');
+      expect(inventoryDoc).toContain('19 indexes');
     });
 
     it('fresh DB has exactly 17 indexes', () => {
       const indexes = db.prepare(
         "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"
       ).all() as Array<{ name: string }>;
-      expect(indexes.length).toBe(17);
+      expect(indexes.length).toBe(19);
     });
   });
 
   describe('table count matches live schema', () => {
     it('documents 16 tables', () => {
-      expect(inventoryDoc).toContain('16 tables');
+      expect(inventoryDoc).toContain('17 tables');
     });
 
     it('fresh DB has exactly 16 tables', () => {
       const tables = db.prepare(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
       ).all() as Array<{ name: string }>;
-      expect(tables.length).toBe(16);
+      expect(tables.length).toBe(17);
     });
   });
 
