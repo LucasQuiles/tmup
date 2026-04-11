@@ -210,7 +210,11 @@ export async function handleCommand(
         registerAgent(db, agentId, paneIndex);
       }
 
-      updateHeartbeat(db, agentId, codexSessionId);
+      // Always pass pane_index from env so auto-selected panes (-1 at registration)
+      // get corrected to the real pane on first heartbeat.
+      const hbPaneIndex = env.paneIndex ? parseInt(env.paneIndex, 10) : undefined;
+      const validPaneIndex = hbPaneIndex !== undefined && !isNaN(hbPaneIndex) && hbPaneIndex >= 0 ? hbPaneIndex : undefined;
+      updateHeartbeat(db, agentId, codexSessionId, validPaneIndex);
       return { ok: true };
     }
 

@@ -163,6 +163,19 @@ is_agent_idle() {
   codex_scrollback_shows_idle_prompt "$scrollback"
 }
 
+# Check if an agent pane is queueable (actively working but accepting queued input).
+# Codex shows "Tab to queue" or similar indicator when a prompt can be queued.
+is_agent_queueable() {
+  local session="$1" pane_index="${2:-0}"
+  local target="${session}:0.${pane_index}"
+  local scrollback
+  scrollback=$(capture_pane_scrollback "$target" "-20") || return 1
+  # Must be actively working (not idle)
+  codex_scrollback_shows_active_work "$scrollback" || return 1
+  # And must show the queueable indicator
+  echo "$scrollback" | grep -qiE 'tab to queue|⌥.*queue'
+}
+
 # Clear any stale input from a pane
 clear_pane_input() {
   local session="$1" pane_index="${2:-0}"
@@ -256,10 +269,27 @@ send_reprompt() {
     return 1
   fi
 
-  # Guard: agent must be idle (not actively working)
-  if ! is_agent_idle "$session" "$pane_index"; then
-    echo "send_reprompt: pane $target is not at an idle Codex prompt" >&2
+  # Guard: agent must be idle OR queueable (actively working but accepting queued input)
+  local _reprompt_mode="reprompt"
+  if is_agent_idle "$session" "$pane_index"; then
+    _reprompt_mode="reprompt"
+  elif is_agent_queueable "$session" "$pane_index"; then
+    _reprompt_mode="queue"
+  else
+    echo "send_reprompt: pane $target is neither idle nor queueable" >&2
     return 1
+  fi
+
+  if [[ "$_reprompt_mode" == "queue" ]]; then
+    # Queueable pane: type text and press Tab to queue (not Enter)
+    clear_pane_input "$session" "$pane_index"
+    tmux send-keys -l -t "$target" "$prompt_text" 2>/dev/null || {
+      echo "send_reprompt: failed to send text to $target" >&2
+      return 1
+    }
+    sleep 0.2
+    tmux send-keys -t "$target" Tab 2>/dev/null || true
+    return 0
   fi
 
   send_codex_prompt_with_retry "$session" "$pane_index" "$prompt_text" "reprompt"
