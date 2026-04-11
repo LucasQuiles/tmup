@@ -374,12 +374,14 @@ describe('handleToolCall adapter integration', () => {
       expect(commandsForA).toHaveLength(1);
       expect(commandsForA[0].codex_session_id).toBe('csid-A');
       expect(commandsForA[0].pane_index).toBe(0);
-      expect(commandsForA[0].command).toBe('codex resume csid-A');
+      expect(commandsForA[0].command).toContain('csid-A');
+      expect(commandsForA[0].command).toContain('tmup_dispatch');
 
       expect(commandsForB).toHaveLength(1);
       expect(commandsForB[0].codex_session_id).toBe('csid-B');
       expect(commandsForB[0].pane_index).toBe(1);
-      expect(commandsForB[0].command).toBe('codex resume csid-B');
+      expect(commandsForB[0].command).toContain('csid-B');
+      expect(commandsForB[0].command).toContain('tmup_dispatch');
 
       // Total resume commands should be exactly 2 (not 4 from cross-product)
       expect(resumeCommands).toHaveLength(2);
@@ -558,7 +560,8 @@ describe('handleToolCall adapter integration', () => {
 
       expect(result.ok).toBe(true);
       expect(result.codex_session_id).toBe('csid-harvest-test');
-      expect(result.resume_command).toBe('codex resume csid-harvest-test');
+      expect(result.resume_command).toContain('csid-harvest-test');
+      expect(result.resume_command).toContain('tmup_dispatch');
     });
 
     it('omits codex_session_id when not in grid state', async () => {
