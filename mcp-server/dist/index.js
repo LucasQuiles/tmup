@@ -16177,7 +16177,7 @@ var toolDefinitions = [
   },
   {
     name: "tmup_harvest",
-    description: "Capture terminal scrollback from a pane (ANSI stripped). Use this to inspect a live worker lane before deciding whether to reprompt, wait, or resume.",
+    description: "Capture terminal scrollback from a pane (ANSI stripped). Use this to inspect a live interactive worker lane before deciding whether to reprompt, wait, or resume. Only supported for codex workers \u2014 claude_code workers are one-shot and emit output to session-output-<agent_id>.json in the working directory instead of a persistent pane.",
     inputSchema: {
       type: "object",
       properties: {
@@ -16652,9 +16652,7 @@ ${m.payload}
       }
       const workerType = typeof args.worker_type === "string" ? args.worker_type : "codex";
       dispatchArgs.push("--worker-type", workerType);
-      if (workerType !== "codex") {
-        db2.prepare("UPDATE tasks SET worker_type = ? WHERE id = ?").run(workerType, taskId);
-      }
+      db2.prepare("UPDATE tasks SET worker_type = ? WHERE id = ?").run(workerType, taskId);
       if (args.clone_isolation === true) {
         dispatchArgs.push("--clone-isolation");
       }
@@ -16698,6 +16696,7 @@ ${m.payload}
       });
     }
     case "tmup_harvest": {
+      const db2 = ensureDb();
       const paneIndex = args.pane_index;
       if (typeof paneIndex !== "number" || !Number.isInteger(paneIndex) || paneIndex < 0) {
         throw new Error("pane_index must be a non-negative integer");
@@ -16714,6 +16713,15 @@ ${m.payload}
       }
       const harvestSession = harvestSessionId ?? "tmup";
       const paneTarget = `${harvestSession}:0.${paneIndex}`;
+      const harvestPaneAgent = getAgentByPaneIndex(db2, paneIndex);
+      if (harvestPaneAgent) {
+        const harvestOwnedTask = db2.prepare(
+          "SELECT worker_type FROM tasks WHERE owner = ? AND status = 'claimed' ORDER BY claimed_at DESC LIMIT 1"
+        ).get(harvestPaneAgent.id);
+        if (harvestOwnedTask?.worker_type === "claude_code") {
+          throw new Error(`Cannot harvest pane ${paneIndex}: claude_code workers are one-shot and do not host a persistent tmux session. Read session-output-<agent_id>.json in the working directory instead.`);
+        }
+      }
       try {
         const raw = execFileSync("tmux", [
           "capture-pane",

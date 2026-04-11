@@ -169,7 +169,22 @@ $PROMPT
 ## Working Directory
 $WORKING_DIR
 
-## Runtime Contract
+$(if [[ "$WORKER_TYPE" == "claude_code" ]]; then cat <<CLAUDE_CONTRACT
+## Runtime Contract — CLAUDE CODE ONE-SHOT
+- You are a Claude Code worker dispatched in one-shot mode — single invocation, stdin → stdout → exit.
+- This is NOT a persistent interactive pane. There is no tmup_reprompt, no tmup_harvest, no queueable follow-up.
+- Complete the task end-to-end in this single invocation, including any multi-step planning and verification.
+- Call the tmup_heartbeat MCP tool periodically so the lead can track liveness; no background heartbeat runs on your behalf.
+$PLAN_FIRST_LINE
+- Use relevant Claude Code skills when they clearly apply to the task.
+
+## Lane Discipline — ONE-SHOT
+- This execution is the entire lane lifetime. Assume you will not be reprompted.
+- Deliver a complete, self-contained answer. Do not defer steps to a follow-up turn that will not happen.
+- If the task cannot be completed in one shot, emit a clear failure with the reason rather than partial output.
+CLAUDE_CONTRACT
+else cat <<CODEX_CONTRACT
+## Runtime Contract — INTERACTIVE CODEX
 - You are running in a persistent interactive Codex worker pane managed by tmup.
 - This is not \`codex exec\`, not a one-shot subprocess, and not a shell-only lane.
 - Fresh tmup workers launch on \`$CFG_CODEX_MODEL\`.
@@ -181,28 +196,19 @@ $PLAN_FIRST_LINE
 - Use built-in Codex subagents when the task has parallelizable workstreams.
 - Current subagent caps for fresh tmup workers: max_threads=$CFG_CODEX_MAX_THREADS, max_depth=$CFG_CODEX_MAX_DEPTH, job_max_runtime_seconds=$CFG_CODEX_JOB_TIMEOUT.
 
-## Lane Discipline
+## Lane Discipline — INTERACTIVE
 - The lead or appointed grid supervisor manages this pane as a long-lived external subagent lane.
 - Preserve lane context between turns. Follow-up prompts are continuations of the same session, not fresh starts.
 - Do not ask the lead to spawn a replacement worker if this pane already has the relevant context; expect harvest-and-reprompt instead.
 - Keep your scope clean. Do not contaminate this lane with unrelated workstreams.
 
-$(if [[ "$WORKER_TYPE" == "claude_code" ]]; then cat <<CLAUDE_MODEL
-## Execution Model — ONE-SHOT
-- This is a single-turn execution, not an interactive session.
-- You will receive this full prompt via stdin and emit your output to stdout, then exit.
-- There is no follow-up via tmup_reprompt or tmup_harvest for this worker type.
-- Complete the task end-to-end in this single invocation, including any multi-step planning.
-- Call the MCP heartbeat tool periodically so the lead can track liveness; no background heartbeat runs on your behalf.
-CLAUDE_MODEL
-else cat <<CODEX_MODEL
 ## tmux Input Model — INTERACTIVE SESSION
 - Follow-up instructions arrive through \`tmux send-keys\` via \`tmup_reprompt\`.
 - The supervisor may harvest pane output and reprompt you while the session remains alive.
 - When the interface is queueable, the supervisor may queue input while you are still working.
 - Never tell the lead to type shell commands directly into the pane to continue your work.
 - Treat reprompts as authoritative updates to objective, priority, or constraints.
-CODEX_MODEL
+CODEX_CONTRACT
 fi)
 
 ## Process Context

@@ -251,7 +251,7 @@ export const toolDefinitions = [
   },
   {
     name: 'tmup_harvest',
-    description: 'Capture terminal scrollback from a pane (ANSI stripped). Use this to inspect a live worker lane before deciding whether to reprompt, wait, or resume.',
+    description: 'Capture terminal scrollback from a pane (ANSI stripped). Use this to inspect a live interactive worker lane before deciding whether to reprompt, wait, or resume. Only supported for codex workers — claude_code workers are one-shot and emit output to session-output-<agent_id>.json in the working directory instead of a persistent pane.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -778,12 +778,11 @@ export async function handleToolCall(
       const workerType = typeof args.worker_type === 'string' ? args.worker_type : 'codex';
       dispatchArgs.push('--worker-type', workerType);
 
-      // Persist worker_type on the task row so downstream tools (tmup_reprompt,
-      // tmup_harvest) can gate behavior by worker type. The column defaults to
-      // 'codex' in the schema; non-default values must be written explicitly.
-      if (workerType !== 'codex') {
-        db.prepare("UPDATE tasks SET worker_type = ? WHERE id = ?").run(workerType, taskId);
-      }
+      // Always persist worker_type on the task row (not only non-default).
+      // A task re-dispatched from claude_code back to codex must clear the
+      // stale claude_code value, otherwise tmup_reprompt/tmup_harvest gating
+      // will incorrectly reject the live interactive lane.
+      db.prepare("UPDATE tasks SET worker_type = ? WHERE id = ?").run(workerType, taskId);
       if (args.clone_isolation === true) {
         dispatchArgs.push('--clone-isolation');
       }
@@ -837,6 +836,7 @@ export async function handleToolCall(
     }
 
     case 'tmup_harvest': {
+      const db = ensureDb();
       // Validate inputs to prevent shell injection
       const paneIndex = args.pane_index;
       if (typeof paneIndex !== 'number' || !Number.isInteger(paneIndex) || paneIndex < 0) {
@@ -857,6 +857,18 @@ export async function handleToolCall(
       // Execute tmux capture directly — no shell boundary
       const harvestSession = harvestSessionId ?? 'tmup';
       const paneTarget = `${harvestSession}:0.${paneIndex}`;
+      // Reject claude_code panes — they are one-shot workers without a
+      // persistent pane to harvest. Output goes to session-output-<agent>.json.
+      const harvestPaneAgent = getAgentByPaneIndex(db, paneIndex);
+      if (harvestPaneAgent) {
+        const harvestOwnedTask = db.prepare(
+          "SELECT worker_type FROM tasks WHERE owner = ? AND status = 'claimed' ORDER BY claimed_at DESC LIMIT 1"
+        ).get(harvestPaneAgent.id) as { worker_type: string } | undefined;
+        if (harvestOwnedTask?.worker_type === 'claude_code') {
+          throw new Error(`Cannot harvest pane ${paneIndex}: claude_code workers are one-shot and do not host a persistent tmux session. Read session-output-<agent_id>.json in the working directory instead.`);
+        }
+      }
+
       try {
         const raw = execFileSync('tmux', [
           'capture-pane', '-t', paneTarget, '-p', '-S', `-${lines}`,
