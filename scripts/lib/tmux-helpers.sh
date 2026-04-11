@@ -32,7 +32,7 @@ wait_for_shell_ready() {
 
 # Strip ANSI escape codes from text (uses perl for BSD/GNU portability — sed \xHH escapes are GNU-only)
 strip_ansi() {
-  perl -pe 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\x1b\][^\x07]*\x07//g'
+  perl -pe 's/\x1b\[[\x30-\x3F]*[\x20-\x2F]*[\x40-\x7E]//g; s/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)//g'
 }
 
 # Respawn a tmux pane via `respawn-pane -k`, discarding the running command
