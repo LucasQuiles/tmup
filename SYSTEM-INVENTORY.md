@@ -2,7 +2,7 @@
 
 > Multi-agent coordination for Claude Code + Codex CLI via SQLite WAL-backed task DAG
 > Version: 0.1.0 | 18 MCP tools | 9 CLI commands | 22 shared modules
-> 28 test files | All passing
+> 33 test files | All passing
 
 ---
 
@@ -33,7 +33,7 @@
 │                     Claude Code (Lead)                          │
 │  ┌─────────────┐   ┌────────────────┐   ┌──────────────────┐   │
 │  │ /tmup       │──▶│ MCP Server     │──▶│ SQLite WAL DB    │   │
-│  │ (command)   │   │ (18 tools)     │   │ (16 tables)      │   │
+│  │ (command)   │   │ (18 tools)     │   │ (17 tables)      │   │
 │  └─────────────┘   └────────┬───────┘   └────────▲─────────┘   │
 │                             │                     │             │
 │                    ┌────────▼────────┐            │             │
@@ -148,7 +148,7 @@ Marketplace manifest for directory-source registration. The `name` field is the 
 
 ## 3. Database Layer
 
-### Schema (`config/schema.sql` + migrations — 16 tables, 17 indexes)
+### Schema (`config/schema.sql` + migrations — 17 tables, 19 indexes)
 
 #### Core Tables (schema.sql v1)
 
@@ -219,7 +219,8 @@ Marketplace manifest for directory-source registration. The `name` field is the 
 - `schema_version` table tracks applied migrations
 - Migration v1: dead state removal (failed→needs_review, in_progress→claimed)
 - Migration v2: schema constraints (indexes, triggers, unique constraints with preflight checks)
-- Migration v3: planning domain (plans, plan_reviews, research_packets, plan_tasks), evidence domain (task_attempts, evidence_packets), execution targets, lifecycle events, agents.execution_target_id column
+- Migration v3: planning domain, evidence records, execution targets, lifecycle bridge (P5)
+- Migration v4: SDLC-OS colony support (bead tracking, loop levels, worker types, corrections)
 
 ### Runtime Contract (`config/runtime-contract.json`)
 
@@ -544,7 +545,7 @@ tmup/
 
 | Test File | Tests | Coverage Focus |
 |-----------|-------|---------------|
-| `tests/shared/db.test.ts` | 10 | WAL pragmas, 16 tables, idempotent opens, 0600 perms, pragma values, table constraints, migration framework, schema versioning |
+| `tests/shared/db.test.ts` | 10 | WAL pragmas, 17 tables, idempotent opens, 0600 perms, pragma values, table constraints, migration framework, schema versioning |
 | `tests/shared/id.test.ts` | 12 | nextTaskId (empty/increment/gaps/padding/overflow), UUID format + uniqueness |
 | `tests/shared/event-ops.test.ts` | 15 | logEvent fields/null actor/no payload, filter/limit/ordering, pruneEvents boundary, bounded batch pruning |
 | `tests/shared/dep-resolver.test.ts` | 32 | checkCycle (direct/transitive/diamond/self), addDependency (valid/cycle/not-found/idempotent/self/re-block), hasUnmetDependencies, findUnblockedDependents, traversal depth limit, transitive dependents, stress (50-node dense graph) |
@@ -750,7 +751,7 @@ commands/
 config/
   policy.yaml                    # Grid, DAG, harvesting, timeout, autonomy config
   runtime-contract.json          # SQLite pragma values (WAL, busy_timeout, etc.)
-  schema.sql                     # 8-table base schema + 8 migration tables = 16 total
+  schema.sql                     # 8-table base schema + 9 migration tables = 17 total
 
 mcp-server/
   package.json                   # @tmup/mcp-server package definition

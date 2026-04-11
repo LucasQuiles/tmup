@@ -39,7 +39,7 @@ describe('openDatabase', () => {
       'agents', 'artifacts', 'events', 'evidence_packets', 'execution_targets',
       'lifecycle_events', 'messages', 'plan_reviews', 'plan_tasks', 'plans',
       'research_packets', 'schema_version', 'task_artifacts', 'task_attempts',
-      'task_deps', 'tasks',
+      'task_corrections', 'task_deps', 'tasks',
     ]);
     closeDatabase(db);
   });
@@ -56,7 +56,7 @@ describe('openDatabase', () => {
     const tables = db2.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
     ).all();
-    expect(tables.length).toBe(16);
+    expect(tables.length).toBe(17);
     // Data survives
     const task = db2.prepare('SELECT subject FROM tasks WHERE id = ?').get('001') as { subject: string };
     expect(task.subject).toBe('test');
