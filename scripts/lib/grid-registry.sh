@@ -7,12 +7,22 @@ _REGISTRY_LOCK_DIR="$HOME/.local/state/tmup/registry.lock.d"
 _registry_lock() {
   local _attempts=0
   while ! mkdir "$_REGISTRY_LOCK_DIR" 2>/dev/null; do
+    # Stale lock recovery: if lock dir is older than 10s, remove it
+    if [[ -d "$_REGISTRY_LOCK_DIR" ]]; then
+      local _lock_age
+      _lock_age=$(find "$_REGISTRY_LOCK_DIR" -maxdepth 0 -mmin +0.17 2>/dev/null)
+      if [[ -n "$_lock_age" ]]; then
+        rmdir "$_REGISTRY_LOCK_DIR" 2>/dev/null || true
+        continue
+      fi
+    fi
     _attempts=$((_attempts + 1))
     if [[ $_attempts -ge 50 ]]; then
       return 1
     fi
     sleep 0.1
   done
+  trap '_registry_unlock' EXIT INT TERM
 }
 
 _registry_unlock() {
@@ -48,7 +58,6 @@ registry_register() {
   timestamp=$(date -Iseconds)
   if ! _registry_lock; then
     echo "grid-registry: failed to acquire lock for register" >&2
-    _registry_unlock
     return 1
   fi
   local temp
@@ -75,7 +84,6 @@ registry_deregister() {
   [[ -f "$_REGISTRY_FILE" ]] || return 0
   if ! _registry_lock; then
     echo "grid-registry: failed to acquire lock for deregister" >&2
-    _registry_unlock
     return 1
   fi
   local temp

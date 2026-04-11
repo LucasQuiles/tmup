@@ -68,7 +68,7 @@
 **Concurrency model:** SQLite WAL mode allows 1 writer + N readers. All writes use IMMEDIATE transactions to serialize. `busy_timeout=8000ms` prevents lock failures under moderate contention from concurrent workers.
 
 **Multi-session behavior:** Session reuse is registry-driven, canonical-path-based, and conditional on context:
-- Shell path (`grid-registry.sh`): canonicalizes directories, uses `flock`, traverses parent directories, and only returns a match if `tmux has-session` succeeds for the registered session.
+- Shell path (`grid-registry.sh`): canonicalizes directories, uses portable `mkdir`-based locking, traverses parent directories, and only returns a match if `tmux has-session` succeeds for the registered session.
 - Shared path (`session-ops.ts`): canonicalizes directories, uses a PID-file lock, and reattaches purely on canonical `project_dir` equality in the registry. Does not verify tmux session liveness.
 - These two layers operate on the same on-disk registry but do not share lock semantics. Stale registry entries (dead tmux sessions) are ignored by the shell path but may be reattached by the shared path.
 
@@ -400,7 +400,7 @@ Success output is JSON to stdout. CLI-level errors (`CliError`) go to stdout as 
 | `lib/config.sh` | YAML config loader (via yq), env validation, all `CFG_*` exports | 85 |
 | `lib/validators.sh` | `validate_pane_index`, `validate_role`, `validate_working_dir` | 47 |
 | `lib/tmux-helpers.sh` | `is_agent_process`, `wait_for_shell_ready`, `strip_ansi` | 33 |
-| `lib/grid-registry.sh` | Multi-grid project-to-session registry (JSON + flock) | 70 |
+| `lib/grid-registry.sh` | Multi-grid project-to-session registry (JSON + mkdir-lock) | 70 |
 | `lib/grid-identity.sh` | Grid ownership tracking (PID-based) with `jq -n` safe JSON | 36 |
 | `lib/prerequisites.sh` | Verify tmux (>=3.0), node, jq installed | 27 |
 
@@ -408,7 +408,7 @@ Success output is JSON to stdout. CLI-level errors (`CliError`) go to stdout as 
 
 - **No shell interpolation in `tmux send-keys`**: `dispatch-agent.sh` writes env vars to a launcher wrapper script using `printf '%q'`, then sends `bash '$LAUNCHER'` to the pane.
 - **`jq -n` for JSON construction**: `grid-setup.sh` and `grid-identity.sh` build JSON entirely through `jq --arg`/`--argjson` — never heredoc interpolation.
-- **File descriptor locking**: `grid-registry.sh` and `pane-manager.sh` use `flock` on a lock file for atomic JSON read-modify-write.
+- **File descriptor locking**: `grid-registry.sh` uses portable `mkdir`-based locking; `pane-manager.sh` uses `flock` on a lock file for atomic JSON read-modify-write.
 - **Restrictive permissions**: `umask 0077`, `chmod 600` for state files, `chmod 700` for launcher scripts.
 
 ---
