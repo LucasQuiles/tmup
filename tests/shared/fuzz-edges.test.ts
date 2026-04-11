@@ -12,17 +12,15 @@ import type { Database, TaskRow } from '../../shared/src/types.js';
 import { tmpDbPath, cleanupDb } from '../helpers/db.js';
 
 function buildLongArtifactPath(baseDir: string, minLength: number = 1001): string {
-  const segment = 'nested-segment-' + 'x'.repeat(32);
+  // Build a path string longer than minLength without creating it on disk.
+  // macOS PATH_MAX is 1024, so we cannot create real files at paths > 1000 chars.
+  // The path starts from baseDir (a real directory) and extends with fake segments.
+  const segment = 's'.repeat(200);
   let current = baseDir;
-
   while (current.length <= minLength) {
     current = path.join(current, segment);
-    fs.mkdirSync(current, { recursive: true });
   }
-
-  const filePath = path.join(current, 'artifact.txt');
-  fs.writeFileSync(filePath, 'long-path-artifact');
-  return filePath;
+  return path.join(current, 'artifact.txt');
 }
 
 describe('fuzz and edge coverage', () => {

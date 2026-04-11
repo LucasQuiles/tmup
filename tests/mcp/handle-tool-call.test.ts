@@ -85,7 +85,7 @@ describe('handleToolCall adapter integration', () => {
   let originalArgv1: string | undefined;
 
   function createAdapterSession(): { db: Database; projectDir: string; sessionId: string; dbPath: string } {
-    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tmup-handle-tool-call-'));
+    const projectDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tmup-handle-tool-call-')));
     const session = initSession(projectDir, 'test');
     const db = openDatabase(session.db_path);
 
