@@ -45,9 +45,9 @@ For detailed input/output schemas, see [skills/tmup/REFERENCE.md](../skills/tmup
 
 ## CLI commands (9)
 
-These are the commands Codex workers use from inside their panes. They're exposed via `tmup-cli`, a lightweight CLI binary that talks directly to the shared SQLite database.
+These are the commands Codex workers use from inside their panes. They're exposed via `tmup-cli`, a lightweight CLI binary that talks directly to the shared SQLite database. Claude Code workers (`worker_type='claude_code'`) call the MCP `tmup_heartbeat` tool instead — the same payload via a different transport. The platform enforces a background heartbeat loop for both worker types, so the CLI/MCP call is defensive against the model ignoring its prompt, not the primary liveness signal.
 
-Workers don't use MCP tools. They use this CLI. It's faster, simpler, and doesn't require an MCP server. It just opens the database file, does the thing, prints JSON, and exits.
+Codex workers use this CLI from inside their tmux pane — it's faster than MCP (no server round-trip, just opens the DB file, writes, prints JSON, exits). Claude Code workers use the MCP tools from the enclosing Claude Code session because they have no pane shell; the dispatch-agent.sh launcher pipes the prompt via stdin and captures output to `session-output-<agent_id>.json`. Both transports write to the same SQLite database with the same schema.
 
 ```bash
 tmup-cli claim [--role <role>]              # Claim next available task
