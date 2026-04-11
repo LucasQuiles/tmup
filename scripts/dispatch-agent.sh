@@ -154,13 +154,70 @@ validate_pane_index "$PANE_INDEX"
 
 # Build full prompt
 CLI_PATH="$PLUGIN_DIR/cli/dist/tmup-cli.js"
-FULL_PROMPT="You are a $ROLE agent in a tmup-coordinated team.
+PLAN_FIRST_LINE=""
+if [[ "${CFG_CODEX_PLAN_FIRST:-true}" == "true" ]]; then
+  PLAN_FIRST_LINE="- Start plan-first. Restate the objective, constraints, risks, and execution plan before making broad changes."
+fi
+
+FULL_PROMPT=$(cat <<EOF
+You are a $ROLE agent in a tmup-coordinated team.
 
 ## Objective
 $PROMPT
 
 ## Working Directory
 $WORKING_DIR
+
+## Runtime Contract
+- You are running in a persistent interactive Codex worker pane managed by tmup.
+- This is not \`codex exec\`, not a one-shot subprocess, and not a shell-only lane.
+- Fresh tmup workers launch on \`$CFG_CODEX_MODEL\`.
+- Your runtime contract assumes a native context window of up to $CFG_CODEX_CONTEXT_WINDOW tokens for this model.
+- Runtime defaults for this lane: reasoning_effort=$CFG_CODEX_REASONING_EFFORT, reasoning_summary=$CFG_CODEX_REASONING_SUMMARY, verbosity=$CFG_CODEX_VERBOSITY, web_search=$CFG_CODEX_WEB_SEARCH.
+- Interactive safeguards and productivity features are enabled through tmup policy: history=$CFG_CODEX_HISTORY, undo=$CFG_CODEX_UNDO, shell_snapshot=$CFG_CODEX_SHELL_SNAPSHOT, request_compression=$CFG_CODEX_REQUEST_COMPRESSION.
+$PLAN_FIRST_LINE
+- Use relevant Codex skills when they clearly apply to the task.
+- Use built-in Codex subagents when the task has parallelizable workstreams.
+- Current subagent caps for fresh tmup workers: max_threads=$CFG_CODEX_MAX_THREADS, max_depth=$CFG_CODEX_MAX_DEPTH, job_max_runtime_seconds=$CFG_CODEX_JOB_TIMEOUT.
+
+## Lane Discipline
+- The lead or appointed grid supervisor manages this pane as a long-lived external subagent lane.
+- Preserve lane context between turns. Follow-up prompts are continuations of the same session, not fresh starts.
+- Do not ask the lead to spawn a replacement worker if this pane already has the relevant context; expect harvest-and-reprompt instead.
+- Keep your scope clean. Do not contaminate this lane with unrelated workstreams.
+
+## tmux Input Model
+- Follow-up instructions arrive through \`tmux send-keys\` via \`tmup_reprompt\`.
+- The supervisor may harvest pane output and reprompt you while the session remains alive.
+- When the interface is queueable, the supervisor may queue input while you are still working.
+- Never tell the lead to type shell commands directly into the pane to continue your work.
+- Treat reprompts as authoritative updates to objective, priority, or constraints.
+
+## Process Context
+- You are operating inside a supervised SDLC workflow: discover, plan, implement, verify, review, and document.
+- Your output will be adversarially reviewed. Every claim should be backed by repo evidence, test output, or cited documentation.
+- Shared coordination surfaces:
+  - \`TMUP_WORKING_DIR\` is your working root
+  - \`TMUP_SESSION_DIR\` is the session-scoped state directory shared with the lead
+  - \`TMUP_DB\` is the tmup database path; use \`tmup-cli\`, not raw SQL, to interact with it
+  - \`tmup-cli inbox\`, \`checkpoint\`, \`message\`, \`complete\`, and \`fail\` are the coordination interface
+- Check your inbox after claiming work, after meaningful milestones, and before declaring completion.
+
+## Quality Posture
+- Act as a skeptic and adversarial reviewer of your own work.
+- Verify assumptions before building on them.
+- Evaluate every changed line for correctness, security, conventions, and regression risk.
+- Prefer explicit evidence over intuition. If evidence conflicts, stop and resolve the contradiction.
+- Run relevant verification as you go; do not leave all checking for the end.
+- Escalate blockers, ambiguity, or upstream defects early instead of silently guessing.
+
+## Internal Teams
+- The tmup tiered agent pack is synced into \`~/.codex/agents\` during grid setup.
+- For tasks with separable workstreams, spawn \`tmup-tier1\` subagents (model \`gpt-5.3-codex\`).
+- \`tmup-tier1\` agents may spawn \`tmup-tier2\` subagents (model \`gpt-5.2-codex\`) for narrow leaf tasks.
+- Do not spawn raw unnamed agents. Use the named tmup tiered agents so model pinning is enforced.
+- max_threads: $CFG_CODEX_MAX_THREADS concurrent, max_depth: $CFG_CODEX_MAX_DEPTH nesting levels.
+- Collect and synthesize subagent results before reporting back to the lead.
 
 ## tmup-cli Commands
 Use \`node $CLI_PATH <command>\` for coordination:
@@ -182,7 +239,9 @@ Use \`node $CLI_PATH <command>\` for coordination:
 | DATABASE_LOCKED | Retry after 2 seconds |
 
 ## Constraints
-$AGENT_INSTRUCTIONS"
+$AGENT_INSTRUCTIONS
+EOF
+)
 
 # Write prompt to session-scoped temp file
 PROMPT_FILE="$STATE_DIR/prompt-${PANE_INDEX}-${AGENT_ID}.txt"
@@ -200,6 +259,29 @@ export TMUP_SESSION_NAME=$(printf '%q' "$SESSION_NAME")
 export TMUP_SESSION_DIR=$(printf '%q' "$STATE_DIR")
 export CODEX_BIN=$(printf '%q' "$CODEX_BIN")
 export TMUP_WORKING_DIR=$(printf '%q' "$WORKING_DIR")
+export TMUP_CODEX_MODEL=$(printf '%q' "$CFG_CODEX_MODEL")
+export TMUP_CODEX_CONTEXT_WINDOW=$(printf '%q' "$CFG_CODEX_CONTEXT_WINDOW")
+export TMUP_CODEX_AUTO_COMPACT=$(printf '%q' "$CFG_CODEX_AUTO_COMPACT")
+export TMUP_CODEX_APPROVAL_POLICY=$(printf '%q' "$CFG_CODEX_APPROVAL_POLICY")
+export TMUP_CODEX_SANDBOX=$(printf '%q' "$CFG_CODEX_SANDBOX")
+export TMUP_CODEX_NO_ALT_SCREEN=$(printf '%q' "$CFG_CODEX_NO_ALT_SCREEN")
+export TMUP_CODEX_REASONING_EFFORT=$(printf '%q' "$CFG_CODEX_REASONING_EFFORT")
+export TMUP_CODEX_REASONING_SUMMARY=$(printf '%q' "$CFG_CODEX_REASONING_SUMMARY")
+export TMUP_CODEX_PLAN_REASONING=$(printf '%q' "$CFG_CODEX_PLAN_REASONING")
+export TMUP_CODEX_VERBOSITY=$(printf '%q' "$CFG_CODEX_VERBOSITY")
+export TMUP_CODEX_SERVICE_TIER=$(printf '%q' "$CFG_CODEX_SERVICE_TIER")
+export TMUP_CODEX_TOOL_OUTPUT_LIMIT=$(printf '%q' "$CFG_CODEX_TOOL_OUTPUT_LIMIT")
+export TMUP_CODEX_WEB_SEARCH=$(printf '%q' "$CFG_CODEX_WEB_SEARCH")
+export TMUP_CODEX_HISTORY=$(printf '%q' "$CFG_CODEX_HISTORY")
+export TMUP_CODEX_UNDO=$(printf '%q' "$CFG_CODEX_UNDO")
+export TMUP_CODEX_SHELL_INHERIT=$(printf '%q' "$CFG_CODEX_SHELL_INHERIT")
+export TMUP_CODEX_SHELL_SNAPSHOT=$(printf '%q' "$CFG_CODEX_SHELL_SNAPSHOT")
+export TMUP_CODEX_REQUEST_COMPRESSION=$(printf '%q' "$CFG_CODEX_REQUEST_COMPRESSION")
+export TMUP_CODEX_NOTIFICATIONS=$(printf '%q' "$CFG_CODEX_NOTIFICATIONS")
+export TMUP_CODEX_BACKGROUND_TERMINAL_TIMEOUT=$(printf '%q' "$CFG_CODEX_BACKGROUND_TERMINAL_TIMEOUT")
+export TMUP_CODEX_MAX_THREADS=$(printf '%q' "$CFG_CODEX_MAX_THREADS")
+export TMUP_CODEX_MAX_DEPTH=$(printf '%q' "$CFG_CODEX_MAX_DEPTH")
+export TMUP_CODEX_JOB_TIMEOUT=$(printf '%q' "$CFG_CODEX_JOB_TIMEOUT")
 $(if [[ -n "$TASK_ID" ]]; then printf 'export TMUP_TASK_ID=%q' "$TASK_ID"; fi)
 $(if [[ -n "$RESUME_SESSION_ID" ]]; then printf 'export RESUME_SESSION_ID=%q' "$RESUME_SESSION_ID"; fi)
 _CLI_PATH=$(printf '%q' "$PLUGIN_DIR/cli/dist/tmup-cli.js")
@@ -214,13 +296,45 @@ if [[ "\$_WORKER_TYPE" == "claude_code" ]]; then
   cd "\$TMUP_WORKING_DIR" && claude -p \\
     --model sonnet \\
     --permission-mode bypassPermissions \\
-    --plugin-dir /home/q/.claude/plugins/tmup \\
+    --plugin-dir $(printf '%q' "$PLUGIN_DIR") \\
     --max-budget-usd 3.00 \\
     < "\$_PROMPT_FILE" \\
     > "\$TMUP_WORKING_DIR/session-output.json" 2>&1
 else
-  # Start background heartbeat loop (runs independently — will be orphaned when we exec)
-  # Use nohup + disown to survive the exec
+  # Codex worker — runtime contract pinned from policy.yaml-sourced env vars
+  _INLINE_ARGS=()
+  if [[ "\${TMUP_CODEX_NO_ALT_SCREEN}" == "true" ]]; then
+    _INLINE_ARGS+=(--no-alt-screen)
+  fi
+
+  _COMMON_ARGS=(
+    -m "\$TMUP_CODEX_MODEL"
+    -c "model_context_window=\$TMUP_CODEX_CONTEXT_WINDOW"
+    -c "model_auto_compact_token_limit=\$TMUP_CODEX_AUTO_COMPACT"
+    -a "\$TMUP_CODEX_APPROVAL_POLICY"
+    -s "\$TMUP_CODEX_SANDBOX"
+    -c "model_reasoning_effort=\$TMUP_CODEX_REASONING_EFFORT"
+    -c "model_reasoning_summary=\$TMUP_CODEX_REASONING_SUMMARY"
+    -c "plan_mode_reasoning_effort=\$TMUP_CODEX_PLAN_REASONING"
+    -c "model_verbosity=\$TMUP_CODEX_VERBOSITY"
+    -c "service_tier=\$TMUP_CODEX_SERVICE_TIER"
+    -c "tool_output_token_limit=\$TMUP_CODEX_TOOL_OUTPUT_LIMIT"
+    -c "web_search=\$TMUP_CODEX_WEB_SEARCH"
+    -c "history.persistence=\$TMUP_CODEX_HISTORY"
+    -c "features.undo=\$TMUP_CODEX_UNDO"
+    -c "shell_environment_policy.inherit=\$TMUP_CODEX_SHELL_INHERIT"
+    -c "features.shell_snapshot=\$TMUP_CODEX_SHELL_SNAPSHOT"
+    -c "features.enable_request_compression=\$TMUP_CODEX_REQUEST_COMPRESSION"
+    -c "tui.notifications=\$TMUP_CODEX_NOTIFICATIONS"
+    -c "background_terminal_max_timeout=\$TMUP_CODEX_BACKGROUND_TERMINAL_TIMEOUT"
+    -c "agents.max_threads=\$TMUP_CODEX_MAX_THREADS"
+    -c "agents.max_depth=\$TMUP_CODEX_MAX_DEPTH"
+    -c "agents.job_max_runtime_seconds=\$TMUP_CODEX_JOB_TIMEOUT"
+    -C "\$TMUP_WORKING_DIR"
+  )
+  _COMMON_ARGS+=("\${_INLINE_ARGS[@]}")
+
+  # Background heartbeat — child of launcher, dies with codex
   (
     while true; do
       sleep "\$_HB_INTERVAL"
@@ -229,15 +343,24 @@ else
         node "\$_CLI_PATH" heartbeat 2>/dev/null || true
     done
   ) &
-  disown
+  _HB_PID=\$!
 
-  # exec codex — replaces this shell process, becomes pane foreground
-  # The dispatch script will send the prompt via tmux send-keys after detecting codex is ready
+  # Run codex as foreground child — interactive session, no prompt arg.
+  # Outer dispatch-agent.sh waits for codex to be ready, then sends the
+  # initial prompt via send_codex_prompt_with_retry (interactive session model).
   if [[ -n "\${RESUME_SESSION_ID:-}" ]]; then
-    exec "\$CODEX_BIN" resume "\$RESUME_SESSION_ID"
+    # Reapply the current runtime contract on resume so recovered panes stay pinned
+    # to the configured model, context, compaction, approval, sandbox, and subagent caps.
+    "\$CODEX_BIN" "\${_COMMON_ARGS[@]}" resume "\$RESUME_SESSION_ID"
   else
-    exec "\$CODEX_BIN" -s danger-full-access --no-alt-screen -C "\$TMUP_WORKING_DIR"
+    "\$CODEX_BIN" "\${_COMMON_ARGS[@]}"
   fi
+  _EXIT=\$?
+
+  # Kill heartbeat loop when codex exits
+  kill "\$_HB_PID" 2>/dev/null
+  wait "\$_HB_PID" 2>/dev/null
+  exit "\$_EXIT"
 fi
 WRAPPER
 chmod 700 "$LAUNCHER"

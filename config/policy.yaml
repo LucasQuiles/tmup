@@ -15,6 +15,40 @@ grid:
   width: 240
   height: 55
 
+codex:
+  # Fresh tmup workers launch as interactive Codex sessions in tmux panes.
+  # gpt-5.4 already provides the large native context window; keep this value
+  # explicit so the runtime contract is visible in prompts and docs.
+  model: "gpt-5.4"
+  context_window: 1050000
+  auto_compact_token_limit: 750000
+  approval_policy: "never"
+  sandbox: "danger-full-access"
+  no_alt_screen: true
+  plan_first: true
+  reasoning_effort: "high"
+  reasoning_summary: "low"
+  plan_mode_reasoning_effort: "xhigh"
+  verbosity: "low"
+  service_tier: "fast"
+  tool_output_token_limit: 50000
+  web_search: "live"
+  history_persistence: "save-all"
+  enable_undo: true
+  shell_env_inherit: "all"
+  shell_snapshot: true
+  enable_request_compression: true
+  notifications: true
+  background_terminal_max_timeout: 600000
+  subagents:
+    job_max_runtime_seconds: 3600
+    max_threads: 6
+    max_depth: 2
+    tiers:
+      # root pane worker: gpt-5.4 (set via codex.model above)
+      # tier-1 (tmup-tier1): gpt-5.3-codex
+      # tier-2 (tmup-tier2): gpt-5.2-codex
+
 harvesting:
   capture_scrollback_lines: 500
   poll_interval_seconds: 30

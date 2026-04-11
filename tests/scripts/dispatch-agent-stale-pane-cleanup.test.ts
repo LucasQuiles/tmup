@@ -40,6 +40,13 @@ describe('dispatch-agent.sh stale pane cleanup', () => {
     writeExecutable('sleep', `#!/bin/bash
 exit 0
 `);
+    // flock is Linux-only — stub it for cross-platform tests
+    writeExecutable('flock', `#!/bin/bash
+exit 0
+`);
+    writeExecutable('yq', `#!/bin/bash
+printf 'null\n'
+`);
     writeExecutable('codex', `#!/bin/bash
 exit 0
 `);

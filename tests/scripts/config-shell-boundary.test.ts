@@ -385,5 +385,98 @@ describe('config.sh shell boundary', () => {
       `);
       expect(result).toBe('60:1800:10');
     });
+
+    it('exports codex worker defaults used by tmup dispatch', () => {
+      const result = runShell(`
+        source "${CONFIG_SH}"
+        echo "$CFG_CODEX_MODEL:$CFG_CODEX_CONTEXT_WINDOW:$CFG_CODEX_AUTO_COMPACT:$CFG_CODEX_APPROVAL_POLICY:$CFG_CODEX_SANDBOX:$CFG_CODEX_NO_ALT_SCREEN:$CFG_CODEX_PLAN_FIRST:$CFG_CODEX_REASONING_EFFORT:$CFG_CODEX_REASONING_SUMMARY:$CFG_CODEX_PLAN_REASONING:$CFG_CODEX_VERBOSITY:$CFG_CODEX_SERVICE_TIER:$CFG_CODEX_TOOL_OUTPUT_LIMIT:$CFG_CODEX_WEB_SEARCH:$CFG_CODEX_HISTORY:$CFG_CODEX_UNDO:$CFG_CODEX_SHELL_INHERIT:$CFG_CODEX_SHELL_SNAPSHOT:$CFG_CODEX_REQUEST_COMPRESSION:$CFG_CODEX_NOTIFICATIONS:$CFG_CODEX_BACKGROUND_TERMINAL_TIMEOUT:$CFG_CODEX_MAX_THREADS:$CFG_CODEX_MAX_DEPTH:$CFG_CODEX_JOB_TIMEOUT"
+      `, { CFG_CONFIG_DIR: '/nonexistent/path' });
+      expect(result).toBe('gpt-5.4:1050000:750000:never:danger-full-access:true:true:high:low:xhigh:low:fast:50000:live:save-all:true:all:true:true:true:600000:6:2:3600');
+    });
+
+    it('loads codex worker settings from policy.yaml queries', () => {
+      const fakeBin = path.join(tmpHome, 'codex-yq-bin');
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, 'yq'), `#!/bin/bash
+query="$2"
+case "$query" in
+  '.codex.model // "gpt-5.4"') echo 'gpt-5.4-mini' ;;
+  '.codex.context_window // 1050000') echo '777777' ;;
+  '.codex.auto_compact_token_limit // 750000') echo '555555' ;;
+  '.codex.approval_policy // "never"') echo 'on-request' ;;
+  '.codex.sandbox // "danger-full-access"') echo 'workspace-write' ;;
+  '.codex.no_alt_screen // true') echo 'false' ;;
+  '.codex.plan_first // true') echo 'false' ;;
+  '.codex.reasoning_effort // "high"') echo 'xhigh' ;;
+  '.codex.reasoning_summary // "low"') echo 'medium' ;;
+  '.codex.plan_mode_reasoning_effort // "xhigh"') echo 'high' ;;
+  '.codex.verbosity // "low"') echo 'medium' ;;
+  '.codex.service_tier // "fast"') echo 'flex' ;;
+  '.codex.tool_output_token_limit // 50000') echo '54321' ;;
+  '.codex.web_search // "live"') echo 'cached' ;;
+  '.codex.history_persistence // "save-all"') echo 'none' ;;
+  '.codex.enable_undo // true') echo 'false' ;;
+  '.codex.shell_env_inherit // "all"') echo 'core' ;;
+  '.codex.shell_snapshot // true') echo 'false' ;;
+  '.codex.enable_request_compression // true') echo 'false' ;;
+  '.codex.notifications // true') echo 'false' ;;
+  '.codex.background_terminal_max_timeout // 600000') echo '420000' ;;
+  '.codex.subagents.max_threads // 6') echo '3' ;;
+  '.codex.subagents.max_depth // 2') echo '3' ;;
+  '.codex.subagents.job_max_runtime_seconds // 3600') echo '2700' ;;
+  *) echo 'null' ;;
+esac
+`);
+      fs.chmodSync(path.join(fakeBin, 'yq'), 0o755);
+
+      const result = runShell(`
+        source "${CONFIG_SH}"
+        echo "$CFG_CODEX_MODEL:$CFG_CODEX_CONTEXT_WINDOW:$CFG_CODEX_AUTO_COMPACT:$CFG_CODEX_APPROVAL_POLICY:$CFG_CODEX_SANDBOX:$CFG_CODEX_NO_ALT_SCREEN:$CFG_CODEX_PLAN_FIRST:$CFG_CODEX_REASONING_EFFORT:$CFG_CODEX_REASONING_SUMMARY:$CFG_CODEX_PLAN_REASONING:$CFG_CODEX_VERBOSITY:$CFG_CODEX_SERVICE_TIER:$CFG_CODEX_TOOL_OUTPUT_LIMIT:$CFG_CODEX_WEB_SEARCH:$CFG_CODEX_HISTORY:$CFG_CODEX_UNDO:$CFG_CODEX_SHELL_INHERIT:$CFG_CODEX_SHELL_SNAPSHOT:$CFG_CODEX_REQUEST_COMPRESSION:$CFG_CODEX_NOTIFICATIONS:$CFG_CODEX_BACKGROUND_TERMINAL_TIMEOUT:$CFG_CODEX_MAX_THREADS:$CFG_CODEX_MAX_DEPTH:$CFG_CODEX_JOB_TIMEOUT"
+      `, { PATH: `${fakeBin}:/usr/bin:/bin` });
+      expect(result).toBe('gpt-5.4-mini:777777:555555:on-request:workspace-write:false:false:xhigh:medium:high:medium:flex:54321:cached:none:false:core:false:false:false:420000:3:3:2700');
+    });
+
+    it('repairs invalid codex compaction thresholds and caps subagent fanout', () => {
+      const fakeBin = path.join(tmpHome, 'codex-yq-cap-bin');
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, 'yq'), `#!/bin/bash
+query="$2"
+case "$query" in
+  '.codex.model // "gpt-5.4"') echo 'gpt-5.4' ;;
+  '.codex.context_window // 1050000') echo '600000' ;;
+  '.codex.auto_compact_token_limit // 750000') echo '900000' ;;
+  '.codex.approval_policy // "never"') echo 'never' ;;
+  '.codex.sandbox // "danger-full-access"') echo 'danger-full-access' ;;
+  '.codex.no_alt_screen // true') echo 'true' ;;
+  '.codex.plan_first // true') echo 'true' ;;
+  '.codex.reasoning_effort // "high"') echo 'high' ;;
+  '.codex.reasoning_summary // "low"') echo 'high' ;;
+  '.codex.plan_mode_reasoning_effort // "xhigh"') echo 'xhigh' ;;
+  '.codex.verbosity // "low"') echo 'low' ;;
+  '.codex.service_tier // "fast"') echo 'fast' ;;
+  '.codex.tool_output_token_limit // 50000') echo '999999' ;;
+  '.codex.web_search // "live"') echo 'live' ;;
+  '.codex.history_persistence // "save-all"') echo 'save-all' ;;
+  '.codex.enable_undo // true') echo 'true' ;;
+  '.codex.shell_env_inherit // "all"') echo 'all' ;;
+  '.codex.shell_snapshot // true') echo 'true' ;;
+  '.codex.enable_request_compression // true') echo 'true' ;;
+  '.codex.notifications // true') echo 'true' ;;
+  '.codex.background_terminal_max_timeout // 600000') echo '600000' ;;
+  '.codex.subagents.max_threads // 6') echo '99' ;;
+  '.codex.subagents.max_depth // 2') echo '9' ;;
+  '.codex.subagents.job_max_runtime_seconds // 3600') echo '99999' ;;
+  *) echo 'null' ;;
+esac
+`);
+      fs.chmodSync(path.join(fakeBin, 'yq'), 0o755);
+
+      const result = runShell(`
+        source "${CONFIG_SH}"
+        echo "$CFG_CODEX_CONTEXT_WINDOW:$CFG_CODEX_AUTO_COMPACT:$CFG_CODEX_TOOL_OUTPUT_LIMIT:$CFG_CODEX_MAX_THREADS:$CFG_CODEX_MAX_DEPTH:$CFG_CODEX_JOB_TIMEOUT"
+      `, { PATH: `${fakeBin}:/usr/bin:/bin` });
+
+      expect(result).toBe('600000:599999:200000:12:3:7200');
+    });
   });
 });

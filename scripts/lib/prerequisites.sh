@@ -30,7 +30,7 @@ check_prerequisites() {
 
   # Check tmux version >= 3.0 (needed for split-window with command)
   local tmux_ver
-  tmux_ver=$(tmux -V 2>/dev/null | grep -oP '\d+\.\d+' | head -1) || tmux_ver="0.0"
+  tmux_ver=$(tmux -V 2>/dev/null | grep -Eo '[0-9]+(\.[0-9]+)?' | head -1) || tmux_ver="0.0"
   local major="${tmux_ver%%.*}"
   if [[ "$major" -lt 3 ]]; then
     echo "ERROR: tmux >= 3.0 required (found $tmux_ver)" >&2

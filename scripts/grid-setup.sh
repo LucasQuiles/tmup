@@ -71,6 +71,7 @@ fi
 
 umask 0077
 mkdir -p "$STATE_DIR/grid" "$STATE_DIR/logs"
+bash "$SCRIPT_DIR/sync-codex-agents.sh"
 
 # Idempotency check
 if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then

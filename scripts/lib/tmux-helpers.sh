@@ -26,9 +26,9 @@ wait_for_shell_ready() {
   return 1
 }
 
-# Strip ANSI escape codes from text
+# Strip ANSI escape codes from text (uses perl for BSD/GNU portability — sed \xHH escapes are GNU-only)
 strip_ansi() {
-  sed 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\x1b\][^\x07]*\x07//g'
+  perl -pe 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\x1b\][^\x07]*\x07//g'
 }
 
 # Get the actual running command in a pane (walks process tree)
@@ -76,7 +76,10 @@ codex_scrollback_shows_work() {
     # area may render as `❯ <text>`, `› <text>`, `│ > <text>`, or wrapped
     # continuation without any marker, so we normalize each line by removing
     # leading input markers + whitespace before the containment check.
-    work_area=$(awk -v p="$prompt_text" '
+    # Use ENVIRON[] instead of -v to safely pass multi-line prompt_text
+    # (BSD awk on macOS rejects newlines in -v assignments).
+    work_area=$(TMUX_PROMPT_TEXT="$prompt_text" awk '
+      BEGIN { p = ENVIRON["TMUX_PROMPT_TEXT"] }
       {
         line = $0
         # Strip leading input markers (❯, ›, │, >, box-drawing prefixes) + ws

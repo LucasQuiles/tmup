@@ -52,6 +52,10 @@ esac
 exit 0
 `);
 
+    writeExecutable('flock', `#!/bin/bash
+exit 0
+`);
+
     writeExecutable('yq', `#!/bin/bash
 printf 'null\\n'
 `);
@@ -61,11 +65,11 @@ printf 'null\\n'
       'cat',
       'chmod',
       'dirname',
-      'flock',
       'grep',
       'jq',
       'mktemp',
       'mv',
+      'perl',
       'rm',
       'sed',
       'seq',
@@ -100,11 +104,105 @@ exit 0
     );
   });
 
-  function runDispatch(agentId: string): void {
+  it('embeds the default codex launcher contract for fresh tmup workers', () => {
+    writeExecutable('codex', `#!/bin/bash
+exit 0
+`);
+
+    runDispatch('agent-launch-contract');
+
+    const launcher = readLauncher();
+    expect(launcher).toContain('export TMUP_CODEX_MODEL=gpt-5.4');
+    expect(launcher).toContain('export TMUP_CODEX_CONTEXT_WINDOW=1050000');
+    expect(launcher).toContain('export TMUP_CODEX_AUTO_COMPACT=750000');
+    expect(launcher).toContain('export TMUP_CODEX_APPROVAL_POLICY=never');
+    expect(launcher).toContain('export TMUP_CODEX_SANDBOX=danger-full-access');
+    expect(launcher).toContain('export TMUP_CODEX_NO_ALT_SCREEN=true');
+    expect(launcher).toContain('export TMUP_CODEX_REASONING_EFFORT=high');
+    expect(launcher).toContain('export TMUP_CODEX_REASONING_SUMMARY=low');
+    expect(launcher).toContain('export TMUP_CODEX_PLAN_REASONING=xhigh');
+    expect(launcher).toContain('export TMUP_CODEX_VERBOSITY=low');
+    expect(launcher).toContain('export TMUP_CODEX_SERVICE_TIER=fast');
+    expect(launcher).toContain('export TMUP_CODEX_TOOL_OUTPUT_LIMIT=50000');
+    expect(launcher).toContain('export TMUP_CODEX_WEB_SEARCH=live');
+    expect(launcher).toContain('export TMUP_CODEX_HISTORY=save-all');
+    expect(launcher).toContain('export TMUP_CODEX_UNDO=true');
+    expect(launcher).toContain('export TMUP_CODEX_SHELL_INHERIT=all');
+    expect(launcher).toContain('export TMUP_CODEX_SHELL_SNAPSHOT=true');
+    expect(launcher).toContain('export TMUP_CODEX_REQUEST_COMPRESSION=true');
+    expect(launcher).toContain('export TMUP_CODEX_NOTIFICATIONS=true');
+    expect(launcher).toContain('export TMUP_CODEX_BACKGROUND_TERMINAL_TIMEOUT=600000');
+    expect(launcher).toContain('export TMUP_CODEX_MAX_THREADS=6');
+    expect(launcher).toContain('export TMUP_CODEX_MAX_DEPTH=2');
+    expect(launcher).toContain('export TMUP_CODEX_JOB_TIMEOUT=3600');
+    expect(launcher).toContain('-m "$TMUP_CODEX_MODEL"');
+    expect(launcher).toContain('-c "model_context_window=$TMUP_CODEX_CONTEXT_WINDOW"');
+    expect(launcher).toContain('-c "model_auto_compact_token_limit=$TMUP_CODEX_AUTO_COMPACT"');
+    expect(launcher).toContain('-a "$TMUP_CODEX_APPROVAL_POLICY"');
+    expect(launcher).toContain('-s "$TMUP_CODEX_SANDBOX"');
+    expect(launcher).toContain('-c "model_reasoning_effort=$TMUP_CODEX_REASONING_EFFORT"');
+    expect(launcher).toContain('-c "model_reasoning_summary=$TMUP_CODEX_REASONING_SUMMARY"');
+    expect(launcher).toContain('-c "plan_mode_reasoning_effort=$TMUP_CODEX_PLAN_REASONING"');
+    expect(launcher).toContain('-c "model_verbosity=$TMUP_CODEX_VERBOSITY"');
+    expect(launcher).toContain('-c "service_tier=$TMUP_CODEX_SERVICE_TIER"');
+    expect(launcher).toContain('-c "tool_output_token_limit=$TMUP_CODEX_TOOL_OUTPUT_LIMIT"');
+    expect(launcher).toContain('-c "web_search=$TMUP_CODEX_WEB_SEARCH"');
+    expect(launcher).toContain('-c "history.persistence=$TMUP_CODEX_HISTORY"');
+    expect(launcher).toContain('-c "features.undo=$TMUP_CODEX_UNDO"');
+    expect(launcher).toContain('-c "shell_environment_policy.inherit=$TMUP_CODEX_SHELL_INHERIT"');
+    expect(launcher).toContain('-c "features.shell_snapshot=$TMUP_CODEX_SHELL_SNAPSHOT"');
+    expect(launcher).toContain('-c "features.enable_request_compression=$TMUP_CODEX_REQUEST_COMPRESSION"');
+    expect(launcher).toContain('-c "tui.notifications=$TMUP_CODEX_NOTIFICATIONS"');
+    expect(launcher).toContain('-c "background_terminal_max_timeout=$TMUP_CODEX_BACKGROUND_TERMINAL_TIMEOUT"');
+    expect(launcher).toContain('-c "agents.max_threads=$TMUP_CODEX_MAX_THREADS"');
+    expect(launcher).toContain('-c "agents.max_depth=$TMUP_CODEX_MAX_DEPTH"');
+    expect(launcher).toContain('-c "agents.job_max_runtime_seconds=$TMUP_CODEX_JOB_TIMEOUT"');
+  });
+
+  it('reapplies the same codex launcher contract on resume', () => {
+    writeExecutable('codex', `#!/bin/bash
+exit 0
+`);
+
+    runDispatch('agent-resume-contract', { resumeSessionId: 'csid-123' });
+
+    const launcher = readLauncher();
+    expect(launcher).toContain('_COMMON_ARGS=(');
+    expect(launcher).toContain('-m "$TMUP_CODEX_MODEL"');
+    expect(launcher).toContain('-c "model_context_window=$TMUP_CODEX_CONTEXT_WINDOW"');
+    expect(launcher).toContain('-c "model_auto_compact_token_limit=$TMUP_CODEX_AUTO_COMPACT"');
+    expect(launcher).toContain('-a "$TMUP_CODEX_APPROVAL_POLICY"');
+    expect(launcher).toContain('-s "$TMUP_CODEX_SANDBOX"');
+    expect(launcher).toContain('-c "model_reasoning_effort=$TMUP_CODEX_REASONING_EFFORT"');
+    expect(launcher).toContain('-c "model_reasoning_summary=$TMUP_CODEX_REASONING_SUMMARY"');
+    expect(launcher).toContain('-c "plan_mode_reasoning_effort=$TMUP_CODEX_PLAN_REASONING"');
+    expect(launcher).toContain('-c "model_verbosity=$TMUP_CODEX_VERBOSITY"');
+    expect(launcher).toContain('-c "service_tier=$TMUP_CODEX_SERVICE_TIER"');
+    expect(launcher).toContain('-c "tool_output_token_limit=$TMUP_CODEX_TOOL_OUTPUT_LIMIT"');
+    expect(launcher).toContain('-c "web_search=$TMUP_CODEX_WEB_SEARCH"');
+    expect(launcher).toContain('-c "history.persistence=$TMUP_CODEX_HISTORY"');
+    expect(launcher).toContain('-c "features.undo=$TMUP_CODEX_UNDO"');
+    expect(launcher).toContain('-c "shell_environment_policy.inherit=$TMUP_CODEX_SHELL_INHERIT"');
+    expect(launcher).toContain('-c "features.shell_snapshot=$TMUP_CODEX_SHELL_SNAPSHOT"');
+    expect(launcher).toContain('-c "features.enable_request_compression=$TMUP_CODEX_REQUEST_COMPRESSION"');
+    expect(launcher).toContain('-c "tui.notifications=$TMUP_CODEX_NOTIFICATIONS"');
+    expect(launcher).toContain('-c "background_terminal_max_timeout=$TMUP_CODEX_BACKGROUND_TERMINAL_TIMEOUT"');
+    expect(launcher).toContain('-c "agents.max_threads=$TMUP_CODEX_MAX_THREADS"');
+    expect(launcher).toContain('-c "agents.max_depth=$TMUP_CODEX_MAX_DEPTH"');
+    expect(launcher).toContain('-c "agents.job_max_runtime_seconds=$TMUP_CODEX_JOB_TIMEOUT"');
+    expect(launcher).toContain('"$CODEX_BIN" "${_COMMON_ARGS[@]}" resume "$RESUME_SESSION_ID"');
+  });
+
+  function runDispatch(
+    agentId: string,
+    options: {
+      resumeSessionId?: string;
+    } = {},
+  ): void {
     const env = shellEnv();
     delete env.CODEX_BIN;
 
-    execFileSync('/bin/bash', [
+    const args = [
       DISPATCH_AGENT_SH,
       '--session', sessionName,
       '--role', 'tester',
@@ -113,7 +211,13 @@ exit 0
       '--db-path', path.join(stateDir, 'tmup.db'),
       '--working-dir', PLUGIN_DIR,
       '--pane-index', '1',
-    ], {
+    ];
+
+    if (options.resumeSessionId) {
+      args.push('--resume-session-id', options.resumeSessionId);
+    }
+
+    execFileSync('/bin/bash', args, {
       env,
       encoding: 'utf-8',
       timeout: 30000,

@@ -23,7 +23,7 @@ describe('artifact-ops', () => {
   beforeEach(() => {
     dbPath = tmpDbPath();
     db = openDatabase(dbPath);
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tmup-art-'));
+    tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tmup-art-')));
   });
 
   afterEach(() => {
