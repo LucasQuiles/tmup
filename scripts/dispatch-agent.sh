@@ -296,7 +296,8 @@ if [[ "\$_WORKER_TYPE" == "claude_code" ]]; then
     --plugin-dir $(printf '%q' "$PLUGIN_DIR") \\
     --max-budget-usd 3.00 \\
     < "\$_PROMPT_FILE" \\
-    > "\$TMUP_WORKING_DIR/session-output.json" 2>&1
+    > "\$TMUP_WORKING_DIR/session-output-\$TMUP_AGENT_ID.json" 2>&1
+  rm -f "\$_PROMPT_FILE" 2>/dev/null || true
 else
   # Codex worker — runtime contract pinned from policy.yaml-sourced env vars
   _INLINE_ARGS=()

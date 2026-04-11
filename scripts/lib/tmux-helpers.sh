@@ -5,7 +5,7 @@
 is_agent_process() {
   local cmd="${1:-}"
   case "$cmd" in
-    codex|node|npm|npx) return 0 ;;
+    codex|claude|node|npm|npx) return 0 ;;
     *) return 1 ;;
   esac
 }

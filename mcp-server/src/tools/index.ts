@@ -853,7 +853,7 @@ export async function handleToolCall(
           output: cleaned,
           ...(codexSessionId ? {
             codex_session_id: codexSessionId,
-            resume_command: `codex resume ${codexSessionId}`,
+            resume_command: `Use tmup_dispatch with resume_session_id: '${codexSessionId}' to resume with full runtime contract`,
           } : {}),
         });
       } catch (harvestErr: unknown) {
@@ -926,7 +926,7 @@ export async function handleToolCall(
               resumeCommands.push({
                 task_id: taskId,
                 codex_session_id: info.codex_session_id,
-                command: `codex resume ${info.codex_session_id}`,
+                command: `Use tmup_dispatch with resume_session_id: '${info.codex_session_id}' — do NOT run bare codex resume (bypasses runtime contract)`,
                 pane_index: info.pane_index,
               });
             }
