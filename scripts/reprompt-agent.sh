@@ -19,6 +19,11 @@ unset _arg _prev_arg
 
 source "$SCRIPT_DIR/lib/config.sh"
 source "$SCRIPT_DIR/lib/tmux-helpers.sh"
+if [[ "${CFG_CONFIG_DEGRADED:-0}" -eq 1 ]]; then
+  echo "ERROR: Cannot reprompt — policy.yaml exists but could not be read (yq missing or broken)." >&2
+  exit 1
+fi
+
 
 
 SESSION_NAME="$CFG_SESSION_NAME"
@@ -37,11 +42,21 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# --all mode: send same prompt to ALL idle agent panes
+# --all mode: send same prompt to ALL idle/queueable agent panes
 if [[ "$ALL" == "true" ]]; then
   [[ -n "$PROMPT" ]] || die "--prompt required with --all"
+
+  # Enumerate panes from live grid state, not CFG_TOTAL_PANES (which may be
+  # stale or degraded). Fall back to config if grid state is missing.
+  _GRID_STATE="$CFG_STATE_DIR/grid/grid-state.json"
+  if [[ -f "$_GRID_STATE" ]]; then
+    _PANE_INDEXES=$(jq -r '.panes[].index' "$_GRID_STATE" 2>/dev/null)
+  else
+    _PANE_INDEXES=$(seq 0 $((CFG_TOTAL_PANES - 1)))
+  fi
+
   sent=0
-  for i in $(seq 0 $((CFG_TOTAL_PANES - 1))); do
+  for i in $_PANE_INDEXES; do
     cmd=$(get_pane_command "$SESSION_NAME" "$i" 2>/dev/null) || continue
     case "$cmd" in bash|zsh|sh|"") echo "Pane $i: shell (skipped)"; continue ;; esac
     if is_agent_idle "$SESSION_NAME" "$i" || is_agent_queueable "$SESSION_NAME" "$i"; then

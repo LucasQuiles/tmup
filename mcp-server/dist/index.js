@@ -16198,12 +16198,12 @@ var toolDefinitions = [
   },
   {
     name: "tmup_pause",
-    description: "Pause the session: broadcast shutdown, wait for checkpoints, archive grid.",
+    description: "Pause the session: broadcasts shutdown messages to all active agents and logs a session_pause event. Does NOT wait for checkpoints, archive the grid, or stop processes \u2014 the caller must orchestrate those steps.",
     inputSchema: { type: "object", properties: {} }
   },
   {
     name: "tmup_resume",
-    description: "Resume a paused session: recreate grid, re-dispatch in-progress tasks.",
+    description: "Resume a paused session: switches to the target session, detects stale agents via heartbeat timeout, runs dead-claim recovery to release stranded tasks, and returns resume metadata with session IDs. Does NOT recreate the grid or re-dispatch tasks \u2014 the caller must issue tmup_dispatch calls using the returned resume_session_id values.",
     inputSchema: {
       type: "object",
       properties: {
@@ -16213,7 +16213,7 @@ var toolDefinitions = [
   },
   {
     name: "tmup_teardown",
-    description: "Shut down the session: grace period, harvest all, kill tmux, keep DB.",
+    description: "Shut down the session: broadcasts shutdown messages to all active agents and logs a session_teardown event. Does NOT harvest panes, kill tmux, or enforce a grace period \u2014 the caller must orchestrate those steps.",
     inputSchema: {
       type: "object",
       properties: {

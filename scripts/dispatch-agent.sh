@@ -21,6 +21,10 @@ source "$SCRIPT_DIR/lib/config.sh"
 source "$SCRIPT_DIR/lib/validators.sh"
 source "$SCRIPT_DIR/lib/tmux-helpers.sh"
 
+if [[ "${CFG_CONFIG_DEGRADED:-0}" -eq 1 ]]; then
+  die "Cannot dispatch — policy.yaml exists but could not be read (yq missing or broken). Install yq or remove policy.yaml."
+fi
+
 STATE_DIR="$CFG_STATE_DIR"
 GRID_STATE="$STATE_DIR/grid/grid-state.json"
 LOCK_FILE="$STATE_DIR/grid/grid-state.lock"
