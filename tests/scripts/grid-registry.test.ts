@@ -54,7 +54,7 @@ describe('grid-registry.sh', () => {
     });
 
     it('shell-written entries store canonical project_dir', () => {
-      const realDir = fs.realpathSync(path.join(tmpHome, 'real-project') + '/..')  + '/real-project';
+      const realDir = path.join(tmpHome, 'real-project');
       const symlink = path.join(tmpHome, 'project-link');
       fs.mkdirSync(realDir, { recursive: true });
       fs.symlinkSync(realDir, symlink);
@@ -134,7 +134,7 @@ describe('grid-registry.sh', () => {
 
   describe('registry_lookup with canonical paths', () => {
     it('finds session when searching via symlink path', () => {
-      const realDir = fs.realpathSync(path.join(tmpHome, 'real-project') + '/..')  + '/real-project';
+      const realDir = path.join(tmpHome, 'real-project');
       const symlink = path.join(tmpHome, 'project-link');
       fs.mkdirSync(realDir, { recursive: true });
       fs.symlinkSync(realDir, symlink);
