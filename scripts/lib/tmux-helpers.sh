@@ -31,6 +31,18 @@ strip_ansi() {
   sed 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\x1b\][^\x07]*\x07//g'
 }
 
+# Respawn a tmux pane via `respawn-pane -k`, discarding the running command
+# and resetting the pane to a fresh shell. Callers handle their own logging
+# and retry/escalation — this helper only owns the subprocess call so the
+# `-k` flag and stderr redirection live in one place.
+#
+# Args: pane_target (e.g. session:0.1)
+# Returns: 0 on success, non-zero on failure
+respawn_pane() {
+  local pane_target="${1:-}"
+  tmux respawn-pane -k -t "$pane_target" 2>/dev/null
+}
+
 # Get the actual running command in a pane (walks process tree)
 get_pane_command() {
   local session="${1:-}" pane_index="${2:-0}"
@@ -76,14 +88,21 @@ codex_scrollback_shows_work() {
     # area may render as `❯ <text>`, `› <text>`, `│ > <text>`, or wrapped
     # continuation without any marker, so we normalize each line by removing
     # leading input markers + whitespace before the containment check.
-    work_area=$(awk -v p="$prompt_text" '
+    #
+    # Ultra-short lines (< MIN_PROMPT_ECHO_LEN chars after stripping markers)
+    # are preserved unconditionally because a 0-3 char token is too small to
+    # meaningfully match against a prompt — a bare prompt indicator like `❯`
+    # would become empty and match every non-empty prompt by substring, which
+    # would strip legitimate tool-call output.
+    local MIN_PROMPT_ECHO_LEN=4
+    work_area=$(awk -v p="$prompt_text" -v min_len="$MIN_PROMPT_ECHO_LEN" '
       {
         line = $0
         # Strip leading input markers (❯, ›, │, >, box-drawing prefixes) + ws
         sub(/^[[:space:]]*[❯›│|>[:space:]]+/, "", line)
         sub(/^[[:space:]]+/, "", line)
         sub(/[[:space:]]+$/, "", line)
-        if (length(line) < 4) { print; next }
+        if (length(line) < min_len) { print; next }
         if (index(p, line) > 0) { next }
         print
       }

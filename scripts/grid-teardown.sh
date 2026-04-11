@@ -28,7 +28,7 @@ cleanup_running_panes() {
   while IFS=$'\t' read -r pane_target pane_cmd; do
     [[ -n "$pane_target" ]] || continue
     if is_agent_process "$pane_cmd"; then
-      if tmux respawn-pane -k -t "$pane_target" 2>/dev/null; then
+      if respawn_pane "$pane_target"; then
         echo "Respawned pane to clear lingering $pane_cmd: $pane_target"
       else
         echo "ERROR: Failed to respawn pane $pane_target ($pane_cmd)" >&2
