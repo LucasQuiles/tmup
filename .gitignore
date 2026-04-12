@@ -20,3 +20,6 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+
+# SDLC process artifacts (local-only, contain internal process names)
+docs/sdlc/
