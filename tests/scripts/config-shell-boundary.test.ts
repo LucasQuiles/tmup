@@ -12,12 +12,32 @@ describe('config.sh shell boundary', () => {
   let tmpHome: string;
   let stateDir: string;
   let configDir: string;
+  /** A PATH directory containing essential shell tools but NOT yq. */
+  let noYqPath: string;
 
   beforeEach(() => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tmup-cfg-'));
     stateDir = path.join(tmpHome, '.local/state/tmup');
     configDir = path.join(PLUGIN_DIR, 'config');
     fs.mkdirSync(stateDir, { recursive: true });
+
+    // Build a sandboxed bin directory with symlinks to essential tools but NOT yq.
+    // Tests that need yq-absent behavior can't rely on PATH=/usr/bin:/bin because
+    // yq may be installed at /usr/bin/yq via apt on some systems.
+    noYqPath = path.join(tmpHome, 'no-yq-bin');
+    fs.mkdirSync(noYqPath, { recursive: true });
+    const essentials = ['bash', 'cat', 'echo', 'grep', 'sed', 'awk', 'head', 'tail', 'cut', 'tr',
+      'sort', 'uniq', 'wc', 'mkdir', 'rm', 'mv', 'cp', 'chmod', 'test', 'env', 'dirname',
+      'basename', 'realpath', 'readlink', 'id', 'pwd', 'date', 'mktemp', 'tee', 'true', 'false',
+      'printf', 'seq', 'sleep', 'kill', 'flock', 'command'];
+    for (const tool of essentials) {
+      const resolved = execFileSync('bash', ['-c', `command -v ${tool} 2>/dev/null || true`], {
+        encoding: 'utf-8',
+      }).trim();
+      if (resolved && fs.existsSync(resolved)) {
+        try { fs.symlinkSync(resolved, path.join(noYqPath, tool)); } catch {}
+      }
+    }
   });
 
   afterEach(() => {
@@ -142,11 +162,11 @@ describe('config.sh shell boundary', () => {
     });
 
     it('CFG_CONFIG_DEGRADED=1 when yq is missing and policy.yaml exists', () => {
-      // Use a PATH that excludes yq but includes bash basics
+      // Use a sandboxed PATH that excludes yq but includes bash basics
       const result = runShell(`
         source "${CONFIG_SH}" 2>/dev/null
         echo "$CFG_CONFIG_DEGRADED"
-      `, { PATH: '/usr/bin:/bin' });
+      `, { PATH: noYqPath });
       expect(result).toBe('1');
     });
 
@@ -172,7 +192,7 @@ describe('config.sh shell boundary', () => {
       const result = runShell(`
         source "${CONFIG_SH}" 2>/dev/null
         echo "$CFG_CONFIG_DEGRADED"
-      `, { CFG_CONFIG_DIR: emptyConfig, PATH: '/usr/bin:/bin' });
+      `, { CFG_CONFIG_DIR: emptyConfig, PATH: noYqPath });
       // No policy.yaml → no degradation even without yq
       expect(result).toBe('0');
     });
@@ -180,14 +200,13 @@ describe('config.sh shell boundary', () => {
 
   describe('preflight yq contract', () => {
     it('check_prerequisites fails when yq is missing and policy.yaml exists', () => {
-      // PATH excludes yq; CFG_CONFIG_DIR has policy.yaml
+      // Sandboxed PATH excludes yq; CFG_CONFIG_DIR has policy.yaml
       expect(() => {
         execFileSync('bash', ['-c', `
-          export PATH=/usr/bin:/bin
           source "${PREREQUISITES_SH}"
           check_prerequisites
         `], {
-          env: shellEnv({ PATH: '/usr/bin:/bin' }),
+          env: shellEnv({ PATH: noYqPath }),
           encoding: 'utf-8',
           timeout: 30000,
           stdio: ['pipe', 'pipe', 'pipe'],
@@ -199,11 +218,10 @@ describe('config.sh shell boundary', () => {
       let stderr = '';
       try {
         execFileSync('bash', ['-c', `
-          export PATH=/usr/bin:/bin
           source "${PREREQUISITES_SH}"
           check_prerequisites
         `], {
-          env: shellEnv({ PATH: '/usr/bin:/bin' }),
+          env: shellEnv({ PATH: noYqPath }),
           encoding: 'utf-8',
           timeout: 30000,
           stdio: ['pipe', 'pipe', 'pipe'],
