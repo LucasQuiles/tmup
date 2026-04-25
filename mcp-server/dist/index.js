@@ -8946,6 +8946,7 @@ function $constructor(name, initializer3, params) {
   Object.defineProperty(_, "name", { value: name });
   return _;
 }
+var $brand = Symbol("zod_brand");
 var $ZodAsyncError = class extends Error {
   constructor() {
     super(`Encountered Promise during synchronous parse. Use .parseAsync() instead.`);
@@ -11447,6 +11448,8 @@ function en_default() {
 }
 
 // ../node_modules/zod/v4/core/registries.js
+var $output = Symbol("ZodOutput");
+var $input = Symbol("ZodInput");
 var $ZodRegistry = class {
   constructor() {
     this._map = /* @__PURE__ */ new Map();
@@ -14202,6 +14205,9 @@ function isTerminal(status) {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 
+// ../node_modules/zod-to-json-schema/dist/esm/Options.js
+var ignoreOverride = Symbol("Let zodToJsonSchema decide on which parser to use");
+
 // ../node_modules/zod-to-json-schema/dist/esm/parsers/string.js
 var ALPHA_NUMERIC = new Set("ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvxyz0123456789");
 
@@ -15966,7 +15972,7 @@ var StdioServerTransport = class {
 init_dist();
 
 // src/tools/index.ts
-import { execFileSync } from "node:child_process";
+import { execFileSync, execFile } from "node:child_process";
 import { resolve, dirname, join } from "node:path";
 init_dist();
 function validateTaskFields(input, prefix = "") {
@@ -16683,14 +16689,23 @@ ${m.payload}
       if (args.clone_isolation === true) {
         dispatchArgs.push("--clone-isolation");
       }
+      dispatchArgs.push("--background-post-launch");
       let launchResult;
       try {
-        const output = execFileSync("bash", dispatchArgs, {
-          timeout: 3e4,
-          encoding: "utf-8",
-          stdio: ["pipe", "pipe", "pipe"]
+        launchResult = await new Promise((resolve2, reject) => {
+          execFile("bash", dispatchArgs, {
+            timeout: 3e4,
+            encoding: "utf-8",
+            maxBuffer: 2 * 1024 * 1024
+          }, (error2, stdout) => {
+            if (error2) {
+              error2.stdout = stdout;
+              reject(error2);
+            } else {
+              resolve2((stdout ?? "").trim());
+            }
+          });
         });
-        launchResult = output.trim();
       } catch (launchErr) {
         const msg = launchErr instanceof Error ? launchErr.message : String(launchErr);
         try {

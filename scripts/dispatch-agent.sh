@@ -93,7 +93,7 @@ trap '_dispatch_teardown 130' INT
 trap '_dispatch_teardown 143' TERM
 
 # Parse arguments
-ROLE="" PROMPT="" PANE_INDEX="" WORKING_DIR="" AGENT_ID="" TASK_ID="" DB_PATH="" RESUME_SESSION_ID="" WORKER_TYPE="codex" CLONE_ISOLATION=0
+ROLE="" PROMPT="" PANE_INDEX="" WORKING_DIR="" AGENT_ID="" TASK_ID="" DB_PATH="" RESUME_SESSION_ID="" WORKER_TYPE="codex" CLONE_ISOLATION=0 BACKGROUND_POST_LAUNCH=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -108,6 +108,7 @@ while [[ $# -gt 0 ]]; do
     --resume-session-id) RESUME_SESSION_ID="$2"; shift 2 ;;
     --worker-type) WORKER_TYPE="$2"; shift 2 ;;
     --clone-isolation) CLONE_ISOLATION=1; shift ;;
+    --background-post-launch) BACKGROUND_POST_LAUNCH=1; shift ;;
     *) die "Unknown option: $1" ;;
   esac
 done
@@ -499,29 +500,40 @@ DISPATCH_COMMITTED=1
 
 echo "Dispatched $ROLE to pane $PANE_INDEX (agent $AGENT_ID)"
 
-if [[ "$WORKER_TYPE" != "claude_code" ]]; then
+# --- Post-launch monitoring (codex workers only) ---
+# Trust prompt acceptance, readiness polling, initial prompt sending,
+# and session ID capture. These steps are slow (30-60s) and not required
+# for the atomic dispatch guarantee — the worker is already launched in
+# the pane. For claude_code workers, the launcher handles everything
+# (prompt piped via stdin), so post-launch is a no-op.
+
+_run_post_launch() {
   # Trust prompt auto-accept — narrow check to exact pane only
-  ATTEMPTS=$((CFG_TRUST_SECONDS / 2))
-  [[ $ATTEMPTS -lt 1 ]] && ATTEMPTS=1
-  for _attempt in $(seq 1 $ATTEMPTS); do
+  local attempts=$((CFG_TRUST_SECONDS / 2))
+  [[ $attempts -lt 1 ]] && attempts=1
+  local _attempt
+  for _attempt in $(seq 1 $attempts); do
     sleep 2
-    TRUST_CHECK=$(tmux capture-pane -t "$PANE_TARGET" -p -S -10 2>/dev/null || true)
+    local trust_check
+    trust_check=$(tmux capture-pane -t "$PANE_TARGET" -p -S -10 2>/dev/null || true)
     # Narrow pattern: only accept the specific codex trust prompt ("Do you trust ...?")
     # Anchored to start-of-line to avoid matching agent output paragraphs
-    if echo "$TRUST_CHECK" | grep -qiE "^\s*Do you trust\b"; then
+    if echo "$trust_check" | grep -qiE "^\s*Do you trust\b"; then
       tmux send-keys -t "$PANE_TARGET" Enter
       echo "Trust prompt accepted (attempt $_attempt)"
       break
     fi
-    echo "$TRUST_CHECK" | grep -qF "Working (" && break
+    echo "$trust_check" | grep -qF "Working (" && break
   done
 
   # Wait for codex to be ready for input (idle at its prompt)
   echo "Waiting for codex to become ready..."
+  local _ready_attempt
   for _ready_attempt in $(seq 1 20); do
     sleep 1
-    _ready_check=$(tmux capture-pane -t "$PANE_TARGET" -p -S -5 2>/dev/null || true)
-    if echo "$_ready_check" | grep -qE '❯|›'; then
+    local ready_check
+    ready_check=$(tmux capture-pane -t "$PANE_TARGET" -p -S -5 2>/dev/null || true)
+    if echo "$ready_check" | grep -qE '❯|›'; then
       echo "Codex ready in pane $PANE_INDEX (attempt $_ready_attempt)"
       break
     fi
@@ -529,13 +541,15 @@ if [[ "$WORKER_TYPE" != "claude_code" ]]; then
 
   # Send the initial prompt via tmux send-keys
   if [[ -f "$PROMPT_FILE" ]]; then
-    _prompt_text=$(cat "$PROMPT_FILE")
-    if send_codex_prompt_with_retry "$SESSION_NAME" "$PANE_INDEX" "$_prompt_text" "dispatch"; then
+    local prompt_text
+    prompt_text=$(cat "$PROMPT_FILE")
+    if send_codex_prompt_with_retry "$SESSION_NAME" "$PANE_INDEX" "$prompt_text" "dispatch"; then
       rm -f "$PROMPT_FILE" 2>/dev/null || true
       echo "Initial prompt confirmed in pane $PANE_INDEX"
     else
       rm -f "$PROMPT_FILE" 2>/dev/null || true
-      die "failed to confirm Codex accepted the initial prompt for pane $PANE_INDEX"
+      echo "ERROR: failed to confirm Codex accepted initial prompt for pane $PANE_INDEX" >&2
+      return 1
     fi
   fi
 
@@ -543,34 +557,34 @@ if [[ "$WORKER_TYPE" != "claude_code" ]]; then
   # Race mitigation: after reading the last history entry, verify its cwd matches
   # our WORKING_DIR. In multi-dispatch scenarios, another agent's entry could be
   # the last one — the cwd check prevents cross-contamination.
-  CODEX_SID=""
-  HISTORY_FILE="$HOME/.codex/history.jsonl"
-  if [[ -f "$HISTORY_FILE" ]]; then
+  local codex_sid="" history_file="$HOME/.codex/history.jsonl"
+  if [[ -f "$history_file" ]]; then
     sleep 2  # Wait for codex to register the session
-    _last_entry=$(tail -1 "$HISTORY_FILE" 2>/dev/null) || _last_entry=""
-    if [[ -n "$_last_entry" ]]; then
-      _entry_cwd=$(echo "$_last_entry" | jq -r '.cwd // ""' 2>/dev/null) || _entry_cwd=""
-      CODEX_SID=$(echo "$_last_entry" | jq -r '.session_id // ""' 2>/dev/null) || CODEX_SID=""
+    local last_entry entry_cwd
+    last_entry=$(tail -1 "$history_file" 2>/dev/null) || last_entry=""
+    if [[ -n "$last_entry" ]]; then
+      entry_cwd=$(echo "$last_entry" | jq -r '.cwd // ""' 2>/dev/null) || entry_cwd=""
+      codex_sid=$(echo "$last_entry" | jq -r '.session_id // ""' 2>/dev/null) || codex_sid=""
       # Correlation check: reject if entry's working directory doesn't match ours
-      if [[ -n "$_entry_cwd" && "$_entry_cwd" != "$WORKING_DIR" ]]; then
-        echo "Session ID skipped: history entry cwd '$_entry_cwd' != working dir '$WORKING_DIR'" >&2
-        CODEX_SID=""
+      if [[ -n "$entry_cwd" && "$entry_cwd" != "$WORKING_DIR" ]]; then
+        echo "Session ID skipped: history entry cwd '$entry_cwd' != working dir '$WORKING_DIR'" >&2
+        codex_sid=""
       fi
     fi
-    unset _last_entry _entry_cwd
-    if [[ -n "$CODEX_SID" && "$CODEX_SID" != "null" ]]; then
+    if [[ -n "$codex_sid" && "$codex_sid" != "null" ]]; then
       # Store in grid-state.json pane entry
       if [[ -f "$GRID_STATE" ]]; then
         exec 9>"$LOCK_FILE"
         if flock -w 5 9 2>/dev/null; then
-          _temp=$(mktemp "$STATE_DIR/grid/grid-state.XXXXXX" 2>/dev/null) || _temp=""
-          if [[ -n "$_temp" ]]; then
-            if jq --argjson idx "$PANE_INDEX" --arg csid "$CODEX_SID" \
+          local temp_file
+          temp_file=$(mktemp "$STATE_DIR/grid/grid-state.XXXXXX" 2>/dev/null) || temp_file=""
+          if [[ -n "$temp_file" ]]; then
+            if jq --argjson idx "$PANE_INDEX" --arg csid "$codex_sid" \
               '(.panes[] | select(.index == $idx)).codex_session_id = $csid' \
-              "$GRID_STATE" > "$_temp" 2>/dev/null && [[ -s "$_temp" ]]; then
-              mv "$_temp" "$GRID_STATE"
+              "$GRID_STATE" > "$temp_file" 2>/dev/null && [[ -s "$temp_file" ]]; then
+              mv "$temp_file" "$GRID_STATE"
             else
-              rm -f "$_temp"
+              rm -f "$temp_file"
             fi
           fi
         fi
@@ -578,13 +592,37 @@ if [[ "$WORKER_TYPE" != "claude_code" ]]; then
       fi
 
       # Store in agents table via heartbeat
-      CLI_PATH="$PLUGIN_DIR/cli/dist/tmup-cli.js"
+      local cli_path="$PLUGIN_DIR/cli/dist/tmup-cli.js"
       TMUP_AGENT_ID="$AGENT_ID" TMUP_DB="$DB_PATH" TMUP_PANE_INDEX="$PANE_INDEX" \
         TMUP_SESSION_NAME="$SESSION_NAME" TMUP_SESSION_DIR="$STATE_DIR" \
-        node "$CLI_PATH" heartbeat --codex-session-id "$CODEX_SID" 2>/dev/null || true
+        node "$cli_path" heartbeat --codex-session-id "$codex_sid" 2>/dev/null || true
 
-      echo "Codex session ID: $CODEX_SID"
-      echo "Resume: codex resume $CODEX_SID"
+      echo "Codex session ID: $codex_sid"
+      echo "Resume: codex resume $codex_sid"
     fi
   fi
+}
+
+if [[ "$WORKER_TYPE" == "claude_code" ]]; then
+  # claude_code workers are self-contained — prompt piped via stdin in the
+  # launcher. No trust prompt, readiness check, or session ID to capture.
+  # PROMPT_FILE is consumed by the launcher (stdin redirect + rm after claude
+  # exits). We cannot delete it here — tmux send-keys is async, so the
+  # launcher may not have opened the fd yet. Bounded by session lifecycle.
+  exit 0
 fi
+
+if [[ "$BACKGROUND_POST_LAUNCH" -eq 1 ]]; then
+  # Fork post-launch monitoring to background — MCP handler returns immediately.
+  # The worker is already launched in the pane; these steps are best-effort.
+  (
+    trap '' EXIT INT TERM
+    set +e  # Best-effort: don't abort on non-fatal failures (jq, tail, etc.)
+    _run_post_launch
+  ) </dev/null > "$STATE_DIR/post-launch-${PANE_INDEX}-${AGENT_ID}.log" 2>&1 &
+  disown
+  exit 0
+fi
+
+# Synchronous post-launch (backward-compatible path for direct CLI invocation)
+_run_post_launch
