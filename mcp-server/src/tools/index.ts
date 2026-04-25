@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile } from 'node:child_process';
 import { resolve, dirname, join } from 'node:path';
 import { ensureDb, switchSession, getCurrentSessionId } from '../index.js';
 import {
@@ -793,14 +793,30 @@ export async function handleToolCall(
         dispatchArgs.push('--clone-isolation');
       }
 
+      // Two-phase dispatch: fast synchronous launch (pane reservation + send-keys)
+      // with post-launch monitoring backgrounded in the script. This prevents
+      // ETIMEDOUT failures — the old execFileSync with 30s timeout regularly
+      // exceeded its budget on the slow post-launch steps (trust prompt polling,
+      // codex readiness checks, initial prompt sending, session ID capture).
+      dispatchArgs.push('--background-post-launch');
+
       let launchResult: string;
       try {
-        const output = execFileSync('bash', dispatchArgs, {
-          timeout: 30000,
-          encoding: 'utf-8',
-          stdio: ['pipe', 'pipe', 'pipe'],
+        launchResult = await new Promise<string>((resolve, reject) => {
+          execFile('bash', dispatchArgs, {
+            timeout: 30_000,
+            encoding: 'utf-8',
+            maxBuffer: 2 * 1024 * 1024,
+          }, (error: Error | null, stdout: string) => {
+            if (error) {
+              // Preserve stdout on error for clone_dir extraction
+              (error as any).stdout = stdout;
+              reject(error);
+            } else {
+              resolve((stdout ?? '').trim());
+            }
+          });
         });
-        launchResult = output.trim();
       } catch (launchErr: unknown) {
         const msg = launchErr instanceof Error ? launchErr.message : String(launchErr);
         // Agent is registered and task is claimed but launch failed.

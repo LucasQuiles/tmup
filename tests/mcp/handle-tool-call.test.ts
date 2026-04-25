@@ -19,6 +19,7 @@ const mcpServerState = vi.hoisted(() => ({
 
 const childProcessMock = vi.hoisted(() => ({
   execFileSync: vi.fn(),
+  execFile: vi.fn(),
 }));
 
 vi.mock('../../mcp-server/src/index.js', () => ({
@@ -34,6 +35,7 @@ vi.mock('../../mcp-server/src/index.js', () => ({
 
 vi.mock('node:child_process', () => ({
   execFileSync: childProcessMock.execFileSync,
+  execFile: childProcessMock.execFile,
 }));
 
 type ToolCallResult = Awaited<ReturnType<typeof import('../../mcp-server/src/tools/index.js').handleToolCall>>;
@@ -108,6 +110,7 @@ describe('handleToolCall adapter integration', () => {
     originalArgv1 = process.argv[1];
     process.argv[1] = path.join(process.cwd(), 'mcp-server', 'dist', 'index.js');
     childProcessMock.execFileSync.mockReset();
+    childProcessMock.execFile.mockReset();
     mcpServerState.db = null;
     mcpServerState.sessionId = null;
   });
@@ -157,7 +160,11 @@ describe('handleToolCall adapter integration', () => {
         role: 'tester',
       });
 
-      childProcessMock.execFileSync.mockReturnValue('launched pane 2\n');
+      childProcessMock.execFile.mockImplementation(
+        (_cmd: string, _args: string[], _opts: object, callback: Function) => {
+          callback(null, 'launched pane 2\n', '');
+        }
+      );
 
       const result = parseToolJson(await handleToolCall('tmup_dispatch', {
         task_id: taskId,
@@ -179,27 +186,27 @@ describe('handleToolCall adapter integration', () => {
       }));
       expect(typeof result.agent_id).toBe('string');
 
-      expect(childProcessMock.execFileSync).toHaveBeenCalledTimes(1);
-      expect(childProcessMock.execFileSync).toHaveBeenCalledWith(
-        'bash',
-        [
-          path.join(process.cwd(), 'scripts', 'dispatch-agent.sh'),
-          '--session', sessionId,
-          '--role', 'tester',
-          '--prompt', 'Dispatch subject\n\nDispatch description',
-          '--agent-id', result.agent_id,
-          '--task-id', taskId,
-          '--db-path', dbPath,
-          '--working-dir', projectDir,
-          '--pane-index', '2',
-          '--worker-type', 'codex',
-        ],
-        {
-          timeout: 30000,
-          encoding: 'utf-8',
-          stdio: ['pipe', 'pipe', 'pipe'],
-        }
-      );
+      expect(childProcessMock.execFile).toHaveBeenCalledTimes(1);
+      const [cmd, args, opts] = childProcessMock.execFile.mock.calls[0];
+      expect(cmd).toBe('bash');
+      expect(args).toEqual([
+        path.join(process.cwd(), 'scripts', 'dispatch-agent.sh'),
+        '--session', sessionId,
+        '--role', 'tester',
+        '--prompt', 'Dispatch subject\n\nDispatch description',
+        '--agent-id', result.agent_id,
+        '--task-id', taskId,
+        '--db-path', dbPath,
+        '--working-dir', projectDir,
+        '--pane-index', '2',
+        '--worker-type', 'codex',
+        '--background-post-launch',
+      ]);
+      expect(opts).toEqual({
+        timeout: 30_000,
+        encoding: 'utf-8',
+        maxBuffer: 2 * 1024 * 1024,
+      });
     });
 
     it('marks the registered agent as shutdown when claimSpecificTask fails', async () => {
@@ -226,6 +233,7 @@ describe('handleToolCall adapter integration', () => {
         role: 'tester',
       }));
       expect(childProcessMock.execFileSync).not.toHaveBeenCalled();
+      expect(childProcessMock.execFile).not.toHaveBeenCalled();
     });
 
     it('marks the registered agent as shutdown when launch fails', async () => {
@@ -236,9 +244,11 @@ describe('handleToolCall adapter integration', () => {
         role: 'tester',
       });
 
-      childProcessMock.execFileSync.mockImplementation(() => {
-        throw new Error('tmux pane not available');
-      });
+      childProcessMock.execFile.mockImplementation(
+        (_cmd: string, _args: string[], _opts: object, callback: Function) => {
+          callback(new Error('tmux pane not available'), '', '');
+        }
+      );
 
       await expect(handleToolCall('tmup_dispatch', {
         task_id: taskId,
@@ -256,6 +266,52 @@ describe('handleToolCall adapter integration', () => {
       expect(task.status).toBe('pending');
       expect(task.owner).toBeNull();
       expect(task.failure_reason).toBe('launch_failed');
+    });
+
+    it('dispatches claude_code workers with one-shot contract metadata', async () => {
+      const { db, projectDir, sessionId, dbPath } = createAdapterSession();
+      writeGridState(sessionId, projectDir, 4);
+
+      const taskId = createTask(db, {
+        subject: 'One-shot task',
+        description: 'Claude Code dispatch',
+        role: 'reviewer',
+      });
+
+      childProcessMock.execFile.mockImplementation(
+        (_cmd: string, _args: string[], _opts: object, callback: Function) => {
+          callback(null, 'Dispatched reviewer to pane 1 (agent test-id)\n', '');
+        }
+      );
+
+      const result = parseToolJson(await handleToolCall('tmup_dispatch', {
+        task_id: taskId,
+        role: 'reviewer',
+        pane_index: 1,
+        worker_type: 'claude_code',
+      }));
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        task_id: taskId,
+        pane_index: 1,
+        role: 'reviewer',
+        launched: true,
+        worker_type: 'claude_code',
+        session_mode: 'one_shot',
+        follow_up_via: 'not_supported',
+      }));
+
+      // Verify --background-post-launch is passed
+      const [, args] = childProcessMock.execFile.mock.calls[0];
+      expect(args).toContain('--background-post-launch');
+      expect(args).toContain('--worker-type');
+      const wtIdx = (args as string[]).indexOf('--worker-type');
+      expect((args as string[])[wtIdx + 1]).toBe('claude_code');
+
+      // worker_type persisted on task row
+      const task = db.prepare('SELECT worker_type FROM tasks WHERE id = ?').get(taskId) as { worker_type: string };
+      expect(task.worker_type).toBe('claude_code');
     });
   });
 
@@ -323,6 +379,7 @@ describe('handleToolCall adapter integration', () => {
       })).rejects.toThrow('pane_index 2 not in live grid');
 
       expect(childProcessMock.execFileSync).not.toHaveBeenCalled();
+      expect(childProcessMock.execFile).not.toHaveBeenCalled();
     });
   });
 
@@ -508,7 +565,11 @@ describe('handleToolCall adapter integration', () => {
       writeGridState(sessionId, projectDir, 4);
       const taskId = createTask(db, { subject: 'Resume task', role: 'implementer' });
 
-      childProcessMock.execFileSync.mockReturnValue('Dispatched implementer to pane 0\n');
+      childProcessMock.execFile.mockImplementation(
+        (_cmd: string, _args: string[], _opts: object, callback: Function) => {
+          callback(null, 'Dispatched implementer to pane 0\n', '');
+        }
+      );
 
       const result = parseToolJson(await handleToolCall('tmup_dispatch', {
         task_id: taskId,
@@ -521,7 +582,7 @@ describe('handleToolCall adapter integration', () => {
       expect(result.launched).toBe(true);
 
       // Verify the script received --resume-session-id
-      const bashCall = childProcessMock.execFileSync.mock.calls.find(
+      const bashCall = childProcessMock.execFile.mock.calls.find(
         (c: unknown[]) => c[0] === 'bash'
       );
       const scriptArgs = bashCall![1] as string[];
