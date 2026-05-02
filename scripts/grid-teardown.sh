@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # grid-teardown.sh — Tear down a tmup tmux grid
 set -euo pipefail
 

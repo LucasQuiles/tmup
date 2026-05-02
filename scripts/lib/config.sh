@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # config.sh — Shared configuration loader for tmup plugin
 # Reads config/policy.yaml via yq, falls back to defaults.
 
