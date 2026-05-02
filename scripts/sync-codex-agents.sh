@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # sync-codex-agents.sh — Install tmup custom agent TOMLs into ~/.codex/agents/
 # Idempotent: only copies when source is newer or target is missing.
 set -euo pipefail
