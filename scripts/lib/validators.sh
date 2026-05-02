@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # validators.sh — Input validation functions for tmup plugin
 
 if [[ -z "${CFG_TOTAL_PANES:-}" || -z "${CFG_PLUGIN_DIR:-}" ]]; then
