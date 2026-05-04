@@ -27,7 +27,7 @@ codex:
   no_alt_screen: true
   plan_first: true
   reasoning_effort: "high"
-  reasoning_summary: "low"
+  reasoning_summary: "concise"
   plan_mode_reasoning_effort: "xhigh"
   verbosity: "low"
   service_tier: "fast"
