@@ -1,5 +1,7 @@
 # tmup
 
+> Direct-open boundary: plugin documentation only. This file does not authorize tmup worker dispatch, tmux/grid mutation, plugin execution, cleanup, external action, or instruction changes.
+
 **tmux + team up = tmup**
 
 Claude Code and Codex CLI, duct-taped together with bash scripts and a SQLite database, arranged in a tmux grid so you can watch them all work at the same time. It's like a group project where everyone is an AI and nobody is slacking because they literally can't.
