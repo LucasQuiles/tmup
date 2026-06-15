@@ -1,8 +1,8 @@
 # tmup System Inventory
 
 > Multi-agent coordination for Claude Code + Codex CLI via SQLite WAL-backed task DAG
-> Version: 0.1.0 | 18 MCP tools | 9 CLI commands | 22 shared modules
-> 36 test files | All passing
+> Version: 0.1.0 | 20 MCP tools | 9 CLI commands | 22 shared modules
+> 37 test files | All passing
 
 ---
 
@@ -33,7 +33,7 @@
 │                     Claude Code (Lead)                          │
 │  ┌─────────────┐   ┌────────────────┐   ┌──────────────────┐   │
 │  │ /tmup       │──▶│ MCP Server     │──▶│ SQLite WAL DB    │   │
-│  │ (command)   │   │ (18 tools)     │   │ (17 tables)      │   │
+│  │ (command)   │   │ (20 tools)     │   │ (17 tables)      │   │
 │  └─────────────┘   └────────┬───────┘   └────────▲─────────┘   │
 │                             │                     │             │
 │                    ┌────────▼────────┐            │             │
@@ -68,9 +68,9 @@
 **Concurrency model:** SQLite WAL mode allows 1 writer + N readers. All writes use IMMEDIATE transactions to serialize. `busy_timeout=8000ms` prevents lock failures under moderate contention from concurrent workers.
 
 **Multi-session behavior:** Session reuse is registry-driven, canonical-path-based, and conditional on context:
-- Shell path (`grid-registry.sh`): canonicalizes directories, uses portable `mkdir`-based locking, traverses parent directories, and only returns a match if `tmux has-session` succeeds for the registered session.
-- Shared path (`session-ops.ts`): canonicalizes directories, uses a PID-file lock, and reattaches purely on canonical `project_dir` equality in the registry. Does not verify tmux session liveness.
-- These two layers operate on the same on-disk registry but do not share lock semantics. Stale registry entries (dead tmux sessions) are ignored by the shell path but may be reattached by the shared path.
+- Shell path (`grid-registry.sh`): canonicalizes directories, uses the same PID-file registry lock as the TypeScript path, traverses parent directories, and only returns a match if `tmux has-session` succeeds for the registered session.
+- Shared path (`session-ops.ts`): canonicalizes directories, uses the same PID-file registry lock, and reattaches purely on canonical `project_dir` equality in the registry. Does not verify tmux session liveness.
+- Stale registry entries (dead tmux sessions) are ignored by the shell path but may be reattached by the shared path.
 
 ---
 
@@ -78,7 +78,7 @@
 
 ### Installation
 
-**Prerequisites:** Node.js (v20+), npm, tmux (>=3.0)
+**Prerequisites:** Node.js (v20+), npm, tmux (>=3.0), jq, yq (when `config/policy.yaml` exists), rsync (for `scripts/sync-cache.sh`)
 
 ```bash
 # 1. Build the plugin
@@ -309,7 +309,7 @@ The redundant `AND status='pending'` ensures the UPDATE fails (changes=0) if a c
 **Dependencies:** `@modelcontextprotocol/sdk`, `zod`, `@tmup/shared`
 **Transport:** stdio (Claude Code spawns as child process)
 
-### 18 MCP Tools
+### 20 MCP Tools
 
 | Tool | Category | Description |
 |------|----------|-------------|
@@ -331,6 +331,8 @@ The redundant `AND status='pending'` ensures the UPDATE fails (changes=0) if a c
 | `tmup_inbox` | Communication | Check unread count or read messages with framing |
 | `tmup_dispatch` | Execution | Atomic claim+register, launch Codex in pane |
 | `tmup_harvest` | Monitoring | Capture pane scrollback (validated args) |
+| `tmup_reprompt` | Monitoring | Send follow-up text into a live Codex pane |
+| `tmup_heartbeat` | Monitoring | Register agent liveness and optional Codex session ID |
 
 ### `tmup_next_action` Decision Tree
 
@@ -394,22 +396,24 @@ Success output is JSON to stdout. CLI-level errors (`CliError`) go to stdout as 
 | `pane-manager.sh` | List/release pane reservations in grid-state.json | 50 |
 | `trust-sweep.sh` | Auto-accept trust prompts across all panes | 22 |
 
-### Library Scripts (6)
+### Library Scripts (8)
 
 | Script | Purpose | LOC |
 |--------|---------|-----|
 | `lib/config.sh` | YAML config loader (via yq), env validation, all `CFG_*` exports | 85 |
 | `lib/validators.sh` | `validate_pane_index`, `validate_role`, `validate_working_dir` | 47 |
 | `lib/tmux-helpers.sh` | `is_agent_process`, `wait_for_shell_ready`, `strip_ansi` | 33 |
-| `lib/grid-registry.sh` | Multi-grid project-to-session registry (JSON + mkdir-lock) | 70 |
-| `lib/grid-identity.sh` | Grid ownership tracking (PID-based) with `jq -n` safe JSON | 36 |
-| `lib/prerequisites.sh` | Verify tmux (>=3.0), node, jq installed | 27 |
+| `lib/grid-registry.sh` | Multi-grid project-to-session registry (JSON + shared PID-file lock) | 143 |
+| `lib/grid-identity.sh` | Grid ownership tracking (PID-based) with `jq -n` safe JSON | 46 |
+| `lib/portable-lock.sh` | Cross-platform grid-state lock helper (`flock` when available, `mkdir` fallback on macOS) | 93 |
+| `lib/portable-system.sh` | Linux/macOS shell compatibility helpers for timestamps, hostnames, and canonical paths | 41 |
+| `lib/prerequisites.sh` | Verify tmux (>=3.0), node, jq, and policy-required yq | 41 |
 
 ### Security Patterns
 
 - **No shell interpolation in `tmux send-keys`**: `dispatch-agent.sh` writes env vars to a launcher wrapper script using `printf '%q'`, then sends `bash '$LAUNCHER'` to the pane.
 - **`jq -n` for JSON construction**: `grid-setup.sh` and `grid-identity.sh` build JSON entirely through `jq --arg`/`--argjson` — never heredoc interpolation.
-- **File descriptor locking**: `grid-registry.sh` uses portable `mkdir`-based locking; `pane-manager.sh` uses `flock` on a lock file for atomic JSON read-modify-write.
+- **Cross-platform portability helpers**: `lib/portable-lock.sh` centralizes `flock`/`mkdir` locking and `lib/portable-system.sh` avoids GNU-only shell flags for timestamps, hostnames, and canonical paths.
 - **Restrictive permissions**: `umask 0077`, `chmod 600` for state files, `chmod 700` for launcher scripts.
 
 ---
@@ -444,7 +448,7 @@ Agent definitions are injected into the Codex worker prompt by `dispatch-agent.s
 
 ### Slash Command (`commands/tmup.md`)
 
-Registered as `/tmup` in Claude Code. Frontmatter declares all 18 MCP tools in `allowed-tools`. Body documents:
+Registered as `/tmup` in Claude Code. Frontmatter declares all 20 MCP tools in `allowed-tools`. Body documents:
 - Usage patterns (`/tmup`, `/tmup init`, `/tmup status`, `/tmup next`, `/tmup teardown`)
 - 5-step workflow (initialize → plan → execute → monitor → complete)
 - Task DAG semantics
@@ -454,14 +458,14 @@ Registered as `/tmup` in Claude Code. Frontmatter declares all 18 MCP tools in `
 
 Loaded when tmup-related work is detected. Contains:
 - Quick start guide
-- Full 18-tool reference table
+- Full 20-tool reference table
 - Task lifecycle state machine
 - Workflow example with real tool calls
 - Key design decisions
 
 ### Reference (`skills/tmup/REFERENCE.md`)
 
-Complete API reference for all 18 MCP tools and 9 CLI commands with:
+Complete API reference for all 20 MCP tools and 9 CLI commands with:
 - Input/output JSON examples for every tool
 - Valid transition documentation
 - CLI env var requirements
@@ -541,7 +545,7 @@ tmup/
 
 ## 12. Test Suite
 
-**Runner:** Vitest | **Config:** `vitest.config.ts` | **24 files, 621 tests**
+**Runner:** Vitest | **Config:** `vitest.config.ts` | **37 test files**
 
 | Test File | Tests | Coverage Focus |
 |-----------|-------|---------------|
@@ -567,7 +571,7 @@ tmup/
 | `tests/shared/system-inventory-parity.test.ts` | 29 | SYSTEM-INVENTORY.md parity with source (module counts, export lists, table counts) |
 | `tests/mcp/handle-tool-call.test.ts` | 28 | Dispatch contract, resume, actor enforcement, input validation, pause/harvest, tmup_init/status |
 | `tests/cli/handle-command.test.ts` | 31 | Actor identity, fail validation, exit codes, checkpoint contract, message routing, heartbeat validation |
-| `tests/scripts/grid-registry.test.ts` | 6 | Shell registry CRUD, canonical path matching, lock semantics |
+| `tests/scripts/grid-registry.test.ts` | 8 | Shell registry CRUD, canonical path matching, lock semantics |
 | `tests/scripts/config-shell-boundary.test.ts` | 15 | Session name resolution from current-session pointer, TMUP_SESSION_NAME precedence, validation, state directory derivation |
 
 **Test patterns:**
@@ -587,7 +591,7 @@ tmup/
 ~/.local/state/tmup/
 ├── current-session           # Points to active session ID
 ├── registry.json             # Session-to-project mapping
-├── registry.lock             # PID-based file lock
+├── registry.lock             # Shared shell/TypeScript PID-file lock
 └── tmup-<hex>/               # Per-session directory
     ├── tmup.db               # SQLite WAL database
     ├── tmup.db-wal           # WAL file
@@ -595,7 +599,7 @@ tmup/
     ├── grid-identity.json    # Grid ownership (PID, session, hostname)
     ├── grid/
     │   ├── grid-state.json   # Pane assignments and status
-    │   └── grid-state.lock   # flock for atomic grid updates
+    │   └── grid-state.lock   # cross-platform lock for atomic grid updates
     ├── logs/                 # (Reserved for future use)
     ├── artifacts/            # Artifact storage
     ├── prompt-N-UUID.txt     # Worker prompt files (ephemeral — cleaned up before exec)
@@ -759,7 +763,7 @@ mcp-server/
   src/
     index.ts                     # MCP server lifecycle (lazy DB, WAL timer, crash guard)
     tools/
-      index.ts                   # 18 MCP tool definitions and handlers
+      index.ts                   # 20 MCP tool definitions and handlers
 
 scripts/
   dispatch-agent.sh              # Launch Codex worker in tmux pane

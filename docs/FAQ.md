@@ -20,7 +20,7 @@ No. tmux is the grid. Without it, where would the agents live? In your heart? Th
 
 **Q: Is this production ready?**
 
-Define "production." It has 631 tests, which is more than some things that are in production. It handles concurrent database access, dead workers, dependency cascades, and retry backoff. We used it to review its own codebase and the workers found real bugs, which is either a testament to its usefulness or a damning indictment of the code they were reviewing. We're not sure which. Should you bet your company on it? No. Should you use it to parallelize a refactoring task on a Saturday? Probably. Maybe. We're not liable.
+Define "production." It has a broad Vitest suite, which is more than some things that are in production. It handles concurrent database access, dead workers, dependency cascades, and retry backoff. We used it to review its own codebase and the workers found real bugs, which is either a testament to its usefulness or a damning indictment of the code they were reviewing. We're not sure which. Should you bet your company on it? No. Should you use it to parallelize a refactoring task on a Saturday? Probably. Maybe. We're not liable.
 
 **Q: Why SQLite and not Redis/Postgres/a real database?**
 
@@ -48,9 +48,9 @@ Congratulations. You're now qualified to open a GitHub issue. Or you could use t
 
 We believe in radical transparency about the things that don't work. Here's what will bite you if you're not careful:
 
-- **Linux-only for now.** The grid scripts assume GNU tools (`flock`, `date -Iseconds`, `realpath`), GNOME Terminal for auto-launch, and X11/Wayland display paths. macOS and BSD users will need to adapt the scripts. We accept PRs.
+- **Terminal auto-launch is Linux-specific.** The shell scripts avoid the known GNU-only blockers (flock-only locking, GNU date ISO flags, realpath-only canonicalization, and GNU find minute filters) via portable helpers, so the tmux/grid path works on macOS too. GNOME Terminal auto-launch still assumes a Linux desktop; on macOS, attach to the tmux session manually.
 - **No hot-reload.** The MCP server loads at session start. Code changes require build + cache sync + session restart. Every time. Yes, it's annoying. No, there's no fix. The MCP protocol doesn't support runtime code swaps.
-- **CLI flag parsing is loose.** Unknown flags are silently ignored. `--brodcast` becomes a direct message. `--limt` becomes the default limit. We know. It's on the list.
+- **CLI flag parsing is intentionally small.** Unknown flags fail closed instead of changing behavior silently. If a positional message starts with `--`, pass `--` first: `tmup-cli message -- "--not-a-flag"`.
 - **Codex workers run unsandboxed.** Workers use `-a never -s danger-full-access` because they need to write to the shared `tmup.db` outside the project directory. This means workers have full disk access. Don't run this on a machine you don't trust.
 - **Heartbeat timeout is coarse.** Default stale threshold is 5 minutes. If a worker crashes, the lead won't notice until the next `tmup_status` call after the timeout. Fast recovery requires frequent status polling.
 - **One grid per project directory.** The session registry is keyed by canonical project path. If you want two grids for the same project, you'll need to hack the session name.

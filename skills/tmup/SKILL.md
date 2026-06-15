@@ -126,6 +126,7 @@ The planning-first behavior is carried by the initial prompt. tmup does not depe
 | `tmup_resume` | Resume paused session |
 | `tmup_teardown` | Shutdown grid |
 | `tmup_reprompt` | Send follow-up prompt to running agent |
+| `tmup_heartbeat` | Register agent liveness |
 
 ## Task Lifecycle
 

@@ -5,6 +5,20 @@ import { openDatabase, closeDatabase } from '../../shared/src/db.js';
 import type { Database } from '../../shared/src/types.js';
 import { tmpDbPath, cleanupDb } from '../helpers/db.js';
 
+const PLUGIN_ROOT = path.resolve(__dirname, '../..');
+
+function readRepoFile(relativePath: string): string {
+  return fs.readFileSync(path.join(PLUGIN_ROOT, relativePath), 'utf-8');
+}
+
+function getMcpToolNames(): string[] {
+  const source = readRepoFile('mcp-server/src/tools/index.ts');
+  const names = [...source.matchAll(/name:\s*'([^']+)'/g)]
+    .map(match => match[1])
+    .filter(name => name.startsWith('tmup_'));
+  return [...new Set(names)].sort();
+}
+
 /**
  * Inventory parity guard — ensures SYSTEM-INVENTORY.md stays in sync
  * with the live schema, constants, and repo structure.
@@ -15,8 +29,7 @@ describe('system-inventory-parity', () => {
   let dbPath: string;
 
   beforeEach(() => {
-    const inventoryPath = path.resolve(__dirname, '../../SYSTEM-INVENTORY.md');
-    inventoryDoc = fs.readFileSync(inventoryPath, 'utf-8');
+    inventoryDoc = readRepoFile('SYSTEM-INVENTORY.md');
     dbPath = tmpDbPath();
     db = openDatabase(dbPath);
   });
@@ -83,6 +96,38 @@ describe('system-inventory-parity', () => {
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
       ).all() as Array<{ name: string }>;
       expect(tables.length).toBe(17);
+    });
+  });
+
+  describe('MCP tool documentation parity', () => {
+    it('documents the exact live MCP tool count', () => {
+      const toolNames = getMcpToolNames();
+      const apiDoc = readRepoFile('docs/API.md');
+      const readme = readRepoFile('README.md');
+      const reference = readRepoFile('skills/tmup/REFERENCE.md');
+
+      expect(toolNames.length).toBe(20);
+      expect(inventoryDoc).toContain(`${toolNames.length} MCP tools`);
+      expect(apiDoc).toContain(`## MCP tools (${toolNames.length})`);
+      expect(readme).toContain(`All ${toolNames.length} MCP tools`);
+      expect(reference).toContain(`all ${toolNames.length} MCP tools`);
+    });
+
+    it('/tmup command allowlist includes every MCP tool under both prefixes', () => {
+      const command = readRepoFile('commands/tmup.md');
+
+      for (const toolName of getMcpToolNames()) {
+        expect(command).toContain(`mcp__tmup__${toolName}`);
+        expect(command).toContain(`mcp__plugin_tmup_tmup__${toolName}`);
+      }
+    });
+
+    it('README dontAsk snippet includes every plugin-prefixed MCP tool', () => {
+      const readme = readRepoFile('README.md');
+
+      for (const toolName of getMcpToolNames()) {
+        expect(readme).toContain(`mcp__plugin_tmup_tmup__${toolName}`);
+      }
     });
   });
 
