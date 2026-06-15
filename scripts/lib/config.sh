@@ -38,6 +38,33 @@ _cfg_read_yaml() {
   echo "$default"
 }
 
+# Resolve the Codex model dynamically so tmup tracks the installed Codex CLI
+# rather than a frozen literal that silently rots across upgrades. Priority
+# (order of necessity):
+#   1. explicit `codex.model` pin in policy.yaml (any value except "auto")
+#   2. "auto" → the live Codex default from ${CODEX_HOME:-~/.codex}/config.toml
+#   3. policy.yaml `codex.model_preference[0]` (first fallback) when no live config
+#   4. built-in last-resort default
+# (The env override TMUP_CODEX_MODEL is applied downstream in dispatch-agent.sh.)
+_cfg_detect_codex_model() {
+  local codex_home="${CODEX_HOME:-$HOME/.codex}"
+  local detected=""
+  if [[ -r "$codex_home/config.toml" ]]; then
+    detected=$(sed -nE 's/^[[:space:]]*model[[:space:]]*=[[:space:]]*"?([^"#[:space:]]+)"?.*/\1/p' "$codex_home/config.toml" | head -1)
+  fi
+  if [[ -n "$detected" ]]; then
+    echo "$detected"
+    return 0
+  fi
+  local pref
+  pref=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.model_preference[0] // ""' "")
+  if [[ -n "$pref" && "$pref" != "null" ]]; then
+    echo "$pref"
+    return 0
+  fi
+  echo "gpt-5.5"
+}
+
 _cfg_validate_int() {
   local name="$1" val="$2" default="$3"
   if [[ "$val" =~ ^[0-9]+$ ]] && [[ "$val" -gt 0 ]]; then
@@ -104,7 +131,10 @@ _raw_teardown_grace=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.timeouts.te
 _raw_heartbeat_interval=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.dag.heartbeat_interval_seconds // 60' "60")
 _raw_claimed_warning=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.dag.claimed_duration_warning_seconds // 1800' "1800")
 _raw_reprompt_timeout=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.timeouts.send_reprompt_seconds // 10' "10")
-_raw_codex_model=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.model // "gpt-5.4"' "gpt-5.4")
+_raw_codex_model=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.model // "auto"' "auto")
+if [[ "$_raw_codex_model" == "auto" || -z "$_raw_codex_model" ]]; then
+  _raw_codex_model=$(_cfg_detect_codex_model)
+fi
 _raw_codex_context_window=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.context_window // 1050000' "1050000")
 _raw_codex_auto_compact=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.auto_compact_token_limit // 750000' "750000")
 _raw_codex_approval_policy=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.approval_policy // "never"' "never")
@@ -183,7 +213,7 @@ CFG_TEARDOWN_GRACE=$(_cfg_validate_int "CFG_TEARDOWN_GRACE" "$_raw_teardown_grac
 CFG_HEARTBEAT_INTERVAL=$(_cfg_validate_int "CFG_HEARTBEAT_INTERVAL" "$_raw_heartbeat_interval" "60")
 CFG_CLAIMED_WARNING=$(_cfg_validate_int "CFG_CLAIMED_WARNING" "$_raw_claimed_warning" "1800")
 CFG_REPROMPT_TIMEOUT=$(_cfg_validate_int "CFG_REPROMPT_TIMEOUT" "$_raw_reprompt_timeout" "10")
-CFG_CODEX_MODEL=$(_cfg_validate_nonempty "CFG_CODEX_MODEL" "$_raw_codex_model" "gpt-5.4")
+CFG_CODEX_MODEL=$(_cfg_validate_nonempty "CFG_CODEX_MODEL" "$_raw_codex_model" "gpt-5.5")
 CFG_CODEX_CONTEXT_WINDOW=$(_cfg_validate_int "CFG_CODEX_CONTEXT_WINDOW" "$_raw_codex_context_window" "1050000")
 CFG_CODEX_AUTO_COMPACT=$(_cfg_validate_int "CFG_CODEX_AUTO_COMPACT" "$_raw_codex_auto_compact" "750000")
 CFG_CODEX_APPROVAL_POLICY=$(_cfg_validate_enum "CFG_CODEX_APPROVAL_POLICY" "$_raw_codex_approval_policy" "never" "untrusted" "on-failure" "on-request" "never")

@@ -84,7 +84,7 @@ Workers are interactive Codex sessions in tmux panes. Use `tmup_dispatch` to sta
 
 ## Fresh Worker Runtime
 
-- Fresh tmup workers launch on `gpt-5.4`.
+- Fresh tmup workers launch on the auto-detected Codex model (`codex.model: "auto"` in policy.yaml resolves the live Codex CLI default).
 - tmup also requests the GPT-5.4 1M Codex context window through `model_context_window=1050000`.
 - tmup sets `model_auto_compact_token_limit=750000` to compact well before context quality degrades.
 - tmup pins worker reasoning and output controls with `model_reasoning_effort=high`, `model_reasoning_summary=low`, `plan_mode_reasoning_effort=xhigh`, and `model_verbosity=low`.

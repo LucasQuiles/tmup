@@ -71,7 +71,7 @@ This is the tmup equivalent of the `/using-tmux-for-interactive-commands` patter
 
 Fresh tmup workers currently launch with:
 
-- `--model gpt-5.4`
+- `--model <auto-detected>` (the live Codex CLI default; configured via `codex.model` in policy.yaml)
 - `-c model_context_window=1050000`
 - `-c model_auto_compact_token_limit=750000`
 - `-a never`

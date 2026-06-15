@@ -62,6 +62,43 @@ describe('config.sh shell boundary', () => {
     }).trim();
   }
 
+  describe('codex model detection pipeline', () => {
+    function writeCodexHome(model: string): string {
+      const ch = path.join(tmpHome, 'codex-home');
+      fs.mkdirSync(ch, { recursive: true });
+      fs.writeFileSync(path.join(ch, 'config.toml'), `model = "${model}"\n`);
+      return ch;
+    }
+
+    it('auto: detects the live Codex model from $CODEX_HOME/config.toml', () => {
+      const codexHome = writeCodexHome('gpt-test-live');
+      const result = runShell(`source "${CONFIG_SH}"; echo "$CFG_CODEX_MODEL"`, {
+        CODEX_HOME: codexHome,
+      });
+      expect(result).toBe('gpt-test-live');
+    });
+
+    it('auto: falls back to policy model_preference[0] when no live Codex config', () => {
+      const result = runShell(`source "${CONFIG_SH}"; echo "$CFG_CODEX_MODEL"`, {
+        CODEX_HOME: path.join(tmpHome, 'no-codex-here'),
+      });
+      // config/policy.yaml ships model_preference: ["gpt-5.5", ...]
+      expect(result).toBe('gpt-5.5');
+    });
+
+    it('explicit policy model pin overrides auto-detection', () => {
+      const pinDir = path.join(tmpHome, 'pin-config');
+      fs.mkdirSync(pinDir, { recursive: true });
+      fs.writeFileSync(path.join(pinDir, 'policy.yaml'), 'codex:\n  model: "gpt-pinned-9"\n');
+      const codexHome = writeCodexHome('gpt-test-live');
+      const result = runShell(`source "${CONFIG_SH}"; echo "$CFG_CODEX_MODEL"`, {
+        CFG_CONFIG_DIR: pinDir,
+        CODEX_HOME: codexHome,
+      });
+      expect(result).toBe('gpt-pinned-9');
+    });
+  });
+
   describe('operator help paths', () => {
     it('grid-setup --help exits before requiring project_dir or prereqs', () => {
       const output = execFileSync('bash', [GRID_SETUP_SH, '--help'], {
@@ -423,7 +460,7 @@ describe('config.sh shell boundary', () => {
         source "${CONFIG_SH}"
         echo "$CFG_CODEX_MODEL:$CFG_CODEX_CONTEXT_WINDOW:$CFG_CODEX_AUTO_COMPACT:$CFG_CODEX_APPROVAL_POLICY:$CFG_CODEX_SANDBOX:$CFG_CODEX_NO_ALT_SCREEN:$CFG_CODEX_PLAN_FIRST:$CFG_CODEX_REASONING_EFFORT:$CFG_CODEX_REASONING_SUMMARY:$CFG_CODEX_PLAN_REASONING:$CFG_CODEX_VERBOSITY:$CFG_CODEX_SERVICE_TIER:$CFG_CODEX_TOOL_OUTPUT_LIMIT:$CFG_CODEX_WEB_SEARCH:$CFG_CODEX_HISTORY:$CFG_CODEX_UNDO:$CFG_CODEX_SHELL_INHERIT:$CFG_CODEX_SHELL_SNAPSHOT:$CFG_CODEX_REQUEST_COMPRESSION:$CFG_CODEX_NOTIFICATIONS:$CFG_CODEX_BACKGROUND_TERMINAL_TIMEOUT:$CFG_CODEX_MAX_THREADS:$CFG_CODEX_MAX_DEPTH:$CFG_CODEX_JOB_TIMEOUT"
       `, { CFG_CONFIG_DIR: '/nonexistent/path' });
-      expect(result).toBe('gpt-5.4:1050000:750000:never:danger-full-access:true:true:high:concise:xhigh:low:fast:50000:live:save-all:true:all:true:true:true:600000:6:2:3600');
+      expect(result).toBe('gpt-5.5:1050000:750000:never:danger-full-access:true:true:high:concise:xhigh:low:fast:50000:live:save-all:true:all:true:true:true:600000:6:2:3600');
     });
 
     it('loads codex worker settings from policy.yaml queries', () => {
@@ -432,7 +469,7 @@ describe('config.sh shell boundary', () => {
       fs.writeFileSync(path.join(fakeBin, 'yq'), `#!/bin/bash
 query="$2"
 case "$query" in
-  '.codex.model // "gpt-5.4"') echo 'gpt-5.4-mini' ;;
+  '.codex.model // "auto"') echo 'gpt-5.4-mini' ;;
   '.codex.context_window // 1050000') echo '777777' ;;
   '.codex.auto_compact_token_limit // 750000') echo '555555' ;;
   '.codex.approval_policy // "never"') echo 'on-request' ;;
@@ -474,7 +511,7 @@ esac
       fs.writeFileSync(path.join(fakeBin, 'yq'), `#!/bin/bash
 query="$2"
 case "$query" in
-  '.codex.model // "gpt-5.4"') echo 'gpt-5.4' ;;
+  '.codex.model // "auto"') echo 'gpt-5.4' ;;
   '.codex.context_window // 1050000') echo '600000' ;;
   '.codex.auto_compact_token_limit // 750000') echo '900000' ;;
   '.codex.approval_policy // "never"') echo 'never' ;;
