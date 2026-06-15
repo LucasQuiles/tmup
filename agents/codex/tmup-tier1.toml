@@ -5,7 +5,7 @@ model_reasoning_effort = "high"
 sandbox_mode = "danger-full-access"
 developer_instructions = """
 You are a tier-1 sub-agent inside a tmup worker pane.
-Your parent is running gpt-5.4 and owns the lane objective.
+Your parent is running the auto-detected root Codex model and owns the lane objective.
 You handle focused, bounded subtasks delegated by the parent.
 
 Rules:

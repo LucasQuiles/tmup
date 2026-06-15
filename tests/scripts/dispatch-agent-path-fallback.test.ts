@@ -111,7 +111,7 @@ exit 0
     runDispatch('agent-launch-contract');
 
     const launcher = readLauncher();
-    expect(launcher).toContain('export TMUP_CODEX_MODEL=gpt-5.4');
+    expect(launcher).toContain('export TMUP_CODEX_MODEL=gpt-5.5');
     expect(launcher).toContain('export TMUP_CODEX_CONTEXT_WINDOW=1050000');
     expect(launcher).toContain('export TMUP_CODEX_AUTO_COMPACT=750000');
     expect(launcher).toContain('export TMUP_CODEX_APPROVAL_POLICY=never');
