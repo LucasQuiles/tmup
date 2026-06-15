@@ -440,7 +440,7 @@ case "$query" in
   '.codex.no_alt_screen // true') echo 'false' ;;
   '.codex.plan_first // true') echo 'false' ;;
   '.codex.reasoning_effort // "high"') echo 'xhigh' ;;
-  '.codex.reasoning_summary // "low"') echo 'detailed' ;;
+  '.codex.reasoning_summary // "concise"') echo 'detailed' ;;
   '.codex.plan_mode_reasoning_effort // "xhigh"') echo 'high' ;;
   '.codex.verbosity // "low"') echo 'medium' ;;
   '.codex.service_tier // "fast"') echo 'flex' ;;
@@ -482,7 +482,7 @@ case "$query" in
   '.codex.no_alt_screen // true') echo 'true' ;;
   '.codex.plan_first // true') echo 'true' ;;
   '.codex.reasoning_effort // "high"') echo 'high' ;;
-  '.codex.reasoning_summary // "low"') echo 'high' ;;
+  '.codex.reasoning_summary // "concise"') echo 'high' ;;
   '.codex.plan_mode_reasoning_effort // "xhigh"') echo 'xhigh' ;;
   '.codex.verbosity // "low"') echo 'low' ;;
   '.codex.service_tier // "fast"') echo 'fast' ;;
