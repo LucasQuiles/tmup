@@ -12,6 +12,10 @@ import {
 } from '@tmup/shared';
 import type { Database, TaskRow, TaskStatus } from '@tmup/shared';
 
+interface ExecErrorWithStdout extends Error {
+  stdout?: string | Buffer;
+}
+
 // --- Local input validators (adapter boundary only — shape/range, not domain rules) ---
 
 function validateTaskFields(input: Record<string, unknown>, prefix: string = ''): void {
@@ -810,7 +814,7 @@ export async function handleToolCall(
           }, (error: Error | null, stdout: string) => {
             if (error) {
               // Preserve stdout on error for clone_dir extraction
-              (error as any).stdout = stdout;
+              (error as ExecErrorWithStdout).stdout = stdout;
               reject(error);
             } else {
               resolve((stdout ?? '').trim());
@@ -834,7 +838,7 @@ export async function handleToolCall(
           db.prepare("UPDATE agents SET status = 'shutdown' WHERE id = ?").run(agentId);
           db.prepare("UPDATE tasks SET status = 'pending', owner = NULL, failure_reason = 'launch_failed' WHERE id = ? AND owner = ?").run(taskId, agentId);
           if (args.clone_isolation === true) {
-            const partialStdout = (launchErr as { stdout?: string | Buffer })?.stdout;
+            const partialStdout = (launchErr as ExecErrorWithStdout).stdout;
             if (partialStdout) {
               const stdoutStr = typeof partialStdout === 'string' ? partialStdout : partialStdout.toString('utf-8');
               const cloneMatch = stdoutStr.match(/^CLONE_DIR=(.+)$/m);
