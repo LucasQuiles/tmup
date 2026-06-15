@@ -1,32 +1,48 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # grid-registry.sh — Multi-grid registry for tmup (project-to-session mapping)
 
+_GRID_REGISTRY_LIB_DIR="$(cd "$(command -p dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$_GRID_REGISTRY_LIB_DIR/portable-system.sh"
+
 _REGISTRY_FILE="$HOME/.local/state/tmup/registry.json"
-_REGISTRY_LOCK_DIR="$HOME/.local/state/tmup/registry.lock.d"
+_REGISTRY_LOCK_FILE="$HOME/.local/state/tmup/registry.lock"
+_REGISTRY_LOCK_STALE_SECONDS="${TMUP_REGISTRY_LOCK_STALE_SECONDS:-10}"
 
 _registry_lock() {
+  command -p mkdir -p "$(command -p dirname "$_REGISTRY_LOCK_FILE")" || return 1
   local _attempts=0
-  while ! mkdir "$_REGISTRY_LOCK_DIR" 2>/dev/null; do
-    # Stale lock recovery: if lock dir is older than 10s, remove it
-    if [[ -d "$_REGISTRY_LOCK_DIR" ]]; then
-      local _lock_age
-      _lock_age=$(find "$_REGISTRY_LOCK_DIR" -maxdepth 0 -mmin +0.17 2>/dev/null)
-      if [[ -n "$_lock_age" ]]; then
-        rmdir "$_REGISTRY_LOCK_DIR" 2>/dev/null || true
-        continue
-      fi
+  while ! ( set -o noclobber; printf '%s\n' "$$" > "$_REGISTRY_LOCK_FILE" ) 2>/dev/null; do
+    if _registry_lock_is_stale; then
+      command -p rm -f "$_REGISTRY_LOCK_FILE" 2>/dev/null || true
+      continue
     fi
     _attempts=$((_attempts + 1))
-    if [[ $_attempts -ge 50 ]]; then
-      return 1
-    fi
-    sleep 0.1
+    [[ "$_attempts" -lt 50 ]] || return 1
+    command -p sleep 0.1
   done
   trap '_registry_unlock' EXIT INT TERM
 }
 
 _registry_unlock() {
-  rmdir "$_REGISTRY_LOCK_DIR" 2>/dev/null || true
+  local _owner=""
+  [[ -f "$_REGISTRY_LOCK_FILE" ]] && _owner=$(command -p cat "$_REGISTRY_LOCK_FILE" 2>/dev/null || true)
+  if [[ "$_owner" == "$$" ]]; then
+    command -p rm -f "$_REGISTRY_LOCK_FILE" 2>/dev/null || true
+  fi
+  trap - EXIT INT TERM
+}
+
+_registry_lock_is_stale() {
+  [[ -f "$_REGISTRY_LOCK_FILE" ]] || return 1
+  local _pid=""
+  _pid=$(command -p cat "$_REGISTRY_LOCK_FILE" 2>/dev/null || true)
+  if [[ "$_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$_pid" 2>/dev/null; then
+    return 0
+  fi
+  local _age
+  _age=$(command -p perl -e 'my $p = shift; my @s = stat($p); exit 2 unless @s; print int(time - $s[9]);' "$_REGISTRY_LOCK_FILE" 2>/dev/null) || return 1
+  [[ "$_age" =~ ^[0-9]+$ ]] || return 1
+  [[ "$_age" -gt "$_REGISTRY_LOCK_STALE_SECONDS" ]]
 }
 
 _registry_init() {
@@ -39,13 +55,9 @@ _registry_init() {
 registry_register() {
   local session_name="$1" project_dir="$2" db_path="${3:-}"
   _registry_init
-  # Canonicalize project_dir via realpath — fail closed if directory is invalid
   local _canon
-  _canon=$(realpath "$project_dir" 2>/dev/null) || _canon=""
+  _canon=$(tmup_realpath_dir "$project_dir") || _canon=""
   if [[ -z "$_canon" ]]; then
-    _canon=$(cd "$project_dir" 2>/dev/null && pwd -P) || _canon=""
-  fi
-  if [[ -z "$_canon" || ! -d "$_canon" ]]; then
     echo "grid-registry: failed to canonicalize project_dir '$project_dir'" >&2
     return 1
   fi
@@ -55,7 +67,7 @@ registry_register() {
     db_path="$HOME/.local/state/tmup/$session_name/tmup.db"
   fi
   local timestamp
-  timestamp=$(date -Iseconds)
+  timestamp=$(tmup_iso_timestamp)
   if ! _registry_lock; then
     echo "grid-registry: failed to acquire lock for register" >&2
     return 1
@@ -107,13 +119,9 @@ registry_deregister() {
 registry_lookup() {
   local search_dir="${1:-$(pwd)}"
   [[ -f "$_REGISTRY_FILE" ]] || return 1
-  # Canonicalize search directory — fail closed if unresolvable
   local _canon
-  _canon=$(realpath "$search_dir" 2>/dev/null) || _canon=""
+  _canon=$(tmup_realpath_dir "$search_dir") || _canon=""
   if [[ -z "$_canon" ]]; then
-    _canon=$(cd "$search_dir" 2>/dev/null && pwd -P) || _canon=""
-  fi
-  if [[ -z "$_canon" || ! -d "$_canon" ]]; then
     echo "grid-registry: failed to canonicalize search directory '$search_dir'" >&2
     return 1
   fi

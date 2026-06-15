@@ -93,6 +93,47 @@ describe('grid-registry.sh', () => {
       expect(sessions['existing-session']).toBeDefined();
       expect(sessions['new-session']).toBeDefined();
     });
+
+    it('registers entries without flock or realpath on PATH', () => {
+      const fakeBin = path.join(tmpHome, 'fakebin');
+      fs.mkdirSync(fakeBin);
+      for (const command of ['dirname', 'jq', 'mkdir', 'mktemp', 'mv', 'rm']) {
+        fs.symlinkSync(resolveCommand(command), path.join(fakeBin, command));
+      }
+
+      const projectDir = path.join(tmpHome, 'fallback-project');
+      fs.mkdirSync(projectDir, { recursive: true });
+
+      const output = execFileSync('/bin/bash', ['-c', `
+        source "${GRID_REGISTRY_SH}"
+        command -v flock >/dev/null && exit 10
+        command -v realpath >/dev/null && exit 11
+        registry_register "fallback-session" "${projectDir}"
+        jq -r '.sessions["fallback-session"].project_dir' "${registryFile}"
+      `], {
+        env: { ...process.env, HOME: tmpHome, PATH: fakeBin },
+        encoding: 'utf-8',
+        timeout: 10000,
+      }).trim();
+
+      expect(output).toBe(projectDir);
+      expect(fs.existsSync(path.join(tmpHome, '.local/state/tmup/registry.lock'))).toBe(false);
+      expect(fs.existsSync(path.join(tmpHome, '.local/state/tmup/registry.shell.lock.d'))).toBe(false);
+    });
+
+    it('recovers dead PID locks written by the TypeScript registry path', () => {
+      const lockFile = path.join(tmpHome, '.local/state/tmup/registry.lock');
+      fs.writeFileSync(lockFile, '999999');
+      const projectDir = path.join(tmpHome, 'dead-pid-project');
+      fs.mkdirSync(projectDir, { recursive: true });
+
+      runShell(`source "${GRID_REGISTRY_SH}" && registry_register "dead-pid-session" "${projectDir}"`);
+
+      const registry = readRegistryJson();
+      const sessions = registry.sessions as Record<string, Record<string, unknown>>;
+      expect(sessions['dead-pid-session']).toBeDefined();
+      expect(fs.existsSync(lockFile)).toBe(false);
+    });
   });
 
   describe('registry error reporting', () => {
@@ -163,3 +204,9 @@ describe('grid-registry.sh', () => {
     });
   });
 });
+
+function resolveCommand(command: string): string {
+  return execFileSync('/bin/bash', ['-lc', `command -v ${command}`], {
+    encoding: 'utf-8',
+  }).trim();
+}

@@ -72,7 +72,6 @@ printf 'null\\n'
       'perl',
       'rm',
       'sed',
-      'seq',
       'touch',
     ]) {
       linkSystemBinary(commandName);

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # tmux-helpers.sh — Tmux utility functions for tmup
 
 # Check if a process in a pane is an agent (not a shell).
@@ -215,7 +215,7 @@ send_codex_prompt_with_retry() {
   esac
 
   local full_retry
-  for full_retry in $(seq 1 "$max_full_retries"); do
+  for ((full_retry = 1; full_retry <= max_full_retries; full_retry++)); do
     if [[ "$full_retry" -gt 1 ]]; then
       tmux send-keys -t "$target" C-c 2>/dev/null || true
       sleep 0.2
