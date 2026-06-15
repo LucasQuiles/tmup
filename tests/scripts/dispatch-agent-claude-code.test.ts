@@ -90,9 +90,11 @@ describe('dispatch-agent.sh worker-type claude_code', () => {
     expect(launcher).toContain("_WORKER_TYPE=claude_code");
     expect(launcher).toContain('if [[ "$_WORKER_TYPE" == "claude_code" ]]');
 
-    // claude -p invocation with the full one-shot runtime contract
+    // claude -p invocation with the one-shot runtime contract.
+    // Model and fallback selection must inherit Claude Code settings instead
+    // of pinning an implicit Sonnet worker model here.
     expect(launcher).toContain('claude -p');
-    expect(launcher).toContain('--model sonnet');
+    expect(launcher).not.toContain('--model sonnet');
     expect(launcher).toContain('--permission-mode bypassPermissions');
     expect(launcher).toContain('--max-budget-usd 3.00');
 
