@@ -423,7 +423,7 @@ describe('config.sh shell boundary', () => {
         source "${CONFIG_SH}"
         echo "$CFG_CODEX_MODEL:$CFG_CODEX_CONTEXT_WINDOW:$CFG_CODEX_AUTO_COMPACT:$CFG_CODEX_APPROVAL_POLICY:$CFG_CODEX_SANDBOX:$CFG_CODEX_NO_ALT_SCREEN:$CFG_CODEX_PLAN_FIRST:$CFG_CODEX_REASONING_EFFORT:$CFG_CODEX_REASONING_SUMMARY:$CFG_CODEX_PLAN_REASONING:$CFG_CODEX_VERBOSITY:$CFG_CODEX_SERVICE_TIER:$CFG_CODEX_TOOL_OUTPUT_LIMIT:$CFG_CODEX_WEB_SEARCH:$CFG_CODEX_HISTORY:$CFG_CODEX_UNDO:$CFG_CODEX_SHELL_INHERIT:$CFG_CODEX_SHELL_SNAPSHOT:$CFG_CODEX_REQUEST_COMPRESSION:$CFG_CODEX_NOTIFICATIONS:$CFG_CODEX_BACKGROUND_TERMINAL_TIMEOUT:$CFG_CODEX_MAX_THREADS:$CFG_CODEX_MAX_DEPTH:$CFG_CODEX_JOB_TIMEOUT"
       `, { CFG_CONFIG_DIR: '/nonexistent/path' });
-      expect(result).toBe('gpt-5.4:1050000:750000:never:danger-full-access:true:true:high:low:xhigh:low:fast:50000:live:save-all:true:all:true:true:true:600000:6:2:3600');
+      expect(result).toBe('gpt-5.4:1050000:750000:never:danger-full-access:true:true:high:concise:xhigh:low:fast:50000:live:save-all:true:all:true:true:true:600000:6:2:3600');
     });
 
     it('loads codex worker settings from policy.yaml queries', () => {
@@ -440,7 +440,7 @@ case "$query" in
   '.codex.no_alt_screen // true') echo 'false' ;;
   '.codex.plan_first // true') echo 'false' ;;
   '.codex.reasoning_effort // "high"') echo 'xhigh' ;;
-  '.codex.reasoning_summary // "low"') echo 'medium' ;;
+  '.codex.reasoning_summary // "low"') echo 'detailed' ;;
   '.codex.plan_mode_reasoning_effort // "xhigh"') echo 'high' ;;
   '.codex.verbosity // "low"') echo 'medium' ;;
   '.codex.service_tier // "fast"') echo 'flex' ;;
@@ -465,7 +465,7 @@ esac
         source "${CONFIG_SH}"
         echo "$CFG_CODEX_MODEL:$CFG_CODEX_CONTEXT_WINDOW:$CFG_CODEX_AUTO_COMPACT:$CFG_CODEX_APPROVAL_POLICY:$CFG_CODEX_SANDBOX:$CFG_CODEX_NO_ALT_SCREEN:$CFG_CODEX_PLAN_FIRST:$CFG_CODEX_REASONING_EFFORT:$CFG_CODEX_REASONING_SUMMARY:$CFG_CODEX_PLAN_REASONING:$CFG_CODEX_VERBOSITY:$CFG_CODEX_SERVICE_TIER:$CFG_CODEX_TOOL_OUTPUT_LIMIT:$CFG_CODEX_WEB_SEARCH:$CFG_CODEX_HISTORY:$CFG_CODEX_UNDO:$CFG_CODEX_SHELL_INHERIT:$CFG_CODEX_SHELL_SNAPSHOT:$CFG_CODEX_REQUEST_COMPRESSION:$CFG_CODEX_NOTIFICATIONS:$CFG_CODEX_BACKGROUND_TERMINAL_TIMEOUT:$CFG_CODEX_MAX_THREADS:$CFG_CODEX_MAX_DEPTH:$CFG_CODEX_JOB_TIMEOUT"
       `, { PATH: `${fakeBin}:/usr/bin:/bin` });
-      expect(result).toBe('gpt-5.4-mini:777777:555555:on-request:workspace-write:false:false:xhigh:medium:high:medium:flex:54321:cached:none:false:core:false:false:false:420000:3:3:2700');
+      expect(result).toBe('gpt-5.4-mini:777777:555555:on-request:workspace-write:false:false:xhigh:detailed:high:medium:flex:54321:cached:none:false:core:false:false:false:420000:3:3:2700');
     });
 
     it('repairs invalid codex compaction thresholds and caps subagent fanout', () => {
