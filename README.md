@@ -25,7 +25,7 @@ One Claude Code session makes the plan. Up to 8 Codex CLI workers try to execute
 | | |
 |---|---|
 | **[Architecture](docs/ARCHITECTURE.md)** | How it actually works under the hood |
-| **[API Reference](docs/API.md)** | All 18 MCP tools + 9 CLI commands |
+| **[API Reference](docs/API.md)** | All 20 MCP tools + 9 CLI commands |
 | **[Configuration](docs/CONFIGURATION.md)** | Grid layout, DAG behavior, autonomy tiers, project structure |
 | **[Development](docs/DEVELOPMENT.md)** | Dev workflow, the cache sync thing that will absolutely trip you up |
 | **[FAQ & Limitations](docs/FAQ.md)** | Honest answers and honest limitations |
@@ -97,6 +97,8 @@ That's a lot of context. Whether any of it is being used well is a separate ques
 - [tmux](https://github.com/tmux/tmux) >= 3.0
 - Node.js >= 20
 - jq
+- yq (required when `config/policy.yaml` is present)
+- rsync (required for `scripts/sync-cache.sh`)
 
 ## Installation
 
@@ -155,7 +157,9 @@ If you run Claude Code with `defaultMode: "dontAsk"`, the tmup MCP tools need ex
       "mcp__plugin_tmup_tmup__tmup_harvest",
       "mcp__plugin_tmup_tmup__tmup_pause",
       "mcp__plugin_tmup_tmup__tmup_resume",
-      "mcp__plugin_tmup_tmup__tmup_teardown"
+      "mcp__plugin_tmup_tmup__tmup_teardown",
+      "mcp__plugin_tmup_tmup__tmup_reprompt",
+      "mcp__plugin_tmup_tmup__tmup_heartbeat"
     ]
   }
 }
@@ -223,7 +227,7 @@ Real messages from workers:
   "messages": [
     {
       "from": "a6ddcc67-...", "type": "checkpoint", "task_id": "002",
-      "payload_framed": "[WORKER MESSAGE from a6ddcc67, type=checkpoint, task=002]:\nTester checkpoint: fresh npm test completed successfully with 24/24 files and 631/631 tests passing in 20.91s\n[END WORKER MESSAGE]"
+      "payload_framed": "[WORKER MESSAGE from a6ddcc67, type=checkpoint, task=002]:\nTester checkpoint: fresh npm test completed successfully; full suite passed in 20.91s\n[END WORKER MESSAGE]"
     },
     {
       "from": "e1c5dc3e-...", "type": "finding",
