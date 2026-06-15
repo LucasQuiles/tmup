@@ -728,12 +728,16 @@ function requireAgentId(env) {
   return env.agentId;
 }
 function parseFlag(args, flag) {
-  const idx = args.indexOf(flag);
-  if (idx === -1 || idx + 1 >= args.length) return void 0;
+  const terminator = args.indexOf("--");
+  const searchEnd = terminator === -1 ? args.length : terminator;
+  const idx = args.slice(0, searchEnd).indexOf(flag);
+  if (idx === -1 || idx + 1 >= searchEnd) return void 0;
   return args[idx + 1];
 }
 function hasFlag(args, flag) {
-  return args.includes(flag);
+  const terminator = args.indexOf("--");
+  const searchEnd = terminator === -1 ? args.length : terminator;
+  return args.slice(0, searchEnd).includes(flag);
 }
 var FLAGS_WITH_VALUES = /* @__PURE__ */ new Set([
   "--role",
@@ -745,9 +749,42 @@ var FLAGS_WITH_VALUES = /* @__PURE__ */ new Set([
   "--codex-session-id",
   "--limit"
 ]);
+var COMMAND_FLAGS = {
+  claim: { value: /* @__PURE__ */ new Set(["--role"]), boolean: /* @__PURE__ */ new Set() },
+  complete: { value: /* @__PURE__ */ new Set(["--task-id", "--artifact"]), boolean: /* @__PURE__ */ new Set() },
+  fail: { value: /* @__PURE__ */ new Set(["--reason", "--task-id"]), boolean: /* @__PURE__ */ new Set() },
+  checkpoint: { value: /* @__PURE__ */ new Set(["--task-id"]), boolean: /* @__PURE__ */ new Set() },
+  message: { value: /* @__PURE__ */ new Set(["--to", "--type"]), boolean: /* @__PURE__ */ new Set(["--broadcast"]) },
+  inbox: { value: /* @__PURE__ */ new Set(), boolean: /* @__PURE__ */ new Set(["--mark-read"]) },
+  heartbeat: { value: /* @__PURE__ */ new Set(["--codex-session-id"]), boolean: /* @__PURE__ */ new Set() },
+  status: { value: /* @__PURE__ */ new Set(), boolean: /* @__PURE__ */ new Set() },
+  events: { value: /* @__PURE__ */ new Set(["--limit", "--type"]), boolean: /* @__PURE__ */ new Set() }
+};
+function validateFlags(command, args) {
+  const spec = COMMAND_FLAGS[command];
+  if (!spec) return;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--") return;
+    if (!arg.startsWith("--")) continue;
+    if (spec.value.has(arg)) {
+      if (i + 1 >= args.length || args[i + 1] === "--" || args[i + 1].startsWith("--")) {
+        throw new Error(`Flag ${arg} requires a value`);
+      }
+      i++;
+      continue;
+    }
+    if (spec.boolean.has(arg)) continue;
+    throw new Error(`Unknown flag for ${command}: ${arg}`);
+  }
+}
 function positional(args) {
   const skip = /* @__PURE__ */ new Set();
   for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--") {
+      skip.add(i);
+      break;
+    }
     if (FLAGS_WITH_VALUES.has(args[i])) {
       skip.add(i);
       skip.add(i + 1);
@@ -762,6 +799,7 @@ function positional(args) {
   return void 0;
 }
 async function handleCommand(db, command, args, env) {
+  validateFlags(command, args);
   switch (command) {
     case "claim": {
       const agentId = requireAgentId(env);

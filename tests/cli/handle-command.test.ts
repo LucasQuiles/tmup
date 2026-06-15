@@ -236,6 +236,43 @@ describe('CLI handleCommand', () => {
     });
   });
 
+  describe('flag validation', () => {
+    it('rejects misspelled boolean flags instead of silently changing behavior', async () => {
+      await expect(
+        handleCommand(db, 'message', ['hello all', '--brodcast'], {
+          agentId: 'test-agent',
+        })
+      ).rejects.toThrow('Unknown flag for message: --brodcast');
+    });
+
+    it('rejects misspelled value flags instead of silently using defaults', async () => {
+      await expect(
+        handleCommand(db, 'events', ['--limt', '3'], {
+          agentId: 'test-agent',
+        })
+      ).rejects.toThrow('Unknown flag for events: --limt');
+    });
+
+    it('rejects value flags whose next token is another flag', async () => {
+      await expect(
+        handleCommand(db, 'message', ['hello', '--to', '--broadcast'], {
+          agentId: 'test-agent',
+        })
+      ).rejects.toThrow('Flag --to requires a value');
+    });
+
+    it('supports -- terminator for positional payloads beginning with dashes', async () => {
+      const result = await handleCommand(db, 'message', ['--', '--not-a-flag'], {
+        agentId: 'test-agent',
+      });
+
+      expect(result.ok).toBe(true);
+      const msg = db.prepare('SELECT payload FROM messages ORDER BY created_at DESC LIMIT 1')
+        .get() as { payload: string };
+      expect(msg.payload).toBe('--not-a-flag');
+    });
+  });
+
   describe('heartbeat validation', () => {
     it('rejects malformed codex-session-id', async () => {
       await expect(

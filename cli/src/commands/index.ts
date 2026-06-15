@@ -23,13 +23,17 @@ function requireAgentId(env: EnvContext): string {
 }
 
 function parseFlag(args: string[], flag: string): string | undefined {
-  const idx = args.indexOf(flag);
-  if (idx === -1 || idx + 1 >= args.length) return undefined;
+  const terminator = args.indexOf('--');
+  const searchEnd = terminator === -1 ? args.length : terminator;
+  const idx = args.slice(0, searchEnd).indexOf(flag);
+  if (idx === -1 || idx + 1 >= searchEnd) return undefined;
   return args[idx + 1];
 }
 
 function hasFlag(args: string[], flag: string): boolean {
-  return args.includes(flag);
+  const terminator = args.indexOf('--');
+  const searchEnd = terminator === -1 ? args.length : terminator;
+  return args.slice(0, searchEnd).includes(flag);
 }
 
 /** Flags that consume a following value argument. */
@@ -38,9 +42,48 @@ const FLAGS_WITH_VALUES = new Set([
   '--artifact', '--codex-session-id', '--limit',
 ]);
 
+const COMMAND_FLAGS: Record<string, { value: Set<string>; boolean: Set<string> }> = {
+  claim: { value: new Set(['--role']), boolean: new Set() },
+  complete: { value: new Set(['--task-id', '--artifact']), boolean: new Set() },
+  fail: { value: new Set(['--reason', '--task-id']), boolean: new Set() },
+  checkpoint: { value: new Set(['--task-id']), boolean: new Set() },
+  message: { value: new Set(['--to', '--type']), boolean: new Set(['--broadcast']) },
+  inbox: { value: new Set(), boolean: new Set(['--mark-read']) },
+  heartbeat: { value: new Set(['--codex-session-id']), boolean: new Set() },
+  status: { value: new Set(), boolean: new Set() },
+  events: { value: new Set(['--limit', '--type']), boolean: new Set() },
+};
+
+function validateFlags(command: string, args: string[]): void {
+  const spec = COMMAND_FLAGS[command];
+  if (!spec) return;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--') return;
+    if (!arg.startsWith('--')) continue;
+
+    if (spec.value.has(arg)) {
+      if (i + 1 >= args.length || args[i + 1] === '--' || args[i + 1].startsWith('--')) {
+        throw new Error(`Flag ${arg} requires a value`);
+      }
+      i++;
+      continue;
+    }
+
+    if (spec.boolean.has(arg)) continue;
+
+    throw new Error(`Unknown flag for ${command}: ${arg}`);
+  }
+}
+
 function positional(args: string[]): string | undefined {
   const skip = new Set<number>();
   for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--') {
+      skip.add(i);
+      break;
+    }
     if (FLAGS_WITH_VALUES.has(args[i])) {
       skip.add(i);
       skip.add(i + 1);
@@ -61,6 +104,8 @@ export async function handleCommand(
   args: string[],
   env: EnvContext
 ): Promise<Record<string, unknown>> {
+  validateFlags(command, args);
+
   switch (command) {
     case 'claim': {
       const agentId = requireAgentId(env);
