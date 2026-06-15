@@ -2,7 +2,7 @@
 
 > Multi-agent coordination for Claude Code + Codex CLI via SQLite WAL-backed task DAG
 > Version: 0.1.0 | 20 MCP tools | 9 CLI commands | 22 shared modules
-> 37 test files | All passing
+> 38 test files | All passing
 
 ---
 
@@ -545,7 +545,7 @@ tmup/
 
 ## 12. Test Suite
 
-**Runner:** Vitest | **Config:** `vitest.config.ts` | **37 test files**
+**Runner:** Vitest | **Config:** `vitest.config.ts` | **38 test files**
 
 | Test File | Tests | Coverage Focus |
 |-----------|-------|---------------|
