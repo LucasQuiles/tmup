@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # dispatch-agent.sh — Launch a Codex worker in a tmux pane with tmup env vars
 # Uses wrapper script pattern (NOT $(cat) in tmux command) for security
 set -euo pipefail
@@ -20,6 +20,7 @@ unset _arg _prev_arg
 source "$SCRIPT_DIR/lib/config.sh"
 source "$SCRIPT_DIR/lib/validators.sh"
 source "$SCRIPT_DIR/lib/tmux-helpers.sh"
+source "$SCRIPT_DIR/lib/portable-lock.sh"
 
 if [[ "${CFG_CONFIG_DEGRADED:-0}" -eq 1 ]]; then
   die "Cannot dispatch — policy.yaml exists but could not be read (yq missing or broken). Install yq or remove policy.yaml."
@@ -59,8 +60,7 @@ _release_pane_reservation() {
   [[ -f "${GRID_STATE:-}" ]] || return 0
   [[ -n "${PANE_INDEX:-}" ]] || return 0
 
-  exec 8>"$LOCK_FILE" 2>/dev/null || return 0
-  if flock -w 2 8 2>/dev/null; then
+  if tmup_lock_acquire "$LOCK_FILE" 2 8 2>/dev/null; then
     local temp_file
     temp_file=$(mktemp "$STATE_DIR/grid/grid-state.XXXXXX" 2>/dev/null || true)
     if [[ -n "$temp_file" ]]; then
@@ -73,14 +73,15 @@ _release_pane_reservation() {
         rm -f "$temp_file"
       fi
     fi
+    tmup_lock_release "$LOCK_FILE" 8
   fi
-  exec 8>&- 2>/dev/null || true
 }
 
 _dispatch_teardown() {
   local exit_code="${1:-1}"
   trap - EXIT INT TERM
-  exec 9>&- 2>/dev/null || true
+  tmup_lock_release "${LOCK_FILE:-}" 9
+  tmup_lock_release "${LOCK_FILE:-}" 8
   if [[ "${DISPATCH_COMMITTED:-0}" -eq 0 ]]; then
     _release_pane_reservation
     _dispatch_cleanup
@@ -274,7 +275,7 @@ chmod 600 "$PROMPT_FILE"
 # Write launcher wrapper script with env vars baked in (security: no shell interpolation in send-keys)
 LAUNCHER="$STATE_DIR/launcher-${PANE_INDEX}.sh"
 cat > "$LAUNCHER" <<WRAPPER
-#!/bin/bash
+#!/usr/bin/env bash
 export TMUP_AGENT_ID=$(printf '%q' "$AGENT_ID")
 export TMUP_DB=$(printf '%q' "$DB_PATH")
 export TMUP_PANE_INDEX=$(printf '%q' "$PANE_INDEX")
@@ -411,13 +412,12 @@ PANE_TARGET="$SESSION_NAME:0.$PANE_INDEX"
 GRID_STATE="$STATE_DIR/grid/grid-state.json"
 
 if [[ -f "$GRID_STATE" ]]; then
-  exec 9>"$LOCK_FILE"
-  if ! flock -w 5 9; then
+  if ! tmup_lock_acquire "$LOCK_FILE" 5 9; then
     _dispatch_cleanup
     die "Failed to acquire grid state lock — another operation in progress"
   fi
 
-  # Pull pane status from the grid state under the held flock. A single jq
+  # Pull pane status from the grid state under the held cross-platform lock. A single jq
   # pass returns empty EITHER when the pane index is missing from .panes[]
   # OR when a matched pane carries no .status field. Both are fatal here,
   # so one non-empty check covers both. tmup authors grid-state.json itself
@@ -425,7 +425,7 @@ if [[ -f "$GRID_STATE" ]]; then
   # "found but no status" branch is not a reachable runtime state.
   _pane_status=$(jq -r --argjson idx "$PANE_INDEX" '.panes[] | select(.index == $idx) | .status // ""' "$GRID_STATE")
   [[ -n "$_pane_status" ]] || {
-    exec 9>&-
+    tmup_lock_release "$LOCK_FILE" 9
     _dispatch_cleanup
     die "Pane $PANE_INDEX not found in grid state"
   }
@@ -435,19 +435,19 @@ if [[ -f "$GRID_STATE" ]]; then
   if is_agent_process "$PANE_CMD"; then
     if [[ "$_pane_status" == "available" ]]; then
       if ! _respawn_available_pane "$PANE_TARGET" "$PANE_INDEX" "$PANE_CMD"; then
-        exec 9>&-
+        tmup_lock_release "$LOCK_FILE" 9
         _dispatch_cleanup
         die "Pane $PANE_INDEX is marked available but could not be reset from $PANE_CMD"
       fi
     else
-      exec 9>&-
+      tmup_lock_release "$LOCK_FILE" 9
       _dispatch_cleanup
       die "Pane $PANE_INDEX has a running agent ($PANE_CMD)"
     fi
   fi
 
   _temp=$(mktemp "$STATE_DIR/grid/grid-state.XXXXXX") || {
-    exec 9>&-
+    tmup_lock_release "$LOCK_FILE" 9
     _dispatch_cleanup
     die "Failed to create temp file for grid state"
   }
@@ -458,11 +458,11 @@ if [[ -f "$GRID_STATE" ]]; then
     RESERVATION_ACTIVE=1
   else
     rm -f "$_temp"
-    exec 9>&-
+    tmup_lock_release "$LOCK_FILE" 9
     _dispatch_cleanup
     die "Failed to reserve pane $PANE_INDEX in grid state"
   fi
-  exec 9>&-
+  tmup_lock_release "$LOCK_FILE" 9
 else
   # No grid state — still check pane occupancy
   PANE_CMD=$(tmux display-message -t "$PANE_TARGET" -p '#{pane_current_command}' 2>/dev/null || echo "")
@@ -481,15 +481,14 @@ sleep 0.1
 if ! tmux send-keys -t "$PANE_TARGET" "bash '$LAUNCHER'" Enter 2>/dev/null; then
   # Rollback pane reservation on launch failure
   if [[ -f "$GRID_STATE" ]]; then
-    exec 9>"$LOCK_FILE"
-    if flock -w 2 9 2>/dev/null; then
+    if tmup_lock_acquire "$LOCK_FILE" 2 9 2>/dev/null; then
       _temp=$(mktemp "$STATE_DIR/grid/grid-state.XXXXXX" 2>/dev/null) || _temp=""
       if [[ -n "$_temp" ]]; then
         jq --argjson idx "$PANE_INDEX" \
           '(.panes[] | select(.index == $idx)) |= {index: .index, pane_id: .pane_id, status: "available"}' \
           "$GRID_STATE" > "$_temp" 2>/dev/null && mv "$_temp" "$GRID_STATE"
       fi
-      exec 9>&- 2>/dev/null || true
+      tmup_lock_release "$LOCK_FILE" 9
     fi
   fi
   _dispatch_cleanup
@@ -511,13 +510,13 @@ _run_post_launch() {
   local attempts=$((CFG_TRUST_SECONDS / 2))
   [[ $attempts -lt 1 ]] && attempts=1
   local _attempt
-  for _attempt in $(seq 1 $attempts); do
+  for ((_attempt = 1; _attempt <= attempts; _attempt++)); do
     sleep 2
     local trust_check
     trust_check=$(tmux capture-pane -t "$PANE_TARGET" -p -S -10 2>/dev/null || true)
     # Narrow pattern: only accept the specific codex trust prompt ("Do you trust ...?")
     # Anchored to start-of-line to avoid matching agent output paragraphs
-    if echo "$trust_check" | grep -qiE "^\s*Do you trust\b"; then
+    if echo "$trust_check" | grep -qiE "^[[:space:]]*Do you trust([[:space:]]|$)"; then
       tmux send-keys -t "$PANE_TARGET" Enter
       echo "Trust prompt accepted (attempt $_attempt)"
       break
@@ -528,7 +527,7 @@ _run_post_launch() {
   # Wait for codex to be ready for input (idle at its prompt)
   echo "Waiting for codex to become ready..."
   local _ready_attempt
-  for _ready_attempt in $(seq 1 20); do
+  for ((_ready_attempt = 1; _ready_attempt <= 20; _ready_attempt++)); do
     sleep 1
     local ready_check
     ready_check=$(tmux capture-pane -t "$PANE_TARGET" -p -S -5 2>/dev/null || true)
@@ -573,8 +572,7 @@ _run_post_launch() {
     if [[ -n "$codex_sid" && "$codex_sid" != "null" ]]; then
       # Store in grid-state.json pane entry
       if [[ -f "$GRID_STATE" ]]; then
-        exec 9>"$LOCK_FILE"
-        if flock -w 5 9 2>/dev/null; then
+        if tmup_lock_acquire "$LOCK_FILE" 5 9 2>/dev/null; then
           local temp_file
           temp_file=$(mktemp "$STATE_DIR/grid/grid-state.XXXXXX" 2>/dev/null) || temp_file=""
           if [[ -n "$temp_file" ]]; then
@@ -586,8 +584,8 @@ _run_post_launch() {
               rm -f "$temp_file"
             fi
           fi
+          tmup_lock_release "$LOCK_FILE" 9
         fi
-        exec 9>&- 2>/dev/null || true
       fi
 
       # Store in agents table via heartbeat

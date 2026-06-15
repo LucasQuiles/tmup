@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # reprompt-agent.sh — Send follow-up prompt to a running Codex agent
 # CLI wrapper around send_reprompt() from tmux-helpers.sh
 set -euo pipefail
@@ -18,6 +18,7 @@ done
 unset _arg _prev_arg
 
 source "$SCRIPT_DIR/lib/config.sh"
+source "$SCRIPT_DIR/lib/portable-system.sh"
 source "$SCRIPT_DIR/lib/tmux-helpers.sh"
 if [[ "${CFG_CONFIG_DEGRADED:-0}" -eq 1 ]]; then
   die "Cannot reprompt — policy.yaml exists but could not be read (yq missing or broken)."
@@ -48,7 +49,9 @@ if [[ "$ALL" == "true" ]]; then
   # Enumerate panes from live grid state, not CFG_TOTAL_PANES (which may be
   # stale or degraded). Fall back to config if grid state is missing.
   _GRID_STATE="$CFG_STATE_DIR/grid/grid-state.json"
-  _PANE_INDEXES=$(jq -r '.panes[].index' "$_GRID_STATE" 2>/dev/null) || _PANE_INDEXES=$(seq 0 $((CFG_TOTAL_PANES - 1)))
+  if ! _PANE_INDEXES=$(jq -r '.panes[].index' "$_GRID_STATE" 2>/dev/null); then
+    _PANE_INDEXES=$(tmup_index_range "$CFG_TOTAL_PANES")
+  fi
 
   sent=0
   for i in $_PANE_INDEXES; do

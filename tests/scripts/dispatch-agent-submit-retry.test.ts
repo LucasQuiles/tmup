@@ -41,7 +41,7 @@ describe('dispatch-agent.sh Codex submit verification', () => {
     writeTmuxStub();
     writeExecutable('sleep', '#!/bin/bash\nexit 0\n');
     writeExecutable('yq', '#!/bin/bash\nprintf \'null\\n\'\n');
-    // flock is Linux-only — stub it for cross-platform tests (signal-traps test does the same)
+    // Keep dispatch tests independent from the host lock implementation.
     writeExecutable('flock', '#!/bin/bash\nexit 0\n');
 
     for (const commandName of [
@@ -56,7 +56,6 @@ describe('dispatch-agent.sh Codex submit verification', () => {
       'perl',
       'rm',
       'sed',
-      'seq',
       'tail',
       'touch',
     ]) {

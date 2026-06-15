@@ -1,10 +1,11 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # pane-manager.sh — Manage pane reservations in grid-state.json
 set -euo pipefail
 source "$(dirname "$0")/lib/common.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/config.sh"
+source "$SCRIPT_DIR/lib/portable-lock.sh"
 
 STATE_DIR="$CFG_STATE_DIR"
 GRID_STATE="$STATE_DIR/grid/grid-state.json"
@@ -37,28 +38,27 @@ case "$ACTION" in
     [[ -n "$PANE_INDEX" ]] || die "--pane-index required"
     [[ -n "$AGENT_ID" ]] || die "--agent-id required (or set TMUP_AGENT_ID)"
     [[ "$PANE_INDEX" =~ ^[0-9]+$ ]] || die "pane-index must be a non-negative integer"
-    exec 9>"$LOCK_FILE"
-    flock -w 5 9 || die "Failed to acquire grid state lock"
+    tmup_lock_acquire "$LOCK_FILE" 5 9 || die "Failed to acquire grid state lock"
     _pane_state=$(jq -c --argjson idx "$PANE_INDEX" '.panes[] | select(.index == $idx)' "$GRID_STATE")
-    [[ -n "$_pane_state" ]] || { exec 9>&-; die "Pane $PANE_INDEX not found in grid state"; }
+    [[ -n "$_pane_state" ]] || { tmup_lock_release "$LOCK_FILE" 9; die "Pane $PANE_INDEX not found in grid state"; }
     _pane_status=$(jq -r '.status // empty' <<< "$_pane_state")
     _pane_owner=$(jq -r '.agent_id // empty' <<< "$_pane_state")
-    [[ "$_pane_status" == "reserved" ]] || { exec 9>&-; die "Pane $PANE_INDEX is not reserved (status: ${_pane_status:-unknown})"; }
+    [[ "$_pane_status" == "reserved" ]] || { tmup_lock_release "$LOCK_FILE" 9; die "Pane $PANE_INDEX is not reserved (status: ${_pane_status:-unknown})"; }
     [[ "$_pane_owner" == "$AGENT_ID" ]] || {
-      exec 9>&-
+      tmup_lock_release "$LOCK_FILE" 9
       die "Pane $PANE_INDEX is owned by ${_pane_owner:-no agent}; refusing release for $AGENT_ID"
     }
-    _temp=$(mktemp "$STATE_DIR/grid/grid-state.XXXXXX") || { exec 9>&-; die "Failed to create temp file"; }
+    _temp=$(mktemp "$STATE_DIR/grid/grid-state.XXXXXX") || { tmup_lock_release "$LOCK_FILE" 9; die "Failed to create temp file"; }
     if jq --argjson idx "$PANE_INDEX" --arg aid "$AGENT_ID" \
       '(.panes[] | select(.index == $idx and .status == "reserved" and .agent_id == $aid)) |= (.status = "available" | del(.role, .agent_id))' \
       "$GRID_STATE" > "$_temp" && [[ -s "$_temp" ]]; then
       mv "$_temp" "$GRID_STATE"
     else
       rm -f "$_temp"
-      exec 9>&-
+      tmup_lock_release "$LOCK_FILE" 9
       die "Failed to update grid state for pane $PANE_INDEX release"
     fi
-    exec 9>&-
+    tmup_lock_release "$LOCK_FILE" 9
     echo "Released pane $PANE_INDEX"
     ;;
   *)

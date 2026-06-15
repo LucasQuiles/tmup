@@ -1,8 +1,31 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # grid-setup.sh — Create or verify a tmux NxM grid for tmup (default 2x4)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  cat <<'USAGE'
+Usage: grid-setup.sh --project-dir <path> [--session <name>]
+
+Create or verify the tmup tmux grid for a project directory.
+
+Options:
+  --project-dir <path>  Project directory used for registry lookup.
+  --session <name>      Explicit tmup session name.
+  -h, --help            Show this help.
+USAGE
+}
+
+for _arg in "$@"; do
+  case "$_arg" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+  esac
+done
+unset _arg
 
 # Pre-parse --project-dir
 PROJECT_DIR=""
@@ -29,6 +52,7 @@ unset _arg _prev_arg
 
 source "$SCRIPT_DIR/lib/config.sh"
 source "$SCRIPT_DIR/lib/prerequisites.sh"
+source "$SCRIPT_DIR/lib/portable-system.sh"
 source "$SCRIPT_DIR/lib/grid-identity.sh"
 source "$SCRIPT_DIR/lib/grid-registry.sh"
 
@@ -122,7 +146,7 @@ sleep 0.5
 
 # Write grid-state.json
 PANE_INFO=$(tmux list-panes -t "$SESSION_NAME" -F '#{pane_index} #{pane_id}')
-TIMESTAMP=$(date -Iseconds)
+TIMESTAMP=$(tmup_iso_timestamp)
 
 # Build panes array safely with jq
 PANES_JSON=$(echo "$PANE_INFO" | while IFS=' ' read -r pane_index pane_id; do
