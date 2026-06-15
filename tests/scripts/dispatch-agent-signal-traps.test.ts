@@ -54,7 +54,6 @@ describe('dispatch-agent.sh trap cleanup', () => {
       'perl',
       'rm',
       'sed',
-      'seq',
       'tail',
       'touch',
     ]) {

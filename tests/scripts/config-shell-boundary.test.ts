@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 const PLUGIN_DIR = path.resolve(import.meta.dirname, '../../');
 const CONFIG_SH = path.join(PLUGIN_DIR, 'scripts/lib/config.sh');
 const PREREQUISITES_SH = path.join(PLUGIN_DIR, 'scripts/lib/prerequisites.sh');
+const GRID_SETUP_SH = path.join(PLUGIN_DIR, 'scripts/grid-setup.sh');
 
 describe('config.sh shell boundary', () => {
   let tmpHome: string;
@@ -60,6 +61,19 @@ describe('config.sh shell boundary', () => {
       timeout: 30000,
     }).trim();
   }
+
+  describe('operator help paths', () => {
+    it('grid-setup --help exits before requiring project_dir or prereqs', () => {
+      const output = execFileSync('bash', [GRID_SETUP_SH, '--help'], {
+        env: shellEnv({ PATH: '/usr/bin:/bin' }),
+        encoding: 'utf-8',
+        timeout: 30000,
+      });
+
+      expect(output).toContain('Usage: grid-setup.sh --project-dir <path>');
+      expect(output).toContain('--project-dir <path>');
+    });
+  });
 
   describe('session name resolution from current-session', () => {
     it('reads current-session file when TMUP_SESSION_NAME not set', () => {

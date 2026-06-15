@@ -1,5 +1,8 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # grid-identity.sh — Grid ownership tracking
+
+_GRID_IDENTITY_LIB_DIR="$(cd "$(command -p dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$_GRID_IDENTITY_LIB_DIR/portable-system.sh"
 
 generate_grid_id() {
   local base="${1:-tmup}"
@@ -16,8 +19,8 @@ register_grid() {
     --arg gid "$grid_id" \
     --argjson pid "$$" \
     --arg cs "${CLAUDE_SESSION_ID:-unknown}" \
-    --arg ca "$(date -Iseconds)" \
-    --arg hn "$(hostname -s 2>/dev/null || echo unknown)" \
+    --arg ca "$(tmup_iso_timestamp)" \
+    --arg hn "$(tmup_hostname_short)" \
     '{grid_id:$gid,creator_pid:$pid,creator_session:$cs,created_at:$ca,hostname:$hn}' \
     > "$identity_file"
   chmod 600 "$identity_file"

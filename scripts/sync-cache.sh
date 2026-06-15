@@ -12,6 +12,11 @@ if [ ! -d "$CACHE" ]; then
   mkdir -p "$CACHE"
 fi
 
+if ! command -v rsync >/dev/null 2>&1; then
+  echo "ERROR: rsync is required to sync the tmup plugin cache" >&2
+  exit 1
+fi
+
 rsync -a --delete \
   --exclude='node_modules' \
   --exclude='.git' \
