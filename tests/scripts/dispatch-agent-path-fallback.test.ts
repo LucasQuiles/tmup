@@ -118,7 +118,7 @@ exit 0
     expect(launcher).toContain('export TMUP_CODEX_SANDBOX=danger-full-access');
     expect(launcher).toContain('export TMUP_CODEX_NO_ALT_SCREEN=true');
     expect(launcher).toContain('export TMUP_CODEX_REASONING_EFFORT=high');
-    expect(launcher).toContain('export TMUP_CODEX_REASONING_SUMMARY=low');
+    expect(launcher).toContain('export TMUP_CODEX_REASONING_SUMMARY=concise');
     expect(launcher).toContain('export TMUP_CODEX_PLAN_REASONING=xhigh');
     expect(launcher).toContain('export TMUP_CODEX_VERBOSITY=low');
     expect(launcher).toContain('export TMUP_CODEX_SERVICE_TIER=fast');
