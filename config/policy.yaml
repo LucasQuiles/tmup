@@ -49,8 +49,10 @@ codex:
     max_depth: 2
     tiers:
       # root pane worker: auto-detected (set via codex.model: "auto" above)
-      # tier-1 (tmup-tier1): gpt-5.3-codex
-      # tier-2 (tmup-tier2): gpt-5.2-codex
+      tier1:
+        model: "gpt-5.3-codex"
+      tier2:
+        model: "gpt-5.2-codex"
 
 harvesting:
   capture_scrollback_lines: 500
