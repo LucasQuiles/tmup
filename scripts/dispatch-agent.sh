@@ -178,7 +178,8 @@ $(if [[ "$WORKER_TYPE" == "claude_code" ]]; then cat <<CLAUDE_CONTRACT
 - You are a Claude Code worker dispatched in one-shot mode — single invocation, stdin → stdout → exit.
 - This is NOT a persistent interactive pane. There is no tmup_reprompt, no tmup_harvest, no queueable follow-up.
 - Complete the task end-to-end in this single invocation, including any multi-step planning and verification.
-- Call the tmup_heartbeat MCP tool periodically so the lead can track liveness; no background heartbeat runs on your behalf.
+- Model selection and fallback are inherited from Claude Code settings; tmup does not override them with a worker-specific --model.
+- The launcher runs a background heartbeat loop for liveness. You may call tmup_heartbeat if you need to refresh metadata, but do not spend task time on heartbeat bookkeeping.
 $PLAN_FIRST_LINE
 - Use relevant Claude Code skills when they clearly apply to the task.
 
@@ -315,9 +316,8 @@ rm -f "\$0" 2>/dev/null || true
 
 if [[ "\$_WORKER_TYPE" == "claude_code" ]]; then
   # Claude Code worker — platform-enforced background heartbeat (matches codex).
-  # The prompt tells the worker to call tmup_heartbeat via MCP, but that's
-  # policy-by-prompt. This background loop guarantees liveness so stale-agent
-  # recovery doesn't mistakenly reclaim a live one-shot lane.
+  # This background loop guarantees liveness so stale-agent recovery doesn't
+  # mistakenly reclaim a live one-shot lane.
   (
     while true; do
       sleep "\$_HB_INTERVAL"
@@ -329,7 +329,6 @@ if [[ "\$_WORKER_TYPE" == "claude_code" ]]; then
   _HB_PID=\$!
 
   cd "\$TMUP_WORKING_DIR" && claude -p \\
-    --model sonnet \\
     --permission-mode bypassPermissions \\
     --plugin-dir $(printf '%q' "$PLUGIN_DIR") \\
     --max-budget-usd 3.00 \\
