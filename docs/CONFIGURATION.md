@@ -109,7 +109,7 @@ tmup/
 |       +-- SKILL.md       Quick start and tool overview
 |       +-- REFERENCE.md   Complete API reference
 |
-+-- tests/               # 631 tests (vitest)
++-- tests/               # Vitest suite
 |   +-- shared/            Unit tests for all 22 shared modules
 |   +-- mcp/               MCP tool integration tests
 |   +-- cli/               CLI command tests

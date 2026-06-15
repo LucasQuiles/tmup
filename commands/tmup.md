@@ -21,6 +21,7 @@ allowed-tools:
   - mcp__tmup__tmup_resume
   - mcp__tmup__tmup_teardown
   - mcp__tmup__tmup_reprompt
+  - mcp__tmup__tmup_heartbeat
   - mcp__plugin_tmup_tmup__tmup_init
   - mcp__plugin_tmup_tmup__tmup_status
   - mcp__plugin_tmup_tmup__tmup_next_action
@@ -40,6 +41,7 @@ allowed-tools:
   - mcp__plugin_tmup_tmup__tmup_resume
   - mcp__plugin_tmup_tmup__tmup_teardown
   - mcp__plugin_tmup_tmup__tmup_reprompt
+  - mcp__plugin_tmup_tmup__tmup_heartbeat
 ---
 
 # /tmup — Multi-Agent Coordination

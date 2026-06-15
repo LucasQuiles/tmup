@@ -1,6 +1,6 @@
 ---
 name: tmup-reference
-description: Complete reference for all 19 MCP tools and 9 CLI commands
+description: Complete reference for all 20 MCP tools and 9 CLI commands
 ---
 
 # tmup Reference

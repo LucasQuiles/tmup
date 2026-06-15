@@ -2,7 +2,7 @@
 
 # API Reference
 
-## MCP tools (18)
+## MCP tools (20)
 
 These are the tools Claude Code uses to orchestrate. They're exposed via the MCP server and Claude calls them like any other tool.
 
@@ -10,7 +10,7 @@ These are the tools Claude Code uses to orchestrate. They're exposed via the MCP
 
 | Tool | What it does | The vibe |
 |------|-------------|----------|
-| `tmup_init` | Initialize session (DB + registry + grid) | Opening the office |
+| `tmup_init` | Initialize session (DB + registry; grid setup is separate) | Opening the office |
 | `tmup_status` | DAG overview + dead claim recovery | Morning standup, but useful |
 | `tmup_next_action` | "What should I do next?" decision tree | The one coworker who always knows |
 | `tmup_pause` | Pause session, notify all agents | Fire alarm (orderly) |
@@ -38,6 +38,8 @@ These are the tools Claude Code uses to orchestrate. They're exposed via the MCP
 | `tmup_inbox` | Check unread messages | The anxiety |
 | `tmup_dispatch` | Launch Codex worker in tmux pane | Hiring |
 | `tmup_harvest` | Capture pane scrollback output | Reading over their shoulder |
+| `tmup_reprompt` | Send follow-up text into a live worker pane | Manager drive-by |
+| `tmup_heartbeat` | Register agent liveness | Pulse check |
 
 For detailed input/output schemas, see [skills/tmup/REFERENCE.md](../skills/tmup/REFERENCE.md).
 
