@@ -7,6 +7,10 @@ description: Multi-agent coordination for Claude Code + Codex CLI via SQLite WAL
 
 tmup coordinates Claude Code (lead) and Codex CLI workers through a shared SQLite WAL database. The lead creates task DAGs, dispatches workers to a tmux NxM grid (default 2x4, configurable in policy.yaml), and monitors progress. Workers claim tasks, checkpoint, and complete via tmup-cli.
 
+ARC binding: `/Users/q/LAB/agent-runtime-protocol/bindings/tmup.arc.json`. tmup owns task-DAG and
+interactive pane coordination semantics; ARC owns the cross-runtime binding/record vocabulary. Do
+not copy the B1 ownership table into this skill.
+
 ## Quick Start
 
 1. **Initialize**: Call `tmup_init` with `project_dir` to create a session (DB + registry; grid creation is via grid-setup.sh)
