@@ -3,10 +3,10 @@
 
 - Binding: `bindings/tmup.arc.json`
 - ARC version: `0.1.0`
-- Payload SHA: `sha256:c9e7af813dfa770f25d2afe33674b32ef3375b5b3f74c383fca890bfcd7e2043`
+- Payload SHA: `sha256:86faa3ebbf895fc8273cf39d492e36d7f1f80bbeee9999e6e2ff852169009e21`
 - Modules: verification, telemetry
 - Owns: none
-- Emits: none
+- Emits: verification-record
 
 This shim is a generated pointer, not live runtime proof. Runtime claims still require
 source, probe, test, log, or verification-record evidence.

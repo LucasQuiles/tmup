@@ -1,0 +1,25 @@
+{
+  "arc_version": "0.1.0",
+  "id": "tmup-runtime-enforcement",
+  "payload": {
+    "claim": "tmup runtime loaded and enforced ARC binding",
+    "evidence_refs": [
+      "arc-binding:tmup",
+      "install-target:tmup",
+      "runtime-health:tmup",
+      "tmup:cli-health"
+    ],
+    "limitations": [
+      "proves local tmup binding install and CLI runtime-health command at /Users/q/.claude/plugins/tmup/.arc, not worker task success",
+      "tmup DB health: schema_version=4 opened=True",
+      "tmup health is a local CLI readback; MCP server cache reload remains a separate operational step"
+    ],
+    "verdict": "pass",
+    "verification_action": "compare installed tmup ARC binding against canonical render and tmup-owned CLI runtime-health JSON"
+  },
+  "payload_type": "verification-record",
+  "proof_class": "probe",
+  "sha": "sha256:86faa3ebbf895fc8273cf39d492e36d7f1f80bbeee9999e6e2ff852169009e21",
+  "source_layer": "judgment",
+  "ts": "2026-06-23T17:58:33.186645Z"
+}
