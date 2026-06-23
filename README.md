@@ -95,7 +95,7 @@ That's a lot of context. Whether any of it is being used well is a separate ques
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (CLI)
 - [Codex CLI](https://github.com/openai/codex) (`~/.local/bin/codex` or in PATH)
 - [tmux](https://github.com/tmux/tmux) >= 3.0
-- Node.js >= 20
+- Node.js 20 (root npm scripts select Homebrew `node@20` when available)
 - jq
 - yq (required when `config/policy.yaml` is present)
 - rsync (required for `scripts/sync-cache.sh`)

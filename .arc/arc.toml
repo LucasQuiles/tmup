@@ -2,7 +2,7 @@
 arc_version = "0.1.0"
 consumer = "tmup"
 modules = ["verification", "telemetry"]
-emits = ["session-record", "verification-record"]
+emits = []
 
 [boundary]
 owns = []
@@ -10,5 +10,5 @@ does_not_own = ["behavioral-doctrine", "worker-result-candidate-evidence", "lead
 
 [source]
 binding = "bindings/tmup.arc.json"
-payload_sha = "sha256:50de51302d5e9180c6b661b06dc889e3fa1ac340557bb1e3ed9da3386af5dafb"
+payload_sha = "sha256:c9e7af813dfa770f25d2afe33674b32ef3375b5b3f74c383fca890bfcd7e2043"
 generated_by = "arc adopt"

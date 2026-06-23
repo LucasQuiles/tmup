@@ -297,6 +297,31 @@ describe('tmup-cli stdout JSON contract', () => {
     });
   });
 
+  describe('arc-health', () => {
+    it('emits runtime-observed ARC binding health', () => {
+      const result = runCli(['arc-health', '--plugin-root', REPO_ROOT]);
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe('');
+      expect(result.json).toMatchObject({
+        ok: true,
+        consumer: 'tmup',
+        proof_surface: 'runtime-health:tmup',
+        binding: {
+          consumer: 'tmup',
+          arc_version: '0.1.0',
+        },
+        db: {
+          configured: true,
+          opened: true,
+        },
+      });
+      expect((result.json.binding as Record<string, unknown>).payload_sha).toMatch(/^sha256:/);
+      expect(result.json.command_namespace).toContain('arc-health');
+      expect(result.json.limitations).toContain('does not prove worker task success');
+    });
+  });
+
   describe('events', () => {
     it('emits JSON for valid input', () => {
       logEvent(db, 'lead', 'session_init', { ok: true });

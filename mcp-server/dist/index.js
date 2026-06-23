@@ -8946,7 +8946,6 @@ function $constructor(name, initializer3, params) {
   Object.defineProperty(_, "name", { value: name });
   return _;
 }
-var $brand = Symbol("zod_brand");
 var $ZodAsyncError = class extends Error {
   constructor() {
     super(`Encountered Promise during synchronous parse. Use .parseAsync() instead.`);
@@ -11448,8 +11447,6 @@ function en_default() {
 }
 
 // ../node_modules/zod/v4/core/registries.js
-var $output = Symbol("ZodOutput");
-var $input = Symbol("ZodInput");
 var $ZodRegistry = class {
   constructor() {
     this._map = /* @__PURE__ */ new Map();
@@ -14205,9 +14202,6 @@ function isTerminal(status) {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 
-// ../node_modules/zod-to-json-schema/dist/esm/Options.js
-var ignoreOverride = Symbol("Let zodToJsonSchema decide on which parser to use");
-
 // ../node_modules/zod-to-json-schema/dist/esm/parsers/string.js
 var ALPHA_NUMERIC = new Set("ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvxyz0123456789");
 
@@ -16712,7 +16706,7 @@ ${m.payload}
           db2.prepare("UPDATE agents SET status = 'shutdown' WHERE id = ?").run(agentId);
           db2.prepare("UPDATE tasks SET status = 'pending', owner = NULL, failure_reason = 'launch_failed' WHERE id = ? AND owner = ?").run(taskId, agentId);
           if (args.clone_isolation === true) {
-            const partialStdout = launchErr?.stdout;
+            const partialStdout = launchErr.stdout;
             if (partialStdout) {
               const stdoutStr = typeof partialStdout === "string" ? partialStdout : partialStdout.toString("utf-8");
               const cloneMatch = stdoutStr.match(/^CLONE_DIR=(.+)$/m);

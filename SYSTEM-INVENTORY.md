@@ -78,7 +78,7 @@
 
 ### Installation
 
-**Prerequisites:** Node.js (v20+), npm, tmux (>=3.0), jq, yq (when `config/policy.yaml` exists), rsync (for `scripts/sync-cache.sh`)
+**Prerequisites:** Node.js 20, npm, tmux (>=3.0), jq, yq (when `config/policy.yaml` exists), rsync (for `scripts/sync-cache.sh`). Root npm scripts select Homebrew `node@20` via `scripts/with-supported-node.sh` when the workstation default is newer.
 
 ```bash
 # 1. Build the plugin
@@ -358,7 +358,7 @@ The redundant `AND status='pending'` ensures the UPDATE fails (changes=0) if a c
 **Package:** `@tmup/cli` | **Binary:** `dist/tmup-cli.js` (esbuild bundle)
 **Environment variables:** `TMUP_AGENT_ID`, `TMUP_DB`, `TMUP_PANE_INDEX`, `TMUP_SESSION_NAME`, `TMUP_SESSION_DIR`, `TMUP_WORKING_DIR`, `TMUP_TASK_ID`
 
-### 9 Commands
+### 10 Commands
 
 | Command | Usage | Notes |
 |---------|-------|-------|
@@ -371,6 +371,7 @@ The redundant `AND status='pending'` ensures the UPDATE fails (changes=0) if a c
 | `heartbeat` | `heartbeat [--codex-session-id ID]` | Auto-registers agent if not exists |
 | `status` | `status` | Current task + unread count |
 | `events` | `events [--limit N] [--type TYPE]` | Query audit event log. Default limit 50. |
+| `arc-health` | `arc-health [--plugin-root DIR]` | ARC runtime-health readback over installed binding and tmup DB context |
 
 ### Exit Codes
 

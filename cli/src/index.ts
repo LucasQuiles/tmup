@@ -21,7 +21,7 @@ function output(data: Record<string, unknown>): void {
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args.length === 0) {
-    throw new CliError('Usage: tmup-cli <command> [args...]\nCommands: claim, complete, fail, checkpoint, message, inbox, heartbeat, status, events');
+    throw new CliError('Usage: tmup-cli <command> [args...]\nCommands: claim, complete, fail, checkpoint, message, inbox, heartbeat, status, events, arc-health');
   }
 
   const command = args[0];
@@ -43,6 +43,8 @@ async function main(): Promise<void> {
       sessionDir: getEnv('TMUP_SESSION_DIR'),
       taskId: getEnv('TMUP_TASK_ID'),
       projectDir: getEnv('TMUP_PROJECT_DIR') ?? getEnv('TMUP_WORKING_DIR'),
+      dbPath,
+      cwd: process.cwd(),
     });
     output(result);
   } catch (error) {

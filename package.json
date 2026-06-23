@@ -14,9 +14,9 @@
     "cli"
   ],
   "scripts": {
-    "build": "npm run build --workspaces",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "build": "bash scripts/with-supported-node.sh npm run build --workspaces",
+    "test": "bash scripts/with-supported-node.sh vitest run",
+    "test:watch": "bash scripts/with-supported-node.sh vitest"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
