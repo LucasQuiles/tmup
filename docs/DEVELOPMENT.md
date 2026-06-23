@@ -8,6 +8,10 @@ npm run build     # Build all workspaces (shared -> mcp-server -> cli)
 npm run test:watch  # Watch mode for development
 ```
 
+The npm scripts run through `scripts/with-supported-node.sh`. tmup's current
+`better-sqlite3` dependency is built for Node 20's native-module ABI; the
+wrapper selects Homebrew `node@20` when the workstation default is newer.
+
 ## Dev workflow (after making changes)
 
 Here is the single most important thing to understand about developing tmup, and if you skip this section you will waste an hour wondering why your changes aren't working:
@@ -42,7 +46,7 @@ Coverage includes:
 - Dead claim recovery (stale heartbeats, task reassignment)
 - Concurrent SQLite access patterns
 - MCP tool handler integration (including dispatch shell boundary)
-- CLI command handling (all 9 commands, error paths, JSON output)
+- CLI command handling (all 10 commands, error paths, JSON output)
 - Shell script boundary conditions (config loading, session resolution)
 - Schema parity between SQL and TypeScript (compile-time safety net)
 - Fuzz edge cases (empty strings, null values, Unicode, injection attempts)

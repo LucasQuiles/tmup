@@ -722,6 +722,85 @@ function validatePaneIndexExists(sessionDir, paneIndex) {
   return { valid: true };
 }
 
+// src/arc-health.ts
+import { lstatSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+var TMUP_COMMAND_NAMESPACE = [
+  "claim",
+  "complete",
+  "fail",
+  "checkpoint",
+  "message",
+  "inbox",
+  "heartbeat",
+  "status",
+  "events",
+  "arc-health"
+];
+function parseStringField(text, name) {
+  const match = text.match(new RegExp(`^${name}\\s*=\\s*"([^"]*)"\\s*$`, "m"));
+  if (!match) throw new Error(`ARC binding field missing: ${name}`);
+  return match[1];
+}
+function parseStringArrayField(text, name) {
+  const match = text.match(new RegExp(`^${name}\\s*=\\s*\\[([^\\]]*)\\]\\s*$`, "m"));
+  if (!match) throw new Error(`ARC binding array missing: ${name}`);
+  return [...match[1].matchAll(/"([^"]*)"/g)].map((item) => item[1]);
+}
+function readInstalledBinding(pluginRoot) {
+  const arcToml = join(pluginRoot, ".arc", "arc.toml");
+  const stat = lstatSync(arcToml);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`ARC binding must not be a symlink: ${arcToml}`);
+  }
+  const text = readFileSync(arcToml, "utf8");
+  return {
+    consumer: parseStringField(text, "consumer"),
+    arc_version: parseStringField(text, "arc_version"),
+    modules: parseStringArrayField(text, "modules"),
+    emits: parseStringArrayField(text, "emits"),
+    binding: parseStringField(text, "binding"),
+    payload_sha: parseStringField(text, "payload_sha")
+  };
+}
+function buildArcHealth(db, pluginRootArg, env) {
+  const pluginRoot = resolve(pluginRootArg ?? env.cwd ?? process.cwd());
+  const binding = readInstalledBinding(pluginRoot);
+  if (binding.consumer !== "tmup") {
+    throw new Error(`installed ARC binding consumer mismatch: expected tmup, got ${binding.consumer}`);
+  }
+  return {
+    ok: true,
+    consumer: "tmup",
+    proof_surface: "runtime-health:tmup",
+    binding,
+    runtime: {
+      surface: "tmup-cli",
+      command: "arc-health",
+      plugin_root: pluginRoot,
+      cwd: env.cwd ?? null,
+      project_dir: env.projectDir ?? null
+    },
+    db: {
+      configured: Boolean(env.dbPath),
+      opened: true,
+      schema_version: getSchemaVersion(db)
+    },
+    session: {
+      name: env.sessionName ?? null,
+      dir: env.sessionDir ?? null,
+      agent_id_present: Boolean(env.agentId),
+      pane_index: env.paneIndex ?? null
+    },
+    command_namespace: [...TMUP_COMMAND_NAMESPACE],
+    limitations: [
+      "proves tmup CLI runtime can observe its installed ARC binding",
+      "does not prove worker task success",
+      "does not prove prompt adherence"
+    ]
+  };
+}
+
 // src/commands/index.ts
 function requireAgentId(env) {
   if (!env.agentId) throw new Error("TMUP_AGENT_ID not set");
@@ -747,7 +826,8 @@ var FLAGS_WITH_VALUES = /* @__PURE__ */ new Set([
   "--type",
   "--artifact",
   "--codex-session-id",
-  "--limit"
+  "--limit",
+  "--plugin-root"
 ]);
 var COMMAND_FLAGS = {
   claim: { value: /* @__PURE__ */ new Set(["--role"]), boolean: /* @__PURE__ */ new Set() },
@@ -758,7 +838,8 @@ var COMMAND_FLAGS = {
   inbox: { value: /* @__PURE__ */ new Set(), boolean: /* @__PURE__ */ new Set(["--mark-read"]) },
   heartbeat: { value: /* @__PURE__ */ new Set(["--codex-session-id"]), boolean: /* @__PURE__ */ new Set() },
   status: { value: /* @__PURE__ */ new Set(), boolean: /* @__PURE__ */ new Set() },
-  events: { value: /* @__PURE__ */ new Set(["--limit", "--type"]), boolean: /* @__PURE__ */ new Set() }
+  events: { value: /* @__PURE__ */ new Set(["--limit", "--type"]), boolean: /* @__PURE__ */ new Set() },
+  "arc-health": { value: /* @__PURE__ */ new Set(["--plugin-root"]), boolean: /* @__PURE__ */ new Set() }
 };
 function validateFlags(command, args) {
   const spec = COMMAND_FLAGS[command];
@@ -968,8 +1049,11 @@ async function handleCommand(db, command, args, env) {
       const events = getRecentEvents(db, eventType, limit);
       return { ok: true, events };
     }
+    case "arc-health": {
+      return buildArcHealth(db, parseFlag(args, "--plugin-root"), env);
+    }
     default:
-      throw new Error(`Unknown command: ${command}. Valid: claim, complete, fail, checkpoint, message, inbox, heartbeat, status, events`);
+      throw new Error(`Unknown command: ${command}. Valid: ${TMUP_COMMAND_NAMESPACE.join(", ")}`);
   }
 }
 
@@ -989,7 +1073,7 @@ function output(data) {
 async function main() {
   const args = process.argv.slice(2);
   if (args.length === 0) {
-    throw new CliError("Usage: tmup-cli <command> [args...]\nCommands: claim, complete, fail, checkpoint, message, inbox, heartbeat, status, events");
+    throw new CliError("Usage: tmup-cli <command> [args...]\nCommands: claim, complete, fail, checkpoint, message, inbox, heartbeat, status, events, arc-health");
   }
   const command = args[0];
   const commandArgs = args.slice(1);
@@ -1006,7 +1090,9 @@ async function main() {
       sessionName: getEnv("TMUP_SESSION_NAME"),
       sessionDir: getEnv("TMUP_SESSION_DIR"),
       taskId: getEnv("TMUP_TASK_ID"),
-      projectDir: getEnv("TMUP_PROJECT_DIR") ?? getEnv("TMUP_WORKING_DIR")
+      projectDir: getEnv("TMUP_PROJECT_DIR") ?? getEnv("TMUP_WORKING_DIR"),
+      dbPath,
+      cwd: process.cwd()
     });
     output(result);
   } catch (error) {

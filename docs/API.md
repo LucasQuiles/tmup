@@ -45,7 +45,7 @@ For detailed input/output schemas, see [skills/tmup/REFERENCE.md](../skills/tmup
 
 ---
 
-## CLI commands (9)
+## CLI commands (10)
 
 These are the commands Codex workers use from inside their panes. They're exposed via `tmup-cli`, a lightweight CLI binary that talks directly to the shared SQLite database. Claude Code workers (`worker_type='claude_code'`) call the MCP `tmup_heartbeat` tool instead — the same payload via a different transport. The platform enforces a background heartbeat loop for both worker types, so the CLI/MCP call is defensive against the model ignoring its prompt, not the primary liveness signal.
 
@@ -61,6 +61,7 @@ tmup-cli inbox [--mark-read]                # Check messages
 tmup-cli heartbeat                          # Register liveness
 tmup-cli status                             # Current assignment
 tmup-cli events [--limit N]                 # Query audit log
+tmup-cli arc-health [--plugin-root DIR]     # ARC runtime-health readback
 ```
 
 All output is JSON to stdout. Errors are `{"ok": false, "error": "CLI_ERROR", "message": "..."}` with exit code 1. System errors (missing env, DB corruption) go to stderr with exit code 2.

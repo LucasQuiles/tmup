@@ -165,5 +165,6 @@ Env vars: TMUP_AGENT_ID, TMUP_DB, TMUP_PANE_INDEX, TMUP_SESSION_NAME, TMUP_SESSI
 | `heartbeat` | `tmup-cli heartbeat [--codex-session-id ID]` |
 | `status` | `tmup-cli status` |
 | `events` | `tmup-cli events [--limit 10] [--type session_init]` |
+| `arc-health` | `tmup-cli arc-health [--plugin-root DIR]` |
 
 Exit codes: 0=tool result, 1=CLI error, 2=system error.

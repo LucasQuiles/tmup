@@ -7,6 +7,7 @@ import {
   FAILURE_REASONS, MESSAGE_TYPES, EVENT_TYPES,
 } from '@tmup/shared';
 import type { FailureReason, EventType } from '@tmup/shared';
+import { buildArcHealth, TMUP_COMMAND_NAMESPACE } from '../arc-health.js';
 
 interface EnvContext {
   agentId?: string;
@@ -15,6 +16,8 @@ interface EnvContext {
   sessionDir?: string;
   taskId?: string;
   projectDir?: string;
+  dbPath?: string;
+  cwd?: string;
 }
 
 function requireAgentId(env: EnvContext): string {
@@ -39,7 +42,7 @@ function hasFlag(args: string[], flag: string): boolean {
 /** Flags that consume a following value argument. */
 const FLAGS_WITH_VALUES = new Set([
   '--role', '--reason', '--task-id', '--to', '--type',
-  '--artifact', '--codex-session-id', '--limit',
+  '--artifact', '--codex-session-id', '--limit', '--plugin-root',
 ]);
 
 const COMMAND_FLAGS: Record<string, { value: Set<string>; boolean: Set<string> }> = {
@@ -52,6 +55,7 @@ const COMMAND_FLAGS: Record<string, { value: Set<string>; boolean: Set<string> }
   heartbeat: { value: new Set(['--codex-session-id']), boolean: new Set() },
   status: { value: new Set(), boolean: new Set() },
   events: { value: new Set(['--limit', '--type']), boolean: new Set() },
+  'arc-health': { value: new Set(['--plugin-root']), boolean: new Set() },
 };
 
 function validateFlags(command: string, args: string[]): void {
@@ -301,7 +305,11 @@ export async function handleCommand(
       return { ok: true, events };
     }
 
+    case 'arc-health': {
+      return buildArcHealth(db, parseFlag(args, '--plugin-root'), env);
+    }
+
     default:
-      throw new Error(`Unknown command: ${command}. Valid: claim, complete, fail, checkpoint, message, inbox, heartbeat, status, events`);
+      throw new Error(`Unknown command: ${command}. Valid: ${TMUP_COMMAND_NAMESPACE.join(', ')}`);
   }
 }
