@@ -52,7 +52,7 @@ Key constraints:
 - Bash: set -euo pipefail
 - Git: conventional commits (feat:, fix:, test:, docs:, refactor:)
 - MCP server runs from plugin cache, not source dir — rebuild + sync-cache after changes
-- Plugin path: symlinked from ~/LAB/tmup/ to ~/.claude/plugins/tmup/
+- Plugin path: the active root IS the git repo at ~/.claude/plugins/tmup/ (real directory, not a symlink; ~/LAB/tmup does not exist on maclab). Remote: git@github.com:LucasQuiles/tmup.git.
 
 ## Testing — Required Before Commits
 
