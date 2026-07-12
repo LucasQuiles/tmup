@@ -1,6 +1,6 @@
 name = "tmup-tier2"
 description = "Second-tier tmup sub-agent for narrow, single-purpose tasks like grep, test runs, or focused analysis."
-model = "gpt-5.2-codex"
+model = "gpt-5.5"
 model_reasoning_effort = "medium"
 sandbox_mode = "danger-full-access"
 developer_instructions = """

@@ -101,8 +101,8 @@ Fresh tmup workers currently launch with:
 
 Tiered subagent pack:
 
-- `tmup-tier1` — `gpt-5.3-codex`, high reasoning, first-tier helper
-- `tmup-tier2` — `gpt-5.2-codex`, medium reasoning, narrow leaf helper
+- `tmup-tier1` — `gpt-5.5`, high reasoning, first-tier helper
+- `tmup-tier2` — `gpt-5.5`, medium reasoning, narrow leaf helper
 - `grid-setup.sh` syncs these TOMLs from `agents/codex/` into `~/.codex/agents/`
 
 The planning-first behavior is carried by the initial prompt. tmup does not depend on an undocumented CLI startup flag for plan mode.

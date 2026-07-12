@@ -12,9 +12,9 @@ describe('Tier model consistency', () => {
     const policyPath = path.join(PLUGIN_DIR, 'config/policy.yaml');
     const policy = yaml.load(fs.readFileSync(policyPath, 'utf-8')) as any;
 
-    // Verify policy values are as expected
-    expect(policy.codex.subagents.tiers.tier1.model).toBe('gpt-5.3-codex');
-    expect(policy.codex.subagents.tiers.tier2.model).toBe('gpt-5.2-codex');
+    // Verify policy values are as expected (owner decision 2026-07-10: both worker tiers on gpt-5.5)
+    expect(policy.codex.subagents.tiers.tier1.model).toBe('gpt-5.5');
+    expect(policy.codex.subagents.tiers.tier2.model).toBe('gpt-5.5');
 
     // Check tier1
     const tier1Toml = fs.readFileSync(path.join(SOURCE_DIR, 'tmup-tier1.toml'), 'utf-8');
