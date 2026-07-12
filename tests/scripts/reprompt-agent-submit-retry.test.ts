@@ -36,7 +36,6 @@ describe('reprompt-agent.sh Codex submit verification', () => {
       'mktemp',
       'rm',
       'sed',
-      'timeout',
     ]) {
       linkSystemBinary(commandName);
     }
