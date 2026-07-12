@@ -47,6 +47,127 @@ respawn_pane() {
   tmux respawn-pane -k -t "$pane_target" 2>/dev/null
 }
 
+# Return the deepest foreground process reachable beneath tmux's pane root.
+# The pane root shell is exempt; any non-zombie descendant whose process group
+# owns its terminal foreground group means the pane is occupied.
+#
+# Returns: 0 with the occupied command, 1 when the root shell is idle, and 2
+# when tmux/process inspection is unavailable or ambiguous.
+pane_foreground_descendant_command() {
+  local session="${1:-}" pane_index="${2:-0}"
+  local target="${session}:0.${pane_index}"
+  local pane_pid process_snapshot
+
+  pane_pid=$(tmux display-message -t "$target" -p '#{pane_pid}' 2>/dev/null) || return 2
+  [[ "$pane_pid" =~ ^[0-9]+$ && "$pane_pid" -gt 1 ]] || return 2
+
+  process_snapshot=$(ps -axo pid=,ppid=,pgid=,tpgid=,stat=,ucomm= 2>/dev/null) || return 2
+  [[ -n "$process_snapshot" ]] || return 2
+
+  awk -v root="$pane_pid" '
+    {
+      if ($1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ &&
+          $3 ~ /^[0-9]+$/ && $4 ~ /^-?[0-9]+$/ && NF >= 6) {
+        if (seen[$1]) {
+          invalid_row = 1
+          next
+        }
+        row_count++
+        pid[row_count] = $1
+        parent[row_count] = $2
+        process_group[row_count] = $3
+        foreground_group[row_count] = $4
+        state[row_count] = $5
+        process_name[row_count] = $6
+        for (field = 7; field <= NF; field++) {
+          process_name[row_count] = process_name[row_count] " " $field
+        }
+        seen[$1] = 1
+      } else if ($0 !~ /^[[:space:]]*$/) {
+        invalid_row = 1
+      }
+    }
+    END {
+      if (invalid_row || row_count == 0 || !seen[root]) {
+        exit 2
+      }
+
+      for (i = 1; i <= row_count; i++) {
+        if (pid[i] == root && state[i] ~ /^Z/) {
+          exit 2
+        }
+      }
+
+      reachable[root] = 1
+      depth[root] = 0
+      for (pass = 1; pass <= row_count; pass++) {
+        changed = 0
+        for (i = 1; i <= row_count; i++) {
+          if (reachable[parent[i]] && !reachable[pid[i]]) {
+            reachable[pid[i]] = 1
+            depth[pid[i]] = depth[parent[i]] + 1
+            changed = 1
+          }
+        }
+        if (!changed) {
+          break
+        }
+      }
+
+      found = 0
+      best_depth = -1
+      for (i = 1; i <= row_count; i++) {
+        executable = process_name[i]
+        sub(/^.*\//, "", executable)
+        if (pid[i] != root && reachable[pid[i]] &&
+            process_group[i] == foreground_group[i] && foreground_group[i] > 0 &&
+            state[i] !~ /^Z/ && depth[pid[i]] > best_depth) {
+          found = 1
+          best_depth = depth[pid[i]]
+          best_command = executable
+        }
+      }
+
+      if (found) {
+        print best_command
+        exit 0
+      }
+      exit 1
+    }
+  ' <<<"$process_snapshot"
+}
+
+# Classify pane occupancy without destroying its contents.
+# Returns: 0 with the occupied command, 1 for a proven-idle root shell, and 2
+# when occupancy cannot be verified.
+pane_occupancy_command() {
+  local session="${1:-}" pane_index="${2:-0}"
+  local target="${session}:0.${pane_index}"
+  local cmd foreground_command inspection_status
+
+  cmd=$(tmux display-message -t "$target" -p '#{pane_current_command}' 2>/dev/null) || return 2
+  [[ -n "$cmd" ]] || return 2
+
+  case "$cmd" in
+    bash|zsh|sh|fish)
+      if foreground_command=$(pane_foreground_descendant_command "$session" "$pane_index"); then
+        printf '%s\n' "$foreground_command"
+        return 0
+      else
+        inspection_status=$?
+      fi
+      if [[ "$inspection_status" -eq 1 ]]; then
+        return 1
+      fi
+      return 2
+      ;;
+    *)
+      printf '%s\n' "$cmd"
+      return 0
+      ;;
+  esac
+}
+
 # Get the actual running command in a pane (walks process tree)
 get_pane_command() {
   local session="${1:-}" pane_index="${2:-0}"

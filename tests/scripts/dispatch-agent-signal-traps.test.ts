@@ -39,6 +39,7 @@ describe('dispatch-agent.sh trap cleanup', () => {
     fs.mkdirSync(tmuxStateDir, { recursive: true });
 
     writeExecutable('flock', '#!/bin/bash\nexit 0\n');
+    writeExecutable('ps', "#!/bin/bash\nprintf '100 1 100 100 S /bin/bash\\n'\n");
     writeExecutable('sleep', '#!/bin/bash\nexit 0\n');
     writeExecutable('yq', '#!/bin/bash\nprintf \'null\\n\'\n');
 
@@ -218,7 +219,11 @@ shift || true
 
 case "$cmd" in
   display-message)
-    printf 'bash\\n'
+    if [[ "$*" == *'pane_pid'* ]]; then
+      printf '100\\n'
+    else
+      printf 'bash\\n'
+    fi
     ;;
   send-keys)
     count=0

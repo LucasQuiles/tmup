@@ -34,7 +34,11 @@ describe('dispatch-agent.sh CODEX_BIN fallback', () => {
 set -euo pipefail
 case "\${1:-}" in
   display-message)
-    printf 'bash\\n'
+    if [[ "$*" == *'pane_pid'* ]]; then
+      printf '100\\n'
+    else
+      printf 'bash\\n'
+    fi
     ;;
   send-keys)
     ;;
@@ -46,6 +50,10 @@ case "\${1:-}" in
     exit 1
     ;;
 esac
+`);
+
+    writeExecutable('ps', `#!/bin/bash
+printf '100 1 100 100 S /bin/bash\\n'
 `);
 
     writeExecutable('sleep', `#!/bin/bash
