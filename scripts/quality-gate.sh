@@ -2,7 +2,7 @@
 # quality-gate.sh — one fail-closed gate for the tmup plugin.
 #
 # Runs every check the repo requires before a commit is trusted:
-#   build, full vitest suite, three tsc --noEmit passes, dispatch-agent
+#   build, full vitest suite, three tsc --noEmit passes, repository shell
 #   syntax, model-id consistency between policy.yaml and agent TOMLs,
 #   and (locally) canonical-vs-installed agent sync drift.
 #
@@ -41,7 +41,7 @@ step "vitest" bash scripts/with-supported-node.sh npx vitest run
 step "tsc mcp-server" bash -c 'cd mcp-server && bash ../scripts/with-supported-node.sh npx tsc --noEmit'
 step "tsc shared" bash -c 'cd shared && bash ../scripts/with-supported-node.sh npx tsc --noEmit'
 step "tsc cli" bash -c 'cd cli && bash ../scripts/with-supported-node.sh npx tsc --noEmit'
-step "dispatch-agent syntax" bash -n scripts/dispatch-agent.sh
+step "shell syntax" bash -n scripts/dispatch-agent.sh scripts/lib/tmux-helpers.sh
 
 # model-id consistency: agent TOMLs must state exactly the policy.yaml tier models
 check_models() {
