@@ -45,16 +45,6 @@ _dispatch_cleanup() {
   rm -f "${PROMPT_FILE:-}" "${LAUNCHER:-}" 2>/dev/null || true
 }
 
-_respawn_available_pane() {
-  local pane_target="$1"
-  local pane_index="$2"
-  local pane_cmd="$3"
-
-  echo "Pane $pane_index marked available but still running $pane_cmd; respawning it"
-  respawn_pane "$pane_target" || return 1
-  wait_for_shell_ready "$SESSION_NAME" "$pane_index" 5
-}
-
 _release_pane_reservation() {
   [[ "${RESERVATION_ACTIVE:-0}" -eq 1 ]] || return 0
   [[ -f "${GRID_STATE:-}" ]] || return 0
@@ -429,20 +419,25 @@ if [[ -f "$GRID_STATE" ]]; then
     _dispatch_cleanup
     die "Pane $PANE_INDEX not found in grid state"
   }
+  if [[ "$_pane_status" != "available" ]]; then
+    tmup_lock_release "$LOCK_FILE" 9
+    _dispatch_cleanup
+    die "Pane $PANE_INDEX is not available (status '$_pane_status')"
+  fi
 
-  # Verify pane is at shell prompt WHILE HOLDING LOCK (prevent TOCTOU race)
-  PANE_CMD=$(tmux display-message -t "$PANE_TARGET" -p '#{pane_current_command}' 2>/dev/null || echo "")
-  if is_agent_process "$PANE_CMD"; then
-    if [[ "$_pane_status" == "available" ]]; then
-      if ! _respawn_available_pane "$PANE_TARGET" "$PANE_INDEX" "$PANE_CMD"; then
-        tmup_lock_release "$LOCK_FILE" 9
-        _dispatch_cleanup
-        die "Pane $PANE_INDEX is marked available but could not be reset from $PANE_CMD"
-      fi
-    else
+  # Verify pane occupancy while holding the grid lock. A shell launcher can
+  # hide foreground descendants, so an uncertain process-tree inspection is
+  # fatal rather than permission to clear or reuse the pane.
+  if PANE_CMD=$(pane_occupancy_command "$SESSION_NAME" "$PANE_INDEX"); then
+    tmup_lock_release "$LOCK_FILE" 9
+    _dispatch_cleanup
+    die "Pane $PANE_INDEX is marked available but occupied by $PANE_CMD; refusing to dispatch"
+  else
+    _occupancy_status=$?
+    if [[ "$_occupancy_status" -ne 1 ]]; then
       tmup_lock_release "$LOCK_FILE" 9
       _dispatch_cleanup
-      die "Pane $PANE_INDEX has a running agent ($PANE_CMD)"
+      die "Could not verify occupancy for pane $PANE_INDEX"
     fi
   fi
 
@@ -465,10 +460,15 @@ if [[ -f "$GRID_STATE" ]]; then
   tmup_lock_release "$LOCK_FILE" 9
 else
   # No grid state — still check pane occupancy
-  PANE_CMD=$(tmux display-message -t "$PANE_TARGET" -p '#{pane_current_command}' 2>/dev/null || echo "")
-  if is_agent_process "$PANE_CMD"; then
+  if PANE_CMD=$(pane_occupancy_command "$SESSION_NAME" "$PANE_INDEX"); then
     _dispatch_cleanup
     die "Pane $PANE_INDEX has a running agent ($PANE_CMD)"
+  else
+    _occupancy_status=$?
+    if [[ "$_occupancy_status" -ne 1 ]]; then
+      _dispatch_cleanup
+      die "Could not verify occupancy for pane $PANE_INDEX"
+    fi
   fi
 fi
 

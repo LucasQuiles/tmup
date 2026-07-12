@@ -39,6 +39,7 @@ describe('dispatch-agent.sh Codex submit verification', () => {
     );
 
     writeTmuxStub();
+    writeExecutable('ps', "#!/bin/bash\nprintf '100 1 100 100 S /bin/bash\\n'\n");
     writeExecutable('sleep', '#!/bin/bash\nexit 0\n');
     writeExecutable('yq', '#!/bin/bash\nprintf \'null\\n\'\n');
     // Keep dispatch tests independent from the host lock implementation.
@@ -224,7 +225,11 @@ shift || true
 
 case "$cmd" in
   display-message)
-    printf 'bash\\n'
+    if [[ "$*" == *'pane_pid'* ]]; then
+      printf '100\\n'
+    else
+      printf 'bash\\n'
+    fi
     ;;
   send-keys)
     printf '%s\\n' "$*" >> ${sendLogFile}
