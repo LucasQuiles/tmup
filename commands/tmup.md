@@ -93,7 +93,7 @@ Workers are interactive Codex sessions in tmux panes. Use `tmup_dispatch` to sta
 - tmup configures worker lanes for interactive Codex use with autonomous execution and inline scrollback-friendly mode.
 - Planning-first behavior is enforced by the initial worker prompt. tmup does not rely on an undocumented Codex startup flag for this.
 - Fresh lanes also set Codex subagent caps (`agents.max_threads=6`, `agents.max_depth=2`, `agents.job_max_runtime_seconds=3600`) so each pane can use internal teams when appropriate.
-- `grid-setup.sh` syncs the named tiered agents into `~/.codex/agents/`: `tmup-tier1` on `gpt-5.3-codex`, then `tmup-tier2` on `gpt-5.2-codex`.
+- `grid-setup.sh` syncs the named tiered agents into `~/.codex/agents/`: `tmup-tier1` and `tmup-tier2`, both on `gpt-5.5` (models pinned in `config/policy.yaml`).
 
 ## Task DAG
 

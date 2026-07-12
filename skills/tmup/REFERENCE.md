@@ -23,8 +23,8 @@ Fresh tmup workers launch with the auto-detected Codex model (`codex.model: "aut
 
 Tiered subagent pack:
 
-- `tmup-tier1` in `~/.codex/agents/tmup-tier1.toml` — `gpt-5.3-codex`
-- `tmup-tier2` in `~/.codex/agents/tmup-tier2.toml` — `gpt-5.2-codex`
+- `tmup-tier1` in `~/.codex/agents/tmup-tier1.toml` — `gpt-5.5`
+- `tmup-tier2` in `~/.codex/agents/tmup-tier2.toml` — `gpt-5.5`
 - `grid-setup.sh` syncs these files from plugin-local `agents/codex/` before returning success, including on existing-grid reattach paths
 
 ### tmup_init

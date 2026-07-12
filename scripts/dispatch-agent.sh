@@ -227,8 +227,8 @@ fi)
 
 ## Internal Teams
 - The tmup tiered agent pack is synced into \`~/.codex/agents\` during grid setup.
-- For tasks with separable workstreams, spawn \`tmup-tier1\` subagents (model \`gpt-5.3-codex\`).
-- \`tmup-tier1\` agents may spawn \`tmup-tier2\` subagents (model \`gpt-5.2-codex\`) for narrow leaf tasks.
+- For tasks with separable workstreams, spawn \`tmup-tier1\` subagents (model \`gpt-5.5\`).
+- \`tmup-tier1\` agents may spawn \`tmup-tier2\` subagents (model \`gpt-5.5\`) for narrow leaf tasks.
 - Do not spawn raw unnamed agents. Use the named tmup tiered agents so model pinning is enforced.
 - max_threads: $CFG_CODEX_MAX_THREADS concurrent, max_depth: $CFG_CODEX_MAX_DEPTH nesting levels.
 - Collect and synthesize subagent results before reporting back to the lead.
