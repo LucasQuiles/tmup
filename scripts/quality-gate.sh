@@ -2,9 +2,10 @@
 # quality-gate.sh — one fail-closed gate for the tmup plugin.
 #
 # Runs every check the repo requires before a commit is trusted:
-#   build, full vitest suite, three tsc --noEmit passes, repository shell
-#   syntax, model-id consistency between policy.yaml and agent TOMLs,
-#   and (locally) canonical-vs-installed agent sync drift.
+#   production and full dependency audits, build, tracked generated-artifact
+#   drift, full vitest suite, three tsc --noEmit passes, repository shell
+#   syntax, model-id consistency between policy.yaml and agent TOMLs, and
+#   (locally) canonical-vs-installed agent sync drift.
 #
 # Fail-closed: the first failing step aborts with a named step and a
 # nonzero exit. No step's output is discarded.
@@ -36,7 +37,10 @@ if [[ "${TMUP_GATE_SELFTEST_FAIL:-0}" == "1" ]]; then
   step "selftest-injected-failure" false
 fi
 
+step "npm audit (production)" bash scripts/with-supported-node.sh npm audit --omit=dev --audit-level=low
+step "npm audit (full)" bash scripts/with-supported-node.sh npm audit --audit-level=low
 step "build" bash scripts/with-supported-node.sh npm run build --workspaces
+step "generated artifact drift" git diff --exit-code -- shared/dist mcp-server/dist cli/dist
 step "vitest" bash scripts/with-supported-node.sh npx vitest run
 step "tsc mcp-server" bash -c 'cd mcp-server && bash ../scripts/with-supported-node.sh npx tsc --noEmit'
 step "tsc shared" bash -c 'cd shared && bash ../scripts/with-supported-node.sh npx tsc --noEmit'
