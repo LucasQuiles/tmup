@@ -82,8 +82,8 @@ describe('config.sh shell boundary', () => {
       const result = runShell(`source "${CONFIG_SH}"; echo "$CFG_CODEX_MODEL"`, {
         CODEX_HOME: path.join(tmpHome, 'no-codex-here'),
       });
-      // config/policy.yaml ships model_preference: ["gpt-5.5", ...]
-      expect(result).toBe('gpt-5.5');
+      // config/policy.yaml ships model_preference: ["gpt-5.6-sol", ...]
+      expect(result).toBe('gpt-5.6-sol');
     });
 
     it('explicit policy model pin overrides auto-detection', () => {

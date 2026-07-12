@@ -20,7 +20,7 @@ tmup is the execution engine for the sdlc-os Colony Runtime:
 ## Project Layout
 
     agents/        — 6 agent prompts (implementer, tester, reviewer, refactorer, documenter, investigator)
-    agents/codex/  — Codex tiered agent TOMLs (tier1=gpt-5.3, tier2=gpt-5.2)
+    agents/codex/  — Codex tiered agent TOMLs (tier1 and tier2 both gpt-5.5; pinned in config/policy.yaml)
     cli/           — tmup-cli (Node.js, claim/complete/fail/message)
     mcp-server/    — MCP server (tmup_init, tmup_dispatch, tmup_harvest, tmup_reprompt, tmup_heartbeat, etc.)
     shared/        — Shared TypeScript library (task-ops, agent-ops, dep-resolver, migrations, colony types)
