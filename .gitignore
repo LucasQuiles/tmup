@@ -12,6 +12,9 @@ node_modules/
 # Claude Code project config (user-local)
 .claude/
 
+# Repository-local linked worktrees.
+.worktrees/
+
 # Runtime state (created at runtime)
 *.db
 *.db-wal
