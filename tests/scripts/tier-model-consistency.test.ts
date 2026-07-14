@@ -5,6 +5,14 @@ import yaml from 'js-yaml';
 
 const PLUGIN_DIR = path.resolve(import.meta.dirname, '../../');
 const SOURCE_DIR = path.join(PLUGIN_DIR, 'agents/codex');
+const PANE_ROLE_FILES = [
+  'implementer.md',
+  'tester.md',
+  'refactorer.md',
+  'investigator.md',
+  'documenter.md',
+  'reviewer.md',
+];
 
 describe('Tier model consistency', () => {
   it('should ensure TOML models match policy.yaml single source of truth', () => {
@@ -34,5 +42,17 @@ describe('Tier model consistency', () => {
     const tier2Toml = fs.readFileSync(path.join(SOURCE_DIR, 'tmup-tier2.toml'), 'utf-8');
     const m2 = tier2Toml.match(/^model\s*=\s*"([^"]+)"/m);
     expect(m2?.[1]).toBe(policy.codex.subagents.tiers.tier2.model);
+  });
+
+  it.each(PANE_ROLE_FILES)('%s keeps named tier delegation direct and leaf-only', (file) => {
+    const markdown = fs.readFileSync(path.join(PLUGIN_DIR, 'agents', file), 'utf-8');
+
+    expect(markdown).not.toMatch(/delegated helper.*(?:spawn|dispatch).*`tmup-tier2`/i);
+    expect(markdown).not.toMatch(/`tmup-tier1`.*(?:spawn|dispatch).*`tmup-tier2`/i);
+    expect(markdown).toContain(
+      'The pane root may dispatch `tmup-tier1` directly for bounded implementation or high-signal verification, or `tmup-tier2` directly for discovery, test execution, or focused analysis.',
+    );
+    expect(markdown).toContain('Both named tiers are leaves and must not delegate further.');
+    expect(markdown).toContain('Do not spawn unnamed/raw agents');
   });
 });

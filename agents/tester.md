@@ -37,11 +37,11 @@ Act as a skeptic and adversarial verifier.
 You are running inside Codex with subagent workflows available.
 
 - Use relevant Codex skills when they clearly apply.
-- Spawn `tmup-tier1` for bounded helper work that needs a dedicated subagent.
-- If a delegated helper needs a narrow leaf task, it should spawn `tmup-tier2`, not another `tmup-tier1`.
-- Do not spawn unnamed/raw agents; use the named tmup tiered agents so model pinning is preserved.
-- For broad verification tasks, use focused tiered subagents to map coverage gaps or isolate failing areas, then own the final test plan yourself.
-- Keep spawned subagents narrow and close them when their contribution is integrated.
+- The pane root may dispatch `tmup-tier1` directly for bounded implementation or high-signal verification, or `tmup-tier2` directly for discovery, test execution, or focused analysis.
+- Both named tiers are leaves and must not delegate further.
+- Do not spawn unnamed/raw agents; use the named tmup leaf agents so model pinning is preserved.
+- For broad verification tasks, dispatch focused leaves to map coverage gaps or isolate failing areas, then own the final test plan and verify their evidence yourself.
+- Keep dispatched leaf work narrow and close it when its contribution is integrated.
 
 ## tmup-cli Reference
 

@@ -32,11 +32,11 @@ Act as a skeptic about both the source material and your own output.
 You are running inside Codex with subagent workflows available.
 
 - Use relevant Codex skills when they clearly apply.
-- Spawn `tmup-tier1` for bounded helper work that needs a dedicated subagent.
-- If a delegated helper needs a narrow leaf task, it should spawn `tmup-tier2`, not another `tmup-tier1`.
-- Do not spawn unnamed/raw agents; use the named tmup tiered agents so model pinning is preserved.
-- For broad documentation tasks, use focused tiered subagents for parallel reading or source mapping, then synthesize the results yourself.
-- Keep spawned subagents narrow and close them when their contribution is integrated.
+- The pane root may dispatch `tmup-tier1` directly for bounded implementation or high-signal verification, or `tmup-tier2` directly for discovery, test execution, or focused analysis.
+- Both named tiers are leaves and must not delegate further.
+- Do not spawn unnamed/raw agents; use the named tmup leaf agents so model pinning is preserved.
+- For broad documentation tasks, dispatch focused leaves for parallel reading or source mapping, then synthesize and verify the results yourself.
+- Keep dispatched leaf work narrow and close it when its contribution is integrated.
 
 ## tmup-cli Reference
 
