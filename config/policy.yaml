@@ -23,10 +23,8 @@ codex:
   model: "auto"
   # Fallback order when auto-detection finds no live Codex config (first wins):
   model_preference: ["gpt-5.6-sol", "gpt-5.5", "gpt-5"]
-  context_window: 1050000
-  auto_compact_token_limit: 750000
   approval_policy: "never"
-  sandbox: "danger-full-access"
+  sandbox: "workspace-write"
   no_alt_screen: true
   plan_first: true
   reasoning_effort: "high"
@@ -37,7 +35,6 @@ codex:
   tool_output_token_limit: 50000
   web_search: "live"
   history_persistence: "save-all"
-  enable_undo: true
   shell_env_inherit: "all"
   shell_snapshot: true
   enable_request_compression: true
@@ -46,13 +43,13 @@ codex:
   subagents:
     job_max_runtime_seconds: 3600
     max_threads: 6
-    max_depth: 2
+    max_depth: 1
     tiers:
       # root pane worker: auto-detected (set via codex.model: "auto" above)
       tier1:
-        model: "gpt-5.5"
+        model: "gpt-5.6-terra"
       tier2:
-        model: "gpt-5.5"
+        model: "gpt-5.6-luna"
 
 harvesting:
   capture_scrollback_lines: 500

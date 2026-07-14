@@ -135,10 +135,8 @@ _raw_codex_model=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.model //
 if [[ "$_raw_codex_model" == "auto" || -z "$_raw_codex_model" ]]; then
   _raw_codex_model=$(_cfg_detect_codex_model)
 fi
-_raw_codex_context_window=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.context_window // 1050000' "1050000")
-_raw_codex_auto_compact=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.auto_compact_token_limit // 750000' "750000")
 _raw_codex_approval_policy=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.approval_policy // "never"' "never")
-_raw_codex_sandbox=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.sandbox // "danger-full-access"' "danger-full-access")
+_raw_codex_sandbox=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.sandbox // "workspace-write"' "workspace-write")
 _raw_codex_no_alt_screen=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.no_alt_screen // true' "true")
 _raw_codex_plan_first=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.plan_first // true' "true")
 _raw_codex_reasoning_effort=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.reasoning_effort // "high"' "high")
@@ -149,14 +147,13 @@ _raw_codex_service_tier=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.s
 _raw_codex_tool_output_limit=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.tool_output_token_limit // 50000' "50000")
 _raw_codex_web_search=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.web_search // "live"' "live")
 _raw_codex_history=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.history_persistence // "save-all"' "save-all")
-_raw_codex_undo=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.enable_undo // true' "true")
 _raw_codex_shell_inherit=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.shell_env_inherit // "all"' "all")
 _raw_codex_shell_snapshot=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.shell_snapshot // true' "true")
 _raw_codex_request_compression=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.enable_request_compression // true' "true")
 _raw_codex_notifications=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.notifications // true' "true")
 _raw_codex_background_terminal_timeout=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.background_terminal_max_timeout // 600000' "600000")
 _raw_codex_max_threads=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.subagents.max_threads // 6' "6")
-_raw_codex_max_depth=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.subagents.max_depth // 2' "2")
+_raw_codex_max_depth=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.subagents.max_depth // 1' "1")
 _raw_codex_job_timeout=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.subagents.job_max_runtime_seconds // 3600' "3600")
 
 # Session name validation: alphanumeric, hyphens, underscores only. No path separators.
@@ -214,10 +211,8 @@ CFG_HEARTBEAT_INTERVAL=$(_cfg_validate_int "CFG_HEARTBEAT_INTERVAL" "$_raw_heart
 CFG_CLAIMED_WARNING=$(_cfg_validate_int "CFG_CLAIMED_WARNING" "$_raw_claimed_warning" "1800")
 CFG_REPROMPT_TIMEOUT=$(_cfg_validate_int "CFG_REPROMPT_TIMEOUT" "$_raw_reprompt_timeout" "10")
 CFG_CODEX_MODEL=$(_cfg_validate_nonempty "CFG_CODEX_MODEL" "$_raw_codex_model" "gpt-5.5")
-CFG_CODEX_CONTEXT_WINDOW=$(_cfg_validate_int "CFG_CODEX_CONTEXT_WINDOW" "$_raw_codex_context_window" "1050000")
-CFG_CODEX_AUTO_COMPACT=$(_cfg_validate_int "CFG_CODEX_AUTO_COMPACT" "$_raw_codex_auto_compact" "750000")
 CFG_CODEX_APPROVAL_POLICY=$(_cfg_validate_enum "CFG_CODEX_APPROVAL_POLICY" "$_raw_codex_approval_policy" "never" "untrusted" "on-failure" "on-request" "never")
-CFG_CODEX_SANDBOX=$(_cfg_validate_enum "CFG_CODEX_SANDBOX" "$_raw_codex_sandbox" "danger-full-access" "read-only" "workspace-write" "danger-full-access")
+CFG_CODEX_SANDBOX=$(_cfg_validate_enum "CFG_CODEX_SANDBOX" "$_raw_codex_sandbox" "workspace-write" "read-only" "workspace-write" "danger-full-access")
 CFG_CODEX_NO_ALT_SCREEN=$(_cfg_validate_bool "CFG_CODEX_NO_ALT_SCREEN" "$_raw_codex_no_alt_screen" "true")
 CFG_CODEX_PLAN_FIRST=$(_cfg_validate_bool "CFG_CODEX_PLAN_FIRST" "$_raw_codex_plan_first" "true")
 CFG_CODEX_REASONING_EFFORT=$(_cfg_validate_enum "CFG_CODEX_REASONING_EFFORT" "$_raw_codex_reasoning_effort" "high" "none" "minimal" "low" "medium" "high" "xhigh")
@@ -228,32 +223,14 @@ CFG_CODEX_SERVICE_TIER=$(_cfg_validate_enum "CFG_CODEX_SERVICE_TIER" "$_raw_code
 CFG_CODEX_TOOL_OUTPUT_LIMIT=$(_cfg_validate_int "CFG_CODEX_TOOL_OUTPUT_LIMIT" "$_raw_codex_tool_output_limit" "50000")
 CFG_CODEX_WEB_SEARCH=$(_cfg_validate_enum "CFG_CODEX_WEB_SEARCH" "$_raw_codex_web_search" "live" "disabled" "cached" "live")
 CFG_CODEX_HISTORY=$(_cfg_validate_enum "CFG_CODEX_HISTORY" "$_raw_codex_history" "save-all" "save-all" "none")
-CFG_CODEX_UNDO=$(_cfg_validate_bool "CFG_CODEX_UNDO" "$_raw_codex_undo" "true")
 CFG_CODEX_SHELL_INHERIT=$(_cfg_validate_enum "CFG_CODEX_SHELL_INHERIT" "$_raw_codex_shell_inherit" "all" "all" "core" "none")
 CFG_CODEX_SHELL_SNAPSHOT=$(_cfg_validate_bool "CFG_CODEX_SHELL_SNAPSHOT" "$_raw_codex_shell_snapshot" "true")
 CFG_CODEX_REQUEST_COMPRESSION=$(_cfg_validate_bool "CFG_CODEX_REQUEST_COMPRESSION" "$_raw_codex_request_compression" "true")
 CFG_CODEX_NOTIFICATIONS=$(_cfg_validate_bool "CFG_CODEX_NOTIFICATIONS" "$_raw_codex_notifications" "true")
 CFG_CODEX_BACKGROUND_TERMINAL_TIMEOUT=$(_cfg_validate_int "CFG_CODEX_BACKGROUND_TERMINAL_TIMEOUT" "$_raw_codex_background_terminal_timeout" "600000")
 CFG_CODEX_MAX_THREADS=$(_cfg_validate_int "CFG_CODEX_MAX_THREADS" "$_raw_codex_max_threads" "6")
-CFG_CODEX_MAX_DEPTH=$(_cfg_validate_int "CFG_CODEX_MAX_DEPTH" "$_raw_codex_max_depth" "2")
+CFG_CODEX_MAX_DEPTH=$(_cfg_validate_int "CFG_CODEX_MAX_DEPTH" "$_raw_codex_max_depth" "1")
 CFG_CODEX_JOB_TIMEOUT=$(_cfg_validate_int "CFG_CODEX_JOB_TIMEOUT" "$_raw_codex_job_timeout" "3600")
-
-if [[ "$CFG_CODEX_CONTEXT_WINDOW" -le 1 ]]; then
-  echo "config.sh: CFG_CODEX_CONTEXT_WINDOW '$CFG_CODEX_CONTEXT_WINDOW' must be greater than 1 — using default '1050000'" >&2
-  CFG_CODEX_CONTEXT_WINDOW="1050000"
-fi
-
-if [[ "$CFG_CODEX_AUTO_COMPACT" -ge "$CFG_CODEX_CONTEXT_WINDOW" ]]; then
-  _cfg_auto_compact_safe="750000"
-  if [[ "$_cfg_auto_compact_safe" -ge "$CFG_CODEX_CONTEXT_WINDOW" ]]; then
-    _cfg_auto_compact_safe=$((CFG_CODEX_CONTEXT_WINDOW - 1))
-  fi
-  if [[ "$_cfg_auto_compact_safe" -lt 1 ]]; then
-    _cfg_auto_compact_safe=1
-  fi
-  echo "config.sh: CFG_CODEX_AUTO_COMPACT '$CFG_CODEX_AUTO_COMPACT' must be lower than CFG_CODEX_CONTEXT_WINDOW '$CFG_CODEX_CONTEXT_WINDOW' — using '$_cfg_auto_compact_safe'" >&2
-  CFG_CODEX_AUTO_COMPACT="$_cfg_auto_compact_safe"
-fi
 
 if [[ "$CFG_CODEX_MAX_THREADS" -gt 12 ]]; then
   echo "config.sh: CFG_CODEX_MAX_THREADS '$CFG_CODEX_MAX_THREADS' exceeds hard cap '12' — using '12'" >&2
@@ -299,11 +276,11 @@ fi
 export CFG_SESSION_NAME CFG_SESSION_PREFIX CFG_ROWS CFG_COLS CFG_WIDTH CFG_HEIGHT
 export CFG_STALE_MAX_AGE CFG_HARVEST_LINES CFG_TRUST_SECONDS CFG_TEARDOWN_GRACE
 export CFG_HEARTBEAT_INTERVAL CFG_CLAIMED_WARNING CFG_REPROMPT_TIMEOUT
-export CFG_CODEX_MODEL CFG_CODEX_CONTEXT_WINDOW CFG_CODEX_AUTO_COMPACT CFG_CODEX_APPROVAL_POLICY
+export CFG_CODEX_MODEL CFG_CODEX_APPROVAL_POLICY
 export CFG_CODEX_SANDBOX CFG_CODEX_NO_ALT_SCREEN CFG_CODEX_PLAN_FIRST
 export CFG_CODEX_REASONING_EFFORT CFG_CODEX_REASONING_SUMMARY CFG_CODEX_PLAN_REASONING
 export CFG_CODEX_VERBOSITY CFG_CODEX_SERVICE_TIER CFG_CODEX_TOOL_OUTPUT_LIMIT
-export CFG_CODEX_WEB_SEARCH CFG_CODEX_HISTORY CFG_CODEX_UNDO CFG_CODEX_SHELL_INHERIT
+export CFG_CODEX_WEB_SEARCH CFG_CODEX_HISTORY CFG_CODEX_SHELL_INHERIT
 export CFG_CODEX_SHELL_SNAPSHOT CFG_CODEX_REQUEST_COMPRESSION CFG_CODEX_NOTIFICATIONS
 export CFG_CODEX_BACKGROUND_TERMINAL_TIMEOUT CFG_CODEX_MAX_THREADS CFG_CODEX_MAX_DEPTH
 export CFG_CODEX_JOB_TIMEOUT
@@ -314,14 +291,13 @@ unset _cfg_this_dir _cfg_scripts_dir _cfg_plugin_dir
 unset _raw_rows _raw_cols _raw_width _raw_height _raw_prefix
 unset _raw_stale _raw_harvest _raw_trust_seconds _raw_teardown_grace
 unset _raw_heartbeat_interval _raw_claimed_warning _raw_reprompt_timeout
-unset _raw_codex_model _raw_codex_context_window _raw_codex_auto_compact _raw_codex_approval_policy
+unset _raw_codex_model _raw_codex_approval_policy
 unset _raw_codex_sandbox _raw_codex_no_alt_screen _raw_codex_plan_first
 unset _raw_codex_reasoning_effort _raw_codex_reasoning_summary _raw_codex_plan_reasoning
 unset _raw_codex_verbosity _raw_codex_service_tier _raw_codex_tool_output_limit _raw_codex_web_search
-unset _raw_codex_history _raw_codex_undo _raw_codex_shell_inherit _raw_codex_shell_snapshot
+unset _raw_codex_history _raw_codex_shell_inherit _raw_codex_shell_snapshot
 unset _raw_codex_request_compression _raw_codex_notifications _raw_codex_background_terminal_timeout
 unset _raw_codex_max_threads _raw_codex_max_depth _raw_codex_job_timeout
-unset _cfg_auto_compact_safe
 unset _cfg_yq_warned
 unset -f _cfg_read_yaml _cfg_validate_int _cfg_validate_bool _cfg_validate_enum _cfg_validate_nonempty
 unset -f _cfg_validate_session_name _cfg_validate_session_id

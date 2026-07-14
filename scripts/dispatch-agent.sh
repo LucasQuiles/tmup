@@ -184,9 +184,9 @@ else cat <<CODEX_CONTRACT
 - You are running in a persistent interactive Codex worker pane managed by tmup.
 - This is not \`codex exec\`, not a one-shot subprocess, and not a shell-only lane.
 - Fresh tmup workers launch on \`$CFG_CODEX_MODEL\`.
-- Your runtime contract assumes a native context window of up to $CFG_CODEX_CONTEXT_WINDOW tokens for this model.
+- Context and compaction come from the resolved Codex model catalog; tmup does not override them.
 - Runtime defaults for this lane: reasoning_effort=$CFG_CODEX_REASONING_EFFORT, reasoning_summary=$CFG_CODEX_REASONING_SUMMARY, verbosity=$CFG_CODEX_VERBOSITY, web_search=$CFG_CODEX_WEB_SEARCH.
-- Interactive safeguards and productivity features are enabled through tmup policy: history=$CFG_CODEX_HISTORY, undo=$CFG_CODEX_UNDO, shell_snapshot=$CFG_CODEX_SHELL_SNAPSHOT, request_compression=$CFG_CODEX_REQUEST_COMPRESSION.
+- Interactive safeguards and productivity features are enabled through tmup policy: history=$CFG_CODEX_HISTORY, shell_snapshot=$CFG_CODEX_SHELL_SNAPSHOT, request_compression=$CFG_CODEX_REQUEST_COMPRESSION.
 $PLAN_FIRST_LINE
 - Use relevant Codex skills when they clearly apply to the task.
 - Use built-in Codex subagents when the task has parallelizable workstreams.
@@ -226,12 +226,11 @@ fi)
 - Escalate blockers, ambiguity, or upstream defects early instead of silently guessing.
 
 ## Internal Teams
-- The tmup tiered agent pack is synced into \`~/.codex/agents\` during grid setup.
-- For tasks with separable workstreams, spawn \`tmup-tier1\` subagents (model \`gpt-5.5\`).
-- \`tmup-tier1\` agents may spawn \`tmup-tier2\` subagents (model \`gpt-5.5\`) for narrow leaf tasks.
-- Do not spawn raw unnamed agents. Use the named tmup tiered agents so model pinning is enforced.
-- max_threads: $CFG_CODEX_MAX_THREADS concurrent, max_depth: $CFG_CODEX_MAX_DEPTH nesting levels.
-- Collect and synthesize subagent results before reporting back to the lead.
+- The pane root owns its assigned lane and may dispatch \`tmup-tier1\` or \`tmup-tier2\` directly for independent bounded work.
+- Both named tiers are leaves and must not delegate further.
+- Use tier 1 for bounded implementation or high-signal verification; use tier 2 for discovery, test execution, or focused analysis.
+- Do not duplicate work, overlap writes, or treat worker output as proof before checking it.
+- max_threads: $CFG_CODEX_MAX_THREADS concurrent, max_depth: $CFG_CODEX_MAX_DEPTH.
 
 ## tmup-cli Commands
 Use \`node $CLI_PATH <command>\` for coordination:
@@ -274,8 +273,6 @@ export TMUP_SESSION_DIR=$(printf '%q' "$STATE_DIR")
 export CODEX_BIN=$(printf '%q' "$CODEX_BIN")
 export TMUP_WORKING_DIR=$(printf '%q' "$WORKING_DIR")
 export TMUP_CODEX_MODEL=$(printf '%q' "$CFG_CODEX_MODEL")
-export TMUP_CODEX_CONTEXT_WINDOW=$(printf '%q' "$CFG_CODEX_CONTEXT_WINDOW")
-export TMUP_CODEX_AUTO_COMPACT=$(printf '%q' "$CFG_CODEX_AUTO_COMPACT")
 export TMUP_CODEX_APPROVAL_POLICY=$(printf '%q' "$CFG_CODEX_APPROVAL_POLICY")
 export TMUP_CODEX_SANDBOX=$(printf '%q' "$CFG_CODEX_SANDBOX")
 export TMUP_CODEX_NO_ALT_SCREEN=$(printf '%q' "$CFG_CODEX_NO_ALT_SCREEN")
@@ -287,7 +284,6 @@ export TMUP_CODEX_SERVICE_TIER=$(printf '%q' "$CFG_CODEX_SERVICE_TIER")
 export TMUP_CODEX_TOOL_OUTPUT_LIMIT=$(printf '%q' "$CFG_CODEX_TOOL_OUTPUT_LIMIT")
 export TMUP_CODEX_WEB_SEARCH=$(printf '%q' "$CFG_CODEX_WEB_SEARCH")
 export TMUP_CODEX_HISTORY=$(printf '%q' "$CFG_CODEX_HISTORY")
-export TMUP_CODEX_UNDO=$(printf '%q' "$CFG_CODEX_UNDO")
 export TMUP_CODEX_SHELL_INHERIT=$(printf '%q' "$CFG_CODEX_SHELL_INHERIT")
 export TMUP_CODEX_SHELL_SNAPSHOT=$(printf '%q' "$CFG_CODEX_SHELL_SNAPSHOT")
 export TMUP_CODEX_REQUEST_COMPRESSION=$(printf '%q' "$CFG_CODEX_REQUEST_COMPRESSION")
@@ -341,8 +337,6 @@ else
 
   _COMMON_ARGS=(
     -m "\$TMUP_CODEX_MODEL"
-    -c "model_context_window=\$TMUP_CODEX_CONTEXT_WINDOW"
-    -c "model_auto_compact_token_limit=\$TMUP_CODEX_AUTO_COMPACT"
     -a "\$TMUP_CODEX_APPROVAL_POLICY"
     -s "\$TMUP_CODEX_SANDBOX"
     -c "model_reasoning_effort=\$TMUP_CODEX_REASONING_EFFORT"
@@ -353,7 +347,6 @@ else
     -c "tool_output_token_limit=\$TMUP_CODEX_TOOL_OUTPUT_LIMIT"
     -c "web_search=\$TMUP_CODEX_WEB_SEARCH"
     -c "history.persistence=\$TMUP_CODEX_HISTORY"
-    -c "features.undo=\$TMUP_CODEX_UNDO"
     -c "shell_environment_policy.inherit=\$TMUP_CODEX_SHELL_INHERIT"
     -c "features.shell_snapshot=\$TMUP_CODEX_SHELL_SNAPSHOT"
     -c "features.enable_request_compression=\$TMUP_CODEX_REQUEST_COMPRESSION"
@@ -382,7 +375,7 @@ else
   # initial prompt via send_codex_prompt_with_retry (interactive session model).
   if [[ -n "\${RESUME_SESSION_ID:-}" ]]; then
     # Reapply the current runtime contract on resume so recovered panes stay pinned
-    # to the configured model, context, compaction, approval, sandbox, and subagent caps.
+    # to the configured model, approval, sandbox, and subagent caps.
     "\$CODEX_BIN" "\${_COMMON_ARGS[@]}" resume "\$RESUME_SESSION_ID"
   else
     "\$CODEX_BIN" "\${_COMMON_ARGS[@]}"

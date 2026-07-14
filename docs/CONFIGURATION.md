@@ -17,6 +17,30 @@ grid:
 
 Want a 3x3 grid? Set `rows: 3, cols: 3`. Now you have 9 workers. Want a 4x4? That's 16 workers. We've never tried 16 but the code doesn't stop you. The SQLite database might start having opinions at that point, but it's been through worse.
 
+## Codex workers
+
+```yaml
+codex:
+  model: "auto"
+  model_preference: ["gpt-5.6-sol", "gpt-5.5", "gpt-5"]
+  approval_policy: "never"
+  sandbox: "workspace-write"
+  subagents:
+    max_threads: 6
+    max_depth: 1
+    tiers:
+      tier1:
+        model: "gpt-5.6-terra"
+      tier2:
+        model: "gpt-5.6-luna"
+```
+
+`model: auto` resolves the pane-root model from the active Codex configuration and catalog, then uses `model_preference` when no live default is available. tmup no longer overrides the model's context window or compaction threshold; both come from the resolved Codex model catalog. Pane roots launch with the workspace-scoped `workspace-write` sandbox.
+
+`tmup-tier1` is the direct high-capability leaf for bounded implementation or verification, and `tmup-tier2` is the direct fast leaf for discovery, tests, or focused analysis. The pane root may dispatch either named tier; neither tier delegates further.
+
+Explicit process-isolated Codex workers use `--ignore-user-config --disable multi_agent` so they do not inherit or activate the native multi-agent runtime.
+
 ## DAG behavior
 
 ```yaml

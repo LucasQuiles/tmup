@@ -120,10 +120,10 @@ exit 0
 
     const launcher = readLauncher();
     expect(launcher).toContain('export TMUP_CODEX_MODEL=gpt-5.5');
-    expect(launcher).toContain('export TMUP_CODEX_CONTEXT_WINDOW=1050000');
-    expect(launcher).toContain('export TMUP_CODEX_AUTO_COMPACT=750000');
+    expect(launcher).not.toContain('TMUP_CODEX_CONTEXT_WINDOW');
+    expect(launcher).not.toContain('TMUP_CODEX_AUTO_COMPACT');
     expect(launcher).toContain('export TMUP_CODEX_APPROVAL_POLICY=never');
-    expect(launcher).toContain('export TMUP_CODEX_SANDBOX=danger-full-access');
+    expect(launcher).toContain('export TMUP_CODEX_SANDBOX=workspace-write');
     expect(launcher).toContain('export TMUP_CODEX_NO_ALT_SCREEN=true');
     expect(launcher).toContain('export TMUP_CODEX_REASONING_EFFORT=high');
     expect(launcher).toContain('export TMUP_CODEX_REASONING_SUMMARY=concise');
@@ -133,18 +133,18 @@ exit 0
     expect(launcher).toContain('export TMUP_CODEX_TOOL_OUTPUT_LIMIT=50000');
     expect(launcher).toContain('export TMUP_CODEX_WEB_SEARCH=live');
     expect(launcher).toContain('export TMUP_CODEX_HISTORY=save-all');
-    expect(launcher).toContain('export TMUP_CODEX_UNDO=true');
+    expect(launcher).not.toContain('TMUP_CODEX_UNDO');
     expect(launcher).toContain('export TMUP_CODEX_SHELL_INHERIT=all');
     expect(launcher).toContain('export TMUP_CODEX_SHELL_SNAPSHOT=true');
     expect(launcher).toContain('export TMUP_CODEX_REQUEST_COMPRESSION=true');
     expect(launcher).toContain('export TMUP_CODEX_NOTIFICATIONS=true');
     expect(launcher).toContain('export TMUP_CODEX_BACKGROUND_TERMINAL_TIMEOUT=600000');
     expect(launcher).toContain('export TMUP_CODEX_MAX_THREADS=6');
-    expect(launcher).toContain('export TMUP_CODEX_MAX_DEPTH=2');
+    expect(launcher).toContain('export TMUP_CODEX_MAX_DEPTH=1');
     expect(launcher).toContain('export TMUP_CODEX_JOB_TIMEOUT=3600');
     expect(launcher).toContain('-m "$TMUP_CODEX_MODEL"');
-    expect(launcher).toContain('-c "model_context_window=$TMUP_CODEX_CONTEXT_WINDOW"');
-    expect(launcher).toContain('-c "model_auto_compact_token_limit=$TMUP_CODEX_AUTO_COMPACT"');
+    expect(launcher).not.toContain('model_context_window');
+    expect(launcher).not.toContain('model_auto_compact_token_limit');
     expect(launcher).toContain('-a "$TMUP_CODEX_APPROVAL_POLICY"');
     expect(launcher).toContain('-s "$TMUP_CODEX_SANDBOX"');
     expect(launcher).toContain('-c "model_reasoning_effort=$TMUP_CODEX_REASONING_EFFORT"');
@@ -155,7 +155,7 @@ exit 0
     expect(launcher).toContain('-c "tool_output_token_limit=$TMUP_CODEX_TOOL_OUTPUT_LIMIT"');
     expect(launcher).toContain('-c "web_search=$TMUP_CODEX_WEB_SEARCH"');
     expect(launcher).toContain('-c "history.persistence=$TMUP_CODEX_HISTORY"');
-    expect(launcher).toContain('-c "features.undo=$TMUP_CODEX_UNDO"');
+    expect(launcher).not.toContain('features.undo');
     expect(launcher).toContain('-c "shell_environment_policy.inherit=$TMUP_CODEX_SHELL_INHERIT"');
     expect(launcher).toContain('-c "features.shell_snapshot=$TMUP_CODEX_SHELL_SNAPSHOT"');
     expect(launcher).toContain('-c "features.enable_request_compression=$TMUP_CODEX_REQUEST_COMPRESSION"');
@@ -176,8 +176,8 @@ exit 0
     const launcher = readLauncher();
     expect(launcher).toContain('_COMMON_ARGS=(');
     expect(launcher).toContain('-m "$TMUP_CODEX_MODEL"');
-    expect(launcher).toContain('-c "model_context_window=$TMUP_CODEX_CONTEXT_WINDOW"');
-    expect(launcher).toContain('-c "model_auto_compact_token_limit=$TMUP_CODEX_AUTO_COMPACT"');
+    expect(launcher).not.toContain('model_context_window');
+    expect(launcher).not.toContain('model_auto_compact_token_limit');
     expect(launcher).toContain('-a "$TMUP_CODEX_APPROVAL_POLICY"');
     expect(launcher).toContain('-s "$TMUP_CODEX_SANDBOX"');
     expect(launcher).toContain('-c "model_reasoning_effort=$TMUP_CODEX_REASONING_EFFORT"');
@@ -188,7 +188,7 @@ exit 0
     expect(launcher).toContain('-c "tool_output_token_limit=$TMUP_CODEX_TOOL_OUTPUT_LIMIT"');
     expect(launcher).toContain('-c "web_search=$TMUP_CODEX_WEB_SEARCH"');
     expect(launcher).toContain('-c "history.persistence=$TMUP_CODEX_HISTORY"');
-    expect(launcher).toContain('-c "features.undo=$TMUP_CODEX_UNDO"');
+    expect(launcher).not.toContain('features.undo');
     expect(launcher).toContain('-c "shell_environment_policy.inherit=$TMUP_CODEX_SHELL_INHERIT"');
     expect(launcher).toContain('-c "features.shell_snapshot=$TMUP_CODEX_SHELL_SNAPSHOT"');
     expect(launcher).toContain('-c "features.enable_request_compression=$TMUP_CODEX_REQUEST_COMPRESSION"');
