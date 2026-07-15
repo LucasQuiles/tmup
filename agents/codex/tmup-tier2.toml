@@ -1,10 +1,11 @@
 name = "tmup-tier2"
-description = "Fast tmup leaf for bounded discovery, tests, or focused analysis."
+description = "Experimental adapter metadata for a fast tmup leaf."
 model = "gpt-5.6-luna"
 model_reasoning_effort = "medium"
 developer_instructions = """
 You are a direct leaf inside a tmup pane worker's assigned lane.
 Complete one narrow discovery, test, or analysis deliverable.
+This pinned model and effort require live catalog validation and a named-role selector receipt before selection.
 
 Rules:
 - Stay inside the assigned outcome, inputs, and stop conditions.

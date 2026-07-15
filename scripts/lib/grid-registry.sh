@@ -1,11 +1,15 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # grid-registry.sh — Multi-grid registry for tmup (project-to-session mapping)
 
 _GRID_REGISTRY_LIB_DIR="$(cd "$(command -p dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$_GRID_REGISTRY_LIB_DIR/portable-system.sh"
+source "$_GRID_REGISTRY_LIB_DIR/portable-system.sh" || return 1 2>/dev/null || exit 1
+source "$_GRID_REGISTRY_LIB_DIR/state-root.sh" || return 1 2>/dev/null || exit 1
+if ! _tmup_resolve_state_root _REGISTRY_STATE_ROOT; then
+  return 1 2>/dev/null || exit 1
+fi
 
-_REGISTRY_FILE="$HOME/.local/state/tmup/registry.json"
-_REGISTRY_LOCK_FILE="$HOME/.local/state/tmup/registry.lock"
+_REGISTRY_FILE="$_REGISTRY_STATE_ROOT/registry.json"
+_REGISTRY_LOCK_FILE="$_REGISTRY_STATE_ROOT/registry.lock"
 _REGISTRY_LOCK_STALE_SECONDS="${TMUP_REGISTRY_LOCK_STALE_SECONDS:-10}"
 
 _registry_lock() {
@@ -20,7 +24,6 @@ _registry_lock() {
     [[ "$_attempts" -lt 50 ]] || return 1
     command -p sleep 0.1
   done
-  trap '_registry_unlock' EXIT INT TERM
 }
 
 _registry_unlock() {
@@ -29,7 +32,6 @@ _registry_unlock() {
   if [[ "$_owner" == "$$" ]]; then
     command -p rm -f "$_REGISTRY_LOCK_FILE" 2>/dev/null || true
   fi
-  trap - EXIT INT TERM
 }
 
 _registry_lock_is_stale() {
@@ -64,7 +66,7 @@ registry_register() {
   project_dir="$_canon"
   # Derive db_path if not provided
   if [[ -z "$db_path" ]]; then
-    db_path="$HOME/.local/state/tmup/$session_name/tmup.db"
+    db_path="$_REGISTRY_STATE_ROOT/$session_name/tmup.db"
   fi
   local timestamp
   timestamp=$(tmup_iso_timestamp)
@@ -73,7 +75,7 @@ registry_register() {
     return 1
   fi
   local temp
-  temp=$(mktemp "$HOME/.local/state/tmup/registry.XXXXXX") || {
+  temp=$(mktemp "$_REGISTRY_STATE_ROOT/registry.XXXXXX") || {
     echo "grid-registry: failed to create temp file" >&2
     _registry_unlock
     return 1
@@ -99,7 +101,7 @@ registry_deregister() {
     return 1
   fi
   local temp
-  temp=$(mktemp "$HOME/.local/state/tmup/registry.XXXXXX") || {
+  temp=$(mktemp "$_REGISTRY_STATE_ROOT/registry.XXXXXX") || {
     echo "grid-registry: failed to create temp file" >&2
     _registry_unlock
     return 1
@@ -132,7 +134,7 @@ registry_lookup() {
       '[.sessions[] | select(.project_dir == $pd)] | first | .session_id // empty' \
       "$_REGISTRY_FILE" 2>/dev/null) || match=""
     if [[ -n "$match" ]]; then
-      if tmux has-session -t "$match" 2>/dev/null; then
+      if tmux has-session -t "=$match" 2>/dev/null; then
         echo "$match"
         return 0
       fi

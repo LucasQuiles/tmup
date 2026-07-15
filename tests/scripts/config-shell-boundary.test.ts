@@ -62,7 +62,7 @@ describe('config.sh shell boundary', () => {
     }).trim();
   }
 
-  describe('codex model detection pipeline', () => {
+  describe('codex model selection pipeline', () => {
     function writeCodexHome(model: string): string {
       const ch = path.join(tmpHome, 'codex-home');
       fs.mkdirSync(ch, { recursive: true });
@@ -70,20 +70,19 @@ describe('config.sh shell boundary', () => {
       return ch;
     }
 
-    it('auto: detects the live Codex model from $CODEX_HOME/config.toml', () => {
+    it('preserves auto so dispatch omits -m instead of translating local config into a pin', () => {
       const codexHome = writeCodexHome('gpt-test-live');
       const result = runShell(`source "${CONFIG_SH}"; echo "$CFG_CODEX_MODEL"`, {
         CODEX_HOME: codexHome,
       });
-      expect(result).toBe('gpt-test-live');
+      expect(result).toBe('auto');
     });
 
-    it('auto: falls back to policy model_preference[0] when no live Codex config', () => {
+    it('has no static fallback inventory when Codex config is absent', () => {
       const result = runShell(`source "${CONFIG_SH}"; echo "$CFG_CODEX_MODEL"`, {
         CODEX_HOME: path.join(tmpHome, 'no-codex-here'),
       });
-      // config/policy.yaml ships model_preference: ["gpt-5.6-sol", ...]
-      expect(result).toBe('gpt-5.6-sol');
+      expect(result).toBe('auto');
     });
 
     it('explicit policy model pin overrides auto-detection', () => {
@@ -412,6 +411,36 @@ describe('config.sh shell boundary', () => {
 
       expect(stateResult).toBe('');
     });
+
+    it('uses a normalized absolute TMUP_STATE_ROOT for session state', () => {
+      const customRoot = path.join(tmpHome, 'custom-state', 'nested', '..', 'tmup-state');
+      const normalizedRoot = path.join(tmpHome, 'custom-state', 'tmup-state');
+      fs.mkdirSync(normalizedRoot, { recursive: true });
+
+      const stateResult = runShell(`
+        export TMUP_SESSION_NAME=custom-session
+        source "${CONFIG_SH}"
+        echo "$CFG_STATE_ROOT:$CFG_STATE_DIR"
+      `, { TMUP_STATE_ROOT: customRoot, CFG_CONFIG_DIR: '/nonexistent/path' });
+
+      expect(stateResult).toBe(`${normalizedRoot}:${path.join(normalizedRoot, 'custom-session')}`);
+    });
+
+    it('rejects a relative TMUP_STATE_ROOT', () => {
+      expect(() => runShell(`source "${CONFIG_SH}"`, {
+        TMUP_STATE_ROOT: 'relative/state',
+        CFG_CONFIG_DIR: '/nonexistent/path',
+      })).toThrow();
+    });
+
+    it('rejects an explicit empty or filesystem-root TMUP_STATE_ROOT', () => {
+      for (const stateRoot of ['', '/']) {
+        expect(() => runShell(`source "${CONFIG_SH}"`, {
+          TMUP_STATE_ROOT: stateRoot,
+          CFG_CONFIG_DIR: '/nonexistent/path',
+        })).toThrow();
+      }
+    });
   });
 
   describe('new config values from policy.yaml', () => {
@@ -460,7 +489,53 @@ describe('config.sh shell boundary', () => {
         source "${CONFIG_SH}"
         echo "$CFG_CODEX_MODEL:$CFG_CODEX_APPROVAL_POLICY:$CFG_CODEX_SANDBOX:$CFG_CODEX_NO_ALT_SCREEN:$CFG_CODEX_PLAN_FIRST:$CFG_CODEX_REASONING_EFFORT:$CFG_CODEX_REASONING_SUMMARY:$CFG_CODEX_PLAN_REASONING:$CFG_CODEX_VERBOSITY:$CFG_CODEX_SERVICE_TIER:$CFG_CODEX_TOOL_OUTPUT_LIMIT:$CFG_CODEX_WEB_SEARCH:$CFG_CODEX_HISTORY:$CFG_CODEX_SHELL_INHERIT:$CFG_CODEX_SHELL_SNAPSHOT:$CFG_CODEX_REQUEST_COMPRESSION:$CFG_CODEX_NOTIFICATIONS:$CFG_CODEX_BACKGROUND_TERMINAL_TIMEOUT:$CFG_CODEX_MAX_THREADS:$CFG_CODEX_MAX_DEPTH:$CFG_CODEX_JOB_TIMEOUT"
       `, { CFG_CONFIG_DIR: '/nonexistent/path' });
-      expect(result).toBe('gpt-5.5:never:workspace-write:true:true:high:concise:xhigh:low:fast:50000:live:save-all:all:true:true:true:600000:6:1:3600');
+      expect(result).toBe('auto:never:workspace-write:true:true:high:concise:xhigh:low:fast:50000:live:save-all:core:true:true:true:600000:6:1:3600');
+    });
+
+    it('fails safe to workspace-write when policy requests danger-full-access', () => {
+      const fakeBin = path.join(tmpHome, 'danger-sandbox-yq-bin');
+      const configDir = path.join(tmpHome, 'danger-sandbox-config');
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(path.join(configDir, 'policy.yaml'), 'codex:\n  sandbox: danger-full-access\n');
+      fs.writeFileSync(path.join(fakeBin, 'yq'), `#!/bin/bash
+case "$2" in
+  '.codex.sandbox // "workspace-write"') echo 'danger-full-access' ;;
+  '.grid.rows // empty') echo '2' ;;
+  *) echo 'null' ;;
+esac
+`);
+      fs.chmodSync(path.join(fakeBin, 'yq'), 0o755);
+
+      const result = runShell(`
+        source "${CONFIG_SH}"
+        echo "$CFG_CODEX_SANDBOX"
+      `, { CFG_CONFIG_DIR: configDir, PATH: `${fakeBin}:/usr/bin:/bin` });
+
+      expect(result).toBe('workspace-write');
+    });
+
+    it('fails safe to workspace-write when policy requests read-only', () => {
+      const fakeBin = path.join(tmpHome, 'read-only-sandbox-yq-bin');
+      const configDir = path.join(tmpHome, 'read-only-sandbox-config');
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(path.join(configDir, 'policy.yaml'), 'codex:\n  sandbox: read-only\n');
+      fs.writeFileSync(path.join(fakeBin, 'yq'), `#!/bin/bash
+case "$2" in
+  '.codex.sandbox // "workspace-write"') echo 'read-only' ;;
+  '.grid.rows // empty') echo '2' ;;
+  *) echo 'null' ;;
+esac
+`);
+      fs.chmodSync(path.join(fakeBin, 'yq'), 0o755);
+
+      const result = runShell(`
+        source "${CONFIG_SH}"
+        echo "$CFG_CODEX_SANDBOX"
+      `, { CFG_CONFIG_DIR: configDir, PATH: `${fakeBin}:/usr/bin:/bin` });
+
+      expect(result).toBe('workspace-write');
     });
 
     it('does not export obsolete codex model context overrides', () => {
@@ -490,7 +565,7 @@ case "$query" in
   '.codex.tool_output_token_limit // 50000') echo '54321' ;;
   '.codex.web_search // "live"') echo 'cached' ;;
   '.codex.history_persistence // "save-all"') echo 'none' ;;
-  '.codex.shell_env_inherit // "all"') echo 'core' ;;
+  '.codex.shell_env_inherit // "core"') echo 'all' ;;
   '.codex.shell_snapshot // true') echo 'false' ;;
   '.codex.enable_request_compression // true') echo 'false' ;;
   '.codex.notifications // true') echo 'false' ;;
@@ -529,7 +604,7 @@ case "$query" in
   '.codex.tool_output_token_limit // 50000') echo '999999' ;;
   '.codex.web_search // "live"') echo 'live' ;;
   '.codex.history_persistence // "save-all"') echo 'save-all' ;;
-  '.codex.shell_env_inherit // "all"') echo 'all' ;;
+  '.codex.shell_env_inherit // "core"') echo 'all' ;;
   '.codex.shell_snapshot // true') echo 'true' ;;
   '.codex.enable_request_compression // true') echo 'true' ;;
   '.codex.notifications // true') echo 'true' ;;
@@ -548,6 +623,26 @@ esac
       `, { PATH: `${fakeBin}:/usr/bin:/bin` });
 
       expect(result).toBe('200000:12:3:7200');
+    });
+
+    it('caps the trust window below the MCP dispatch deadline', () => {
+      const fakeBin = path.join(tmpHome, 'trust-timeout-yq-bin');
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, 'yq'), `#!/bin/bash
+case "$2" in
+  '.timeouts.dispatch_trust_prompt_seconds // 6') echo '999' ;;
+  '.grid.rows // empty') echo '2' ;;
+  *) echo 'null' ;;
+esac
+`);
+      fs.chmodSync(path.join(fakeBin, 'yq'), 0o755);
+
+      const result = runShell(`
+        source "${CONFIG_SH}"
+        echo "$CFG_TRUST_SECONDS"
+      `, { PATH: `${fakeBin}:/usr/bin:/bin` });
+
+      expect(result).toBe('20');
     });
   });
 });

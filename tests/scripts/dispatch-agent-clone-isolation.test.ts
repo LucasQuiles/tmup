@@ -16,6 +16,7 @@ describe('dispatch-agent.sh clone isolation', () => {
   let tmuxStateDir: string;
   let sdlcOsPlugin: string;
   let cloneRoot: string;
+  let workingDir: string;
 
   beforeEach(() => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tmup-clone-iso-'));
@@ -24,14 +25,18 @@ describe('dispatch-agent.sh clone isolation', () => {
     gridDir = path.join(stateDir, 'grid');
     fakeBin = path.join(tmpHome, 'fakebin');
     tmuxStateDir = path.join(tmpHome, 'tmux-state');
-    sdlcOsPlugin = path.join(tmpHome, 'fake-sdlc-os');
+    sdlcOsPlugin = path.join(tmpHome, '.claude/plugins/sdlc-os');
     cloneRoot = path.join(tmpHome, 'clones');
+    workingDir = path.join(tmpHome, 'workspace');
+    process.env.TMUP_TEST_CONTROLLER_OVERRIDE = '1';
+    process.env.TMUP_TEST_CONTROLLER_TOOL_DIRS = fakeBin;
 
     fs.mkdirSync(gridDir, { recursive: true });
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.mkdirSync(tmuxStateDir, { recursive: true });
     fs.mkdirSync(path.join(sdlcOsPlugin, 'colony'), { recursive: true });
     fs.mkdirSync(cloneRoot, { recursive: true });
+    fs.mkdirSync(workingDir, { recursive: true });
 
     fs.writeFileSync(
       path.join(gridDir, 'grid-state.json'),
@@ -39,6 +44,7 @@ describe('dispatch-agent.sh clone isolation', () => {
         panes: [{ index: 1, pane_id: '%1', status: 'available' }],
       }, null, 2)
     );
+    fs.writeFileSync(path.join(stateDir, 'tmup.db'), '');
 
     // Fake sdlc-os clone-manager.sh — creates a tmpdir per call and logs invocations
     const callLog = path.join(tmuxStateDir, 'clone-manager.log');
@@ -71,6 +77,8 @@ colony_clone_verify() {
   });
 
   afterEach(() => {
+    delete process.env.TMUP_TEST_CONTROLLER_OVERRIDE;
+    delete process.env.TMUP_TEST_CONTROLLER_TOOL_DIRS;
     try {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     } catch { /* best effort */ }
@@ -84,14 +92,13 @@ colony_clone_verify() {
       '--prompt', 'Clone isolation verification',
       '--agent-id', 'agent-clone',
       '--db-path', path.join(stateDir, 'tmup.db'),
-      '--working-dir', PLUGIN_DIR,
+      '--working-dir', workingDir,
       '--pane-index', '1',
       '--clone-isolation',
     ], {
       env: {
         ...process.env,
         HOME: tmpHome,
-        SDLC_OS_PLUGIN: sdlcOsPlugin,
         PATH: `${fakeBin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
       },
       encoding: 'utf-8',
@@ -136,14 +143,13 @@ colony_clone_verify() {
         '--prompt', 'Clone isolation verification',
         '--agent-id', 'agent-missing-manager',
         '--db-path', path.join(stateDir, 'tmup.db'),
-        '--working-dir', PLUGIN_DIR,
+        '--working-dir', workingDir,
         '--pane-index', '1',
         '--clone-isolation',
       ], {
         env: {
           ...process.env,
           HOME: tmpHome,
-          SDLC_OS_PLUGIN: sdlcOsPlugin,
           PATH: `${fakeBin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
         },
         encoding: 'utf-8',
@@ -166,13 +172,12 @@ colony_clone_verify() {
       '--prompt', 'No clone isolation',
       '--agent-id', 'agent-no-clone',
       '--db-path', path.join(stateDir, 'tmup.db'),
-      '--working-dir', PLUGIN_DIR,
+      '--working-dir', workingDir,
       '--pane-index', '1',
     ], {
       env: {
         ...process.env,
         HOME: tmpHome,
-        SDLC_OS_PLUGIN: sdlcOsPlugin,
         PATH: `${fakeBin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
       },
       encoding: 'utf-8',
@@ -184,11 +189,8 @@ colony_clone_verify() {
     expect(fs.existsSync(path.join(tmuxStateDir, 'clone-manager.log'))).toBe(false);
   });
 
-  it('falls back to $HOME/.claude/plugins/sdlc-os when SDLC_OS_PLUGIN is unset', () => {
-    // Build the fake plugin tree at the parameter-expansion default path.
-    // dispatch-agent.sh uses ${SDLC_OS_PLUGIN:-$HOME/.claude/plugins/sdlc-os},
-    // so with HOME=$tmpHome and SDLC_OS_PLUGIN deleted from the env, the
-    // clone-manager resolves to $tmpHome/.claude/plugins/sdlc-os/colony/clone-manager.sh.
+  it('uses the fixed $HOME/.claude/plugins/sdlc-os clone-manager path', () => {
+    // Rebuild the fake manager at the only accepted trusted path.
     const homePluginDir = path.join(tmpHome, '.claude/plugins/sdlc-os/colony');
     fs.mkdirSync(homePluginDir, { recursive: true });
 
@@ -212,15 +214,12 @@ colony_clone_verify() {
 `
     );
 
-    // Construct an env that OMITS SDLC_OS_PLUGIN entirely. Setting it to
-    // `undefined` serializes as the literal string "undefined" in some
-    // environments; `delete` is the only portable way to unset.
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       HOME: tmpHome,
       PATH: `${fakeBin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+      SDLC_OS_PLUGIN: path.join(workingDir, 'attacker-plugin'),
     };
-    delete env.SDLC_OS_PLUGIN;
 
     const output = execFileSync('bash', [
       DISPATCH_AGENT_SH,
@@ -229,7 +228,7 @@ colony_clone_verify() {
       '--prompt', 'HOME fallback verification',
       '--agent-id', 'agent-home',
       '--db-path', path.join(stateDir, 'tmup.db'),
-      '--working-dir', PLUGIN_DIR,
+      '--working-dir', workingDir,
       '--pane-index', '1',
       '--clone-isolation',
     ], {
@@ -239,14 +238,15 @@ colony_clone_verify() {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
-    // CLONE_DIR was emitted from the HOME-fallback clone-manager
+    // CLONE_DIR was emitted from the fixed HOME clone-manager, despite the
+    // ambient SDLC_OS_PLUGIN injection above.
     expect(output).toMatch(/^CLONE_DIR=.+-home$/m);
     const cloneMatch = output.match(/^CLONE_DIR=(.+)$/m);
     expect(cloneMatch).not.toBeNull();
     expect(cloneMatch![1]).toContain(cloneRoot);
     expect(cloneMatch![1]).toContain('agent-home');
 
-    // The HOME-fallback clone-manager's call log exists and records both ops
+    // The fixed HOME clone-manager's call log exists and records both ops
     expect(fs.existsSync(callLogHome)).toBe(true);
     const homeLog = fs.readFileSync(callLogHome, 'utf-8');
     expect(homeLog).toContain('create src=');
@@ -254,7 +254,7 @@ colony_clone_verify() {
     expect(homeLog).toContain('agent=agent-home');
     expect(homeLog).toContain('verify ');
 
-    // The SDLC_OS_PLUGIN-pointed call log from beforeEach was NOT touched
+    // The original manager's call log from beforeEach was not touched.
     expect(fs.existsSync(path.join(tmuxStateDir, 'clone-manager.log'))).toBe(false);
   });
 
@@ -285,14 +285,13 @@ colony_clone_verify() {
         '--prompt', 'create failure',
         '--agent-id', 'agent-fail-create',
         '--db-path', path.join(stateDir, 'tmup.db'),
-        '--working-dir', PLUGIN_DIR,
+        '--working-dir', workingDir,
         '--pane-index', '1',
         '--clone-isolation',
       ], {
         env: {
           ...process.env,
           HOME: tmpHome,
-          SDLC_OS_PLUGIN: sdlcOsPlugin,
           PATH: `${fakeBin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
         },
         encoding: 'utf-8',
@@ -345,14 +344,13 @@ colony_clone_verify() {
         '--prompt', 'verify failure',
         '--agent-id', 'agent-fail-verify',
         '--db-path', path.join(stateDir, 'tmup.db'),
-        '--working-dir', PLUGIN_DIR,
+        '--working-dir', workingDir,
         '--pane-index', '1',
         '--clone-isolation',
       ], {
         env: {
           ...process.env,
           HOME: tmpHome,
-          SDLC_OS_PLUGIN: sdlcOsPlugin,
           PATH: `${fakeBin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
         },
         encoding: 'utf-8',
@@ -406,14 +404,13 @@ colony_clone_verify() {
         '--prompt', 'empty stdout guard verification',
         '--agent-id', 'agent-silent-create',
         '--db-path', path.join(stateDir, 'tmup.db'),
-        '--working-dir', PLUGIN_DIR,
+        '--working-dir', workingDir,
         '--pane-index', '1',
         '--clone-isolation',
       ], {
         env: {
           ...process.env,
           HOME: tmpHome,
-          SDLC_OS_PLUGIN: sdlcOsPlugin,
           PATH: `${fakeBin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
         },
         encoding: 'utf-8',
@@ -476,14 +473,13 @@ colony_clone_verify() {
         '--prompt', 'whitespace-only stdout guard verification',
         '--agent-id', 'agent-ws-create',
         '--db-path', path.join(stateDir, 'tmup.db'),
-        '--working-dir', PLUGIN_DIR,
+        '--working-dir', workingDir,
         '--pane-index', '1',
         '--clone-isolation',
       ], {
         env: {
           ...process.env,
           HOME: tmpHome,
-          SDLC_OS_PLUGIN: sdlcOsPlugin,
           PATH: `${fakeBin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
         },
         encoding: 'utf-8',
@@ -513,6 +509,10 @@ cmd="\${1:-}"
 shift || true
 
 case "$cmd" in
+  list-panes)
+    [[ "$*" == *'-s -t =test-session'* ]] || exit 1
+    printf '1 %%1\\n'
+    ;;
   display-message)
     if [[ "$*" == *'pane_pid'* ]]; then
       printf '100\\n'
@@ -524,7 +524,12 @@ case "$cmd" in
     printf '%s\\n' "$*" >> ${sendKeysLog}
     ;;
   capture-pane)
-    printf 'Working (fake)\\n\u276f\\n'
+    count_file="$HOME/.tmup-test-capture-count"
+    count=0
+    [[ ! -f "$count_file" ]] || count=$(cat "$count_file")
+    count=$((count + 1))
+    printf '%s' "$count" > "$count_file"
+    printf 'Working (fake-%s)\\n\u276f\\n' "$count"
     ;;
   *)
     printf 'unexpected tmux command: %s\\n' "$cmd" >&2

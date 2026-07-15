@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
@@ -20,103 +20,148 @@ const RUNTIME_DOC_FILES = [
   'docs/CONFIGURATION.md',
 ];
 
+function bodyAfterFrontmatter(markdown: string): string {
+  const match = markdown.match(/^---\n[\s\S]*?\n---\n([\s\S]*)$/);
+  return match?.[1] ?? markdown;
+}
+
 function expectCapabilityRouting(text: string, file: string): void {
   expect(text, file).toMatch(/native children inherit the pane model/i);
   expect(text, file).toMatch(/spawn schema[^\n]*named-role selection/i);
   expect(text, file).toMatch(/task names do not[^\n]*(?:select|pin)[^\n]*(?:role|model)/i);
-  expect(text, file).toMatch(/named-role selection[^\n]*tmup-tier1[^\n]*tmup-tier2[^\n]*leaves/i);
   expect(text, file).toMatch(/without named-role selection[^\n]*same-model leaves/i);
   expect(text, file).toMatch(/model-explicit Codex\/tmup process or lane/i);
   expect(text, file).toMatch(/runtime receipt/i);
 }
 
-function expectCurrentRuntimeDoc(text: string, file: string): void {
-  expect(text, file).toMatch(/auto-detected Codex model/i);
-  expect(text, file).toMatch(/context and compaction[^\n]*resolved Codex model catalog/i);
+function expectSafeRuntimeDoc(text: string, file: string): void {
+  expect(text, file).toMatch(/codex\.model[^\n]*auto[^\n]*omit[^\n]*-m/i);
+  expect(text, file).toMatch(/explicit_model_pins_enabled/i);
+  expect(text, file).toMatch(/model-validation-receipt/i);
+  expect(text, file).toMatch(/CODEX_BIN/i);
+  expect(text, file).toMatch(/\.local\/bin\/codex/i);
   expect(text, file).toMatch(/workspace-write/i);
-  expect(text, file).toMatch(/max_depth(?:=|:\s*)1/i);
-  expect(text, file).toMatch(/tmup-tier1[^\n]*gpt-5\.6-terra[^\n]*high/i);
-  expect(text, file).toMatch(/tmup-tier2[^\n]*gpt-5\.6-luna[^\n]*medium/i);
+  expect(text, file).toMatch(/sandbox_workspace_write\.network_access=false/i);
+  expect(text, file).toMatch(/mediated[^\n]*web search/i);
+  expect(text, file).toMatch(/exclude_slash_tmp=true/i);
+  expect(text, file).toMatch(/exclude_tmpdir_env_var=true/i);
+  expect(text, file).toMatch(/only extra[^\n]*--add-dir[^\n]*exact[^\n]*task temp/i);
+  expect(text, file).toMatch(/prompt[^\n]*launcher[^\n]*(?:log|artifact)[^\n]*outside[^\n]*(?:working|session|task)/i);
+  expect(text, file).toMatch(/0600/i);
+  expect(text, file).toMatch(/0700/i);
+  expect(text, file).toMatch(/hash/i);
+  expect(text, file).toMatch(/does not (?:set|expose)[^\n]*TMUP_DB[^\n]*TMUP_SESSION_DIR/i);
+  expect(text, file).toMatch(/owns[^\n]*(?:claim|claims)/i);
+  expect(text, file).toMatch(/prompts?[^\n]*do(?:es)? not advertise[^\n]*tmup-cli/i);
+  expect(text, file).toMatch(/trusted shared state[^\n]*direct-dispatch-only/i);
+  expect(text, file).toMatch(/codex\.trusted_shared_state_enabled/i);
+  expect(text, file).toMatch(/--trusted-shared-state-receipt/i);
+  expect(text, file).toMatch(/claude_code\.trusted_unsandboxed_enabled/i);
+  expect(text, file).toMatch(/--allow-unconfined-claude-code/i);
+  expect(text, file).toMatch(/--claude-code-trust-receipt/i);
+  expect(text, file).toMatch(/outside[^\n]*Codex (?:sandbox )?(?:boundary|guarantee)/i);
+  expect(text, file).toMatch(/deterministic[^\n]*(?:task temp|task-temp)[^\n]*(?:controller|protected)[^\n]*boundar/i);
+  expect(text, file).toMatch(/host[^\n]*release[^\n]*live sandbox canar(?:y|ies)[^\n]*(?:pending|remain pending)/i);
+  expect(text, file).toMatch(/dispatch(?:er)? does not activate or advertise/i);
+  expect(text, file).toMatch(/agents\.max_depth(?:=|:)1/i);
+  expect(text, file).toMatch(/job_max_runtime_seconds[^\n]*spawn_agents_on_csv[^\n]*batch jobs/i);
+  expect(text, file).toMatch(/(?:native-child )?admission[^\n]*pane-local[^\n]*(?:not shared|rather than shared)/i);
+  expectCapabilityRouting(text, file);
 }
 
-describe('Tier model consistency', () => {
-  it('should ensure TOML models match policy.yaml single source of truth', () => {
-    // Load policy.yaml
+describe('Codex orchestration contract consistency', () => {
+  it('keeps dormant TOML models aligned with policy and all unsafe modes default-off', () => {
     const policyPath = path.join(PLUGIN_DIR, 'config/policy.yaml');
-    const policy = yaml.load(fs.readFileSync(policyPath, 'utf-8')) as any;
+    const policyText = fs.readFileSync(policyPath, 'utf-8');
+    const policy = yaml.load(policyText) as any;
 
+    expect(policy.codex.model).toBe('auto');
+    expect(policy.codex.explicit_model_pins_enabled).toBe(false);
+    expect(policy.codex.trusted_shared_state_enabled).toBe(false);
+    expect(policy.codex.shell_env_inherit).toBe('core');
+    expect(policy.codex.sandbox).toBe('workspace-write');
+    expect(policy.claude_code.trusted_unsandboxed_enabled).toBe(false);
     expect(policy.codex.subagents.max_depth).toBe(1);
-    expect(policy.codex.subagents.tiers.tier1.model).toBe('gpt-5.6-terra');
-    expect(policy.codex.subagents.tiers.tier2.model).toBe('gpt-5.6-luna');
+    const tier1Model = policy.codex.subagents.tiers.tier1.model;
+    const tier2Model = policy.codex.subagents.tiers.tier2.model;
+    expect(typeof tier1Model).toBe('string');
+    expect(tier1Model.trim()).not.toBe('');
+    expect(typeof tier2Model).toBe('string');
+    expect(tier2Model.trim()).not.toBe('');
+    expect(policyText).not.toContain('model_preference');
 
-    for (const file of ['tmup-tier1.toml', 'tmup-tier2.toml']) {
+    for (const [file, expectedModel] of [
+      ['tmup-tier1.toml', policy.codex.subagents.tiers.tier1.model],
+      ['tmup-tier2.toml', policy.codex.subagents.tiers.tier2.model],
+    ] as const) {
       const toml = fs.readFileSync(path.join(SOURCE_DIR, file), 'utf-8');
-      expect(toml).toContain('[features]');
-      expect(toml).toMatch(/^multi_agent\s*=\s*false$/m);
-      expect(toml).not.toMatch(/^sandbox_mode\s*=/m);
+      expect(toml, file).toContain('[features]');
+      expect(toml, file).toMatch(/^multi_agent\s*=\s*false$/m);
+      expect(toml, file).not.toMatch(/^sandbox_mode\s*=/m);
+      expect(toml, file).toMatch(/experimental adapter metadata/i);
+      expect(toml.match(/^model\s*=\s*"([^"]+)"/m)?.[1], file).toBe(expectedModel);
     }
-
-    // Check tier1
-    const tier1Toml = fs.readFileSync(path.join(SOURCE_DIR, 'tmup-tier1.toml'), 'utf-8');
-    expect(tier1Toml).toContain('Do not delegate further.');
-    expect(tier1Toml).not.toContain('spawn tmup-tier2');
-    const m1 = tier1Toml.match(/^model\s*=\s*"([^"]+)"/m);
-    expect(m1?.[1]).toBe(policy.codex.subagents.tiers.tier1.model);
-
-    // Check tier2
-    const tier2Toml = fs.readFileSync(path.join(SOURCE_DIR, 'tmup-tier2.toml'), 'utf-8');
-    const m2 = tier2Toml.match(/^model\s*=\s*"([^"]+)"/m);
-    expect(m2?.[1]).toBe(policy.codex.subagents.tiers.tier2.model);
   });
 
-  it('keeps pane prompts and the generated Codex contract capability-aware', () => {
-    const prompts = PANE_ROLE_FILES.map((file) => [
-      file,
-      fs.readFileSync(path.join(PLUGIN_DIR, 'agents', file), 'utf-8'),
-    ] as const);
+  it('keeps role bodies compact and runtime-neutral while the dispatcher owns runtime semantics', () => {
+    for (const file of PANE_ROLE_FILES) {
+      const body = bodyAfterFrontmatter(
+        fs.readFileSync(path.join(PLUGIN_DIR, 'agents', file), 'utf-8'),
+      );
+      for (const heading of ['Mission', 'Workflow', 'Constraints', 'Deliverable']) {
+        expect(body, file).toContain(`## ${heading}`);
+      }
+      expect(body.split('\n').length, file).toBeLessThan(45);
+      expect(body, file).not.toMatch(
+        /Codex|Claude Code|tmup-cli|TMUP_DB|TMUP_SESSION_DIR|tmup-tier|max_threads|max_depth|native child|named-role|model-explicit/i,
+      );
+    }
+
     const script = fs.readFileSync(path.join(PLUGIN_DIR, 'scripts/dispatch-agent.sh'), 'utf-8');
-    expect(script).not.toContain('\\`tmup-tier1\\`');
-    prompts.push([
-      'scripts/dispatch-agent.sh',
-      script,
-    ]);
-
-    for (const [file, prompt] of prompts) {
-      expect(prompt, file).not.toMatch(/pane root may dispatch `tmup-tier|model pinning is preserved/i);
-      expectCapabilityRouting(prompt, file);
-    }
+    expect(script).not.toMatch(
+      /TMUP_ENABLE_EXPERIMENTAL_CODEX_TIERS|TMUP_CODEX_CATALOG_VALIDATION_RECEIPT|TMUP_CODEX_NAMED_ROLE_SELECTOR_RECEIPT|EXPERIMENTAL_TIER_CONTRACT/,
+    );
+    expect(script).toMatch(/tmup omits -m[^\n]*installed Codex CLI resolves/i);
+    expect(script).toMatch(/Coordination Mode — SUPERVISOR OWNED/i);
+    expect(script).toMatch(/Direct tmup SQLite[^\n]*tmup-cli lifecycle writes[^\n]*unavailable/i);
+    expect(script).toContain('sandbox_workspace_write.network_access=false');
+    expect(script).toContain('--add-dir "\\$TMUP_TASK_TMPDIR"');
+    expect(script).toContain('--trusted-shared-state-receipt');
+    expect(script).toContain('--allow-unconfined-claude-code');
+    expect(script).toContain('--model-validation-receipt');
   });
 
-  it('keeps tmup runtime docs aligned with reviewed capability and policy semantics', () => {
+  it('keeps all runtime documents aligned with the safe-default and explicit escape hatches', () => {
     for (const file of RUNTIME_DOC_FILES) {
       const markdown = fs.readFileSync(path.join(PLUGIN_DIR, file), 'utf-8');
-
       expect(markdown, file).not.toMatch(
-        /model_context_window|model_auto_compact_token_limit|features\.undo|danger-full-access|agents\.max_depth=2|runtime contract \(model, context, compaction|`tmup-tier[12]`[^\n]*`gpt-5\.5`/i,
+        /auto-detected Codex model|session directory[^\n]*only additional[^\n]*--add-dir|positive sandbox write[^\n]*(?:unproven|pending)|model_preference/i,
       );
-      expectCurrentRuntimeDoc(markdown, file);
-      expectCapabilityRouting(markdown, file);
+      expectSafeRuntimeDoc(markdown, file);
     }
   });
 
-  it('keeps active user docs and the archival trace consistent with current runtime semantics', () => {
+  it('keeps user-facing boundary docs current and the old dispatch trace explicitly archival', () => {
     const readme = fs.readFileSync(path.join(PLUGIN_DIR, 'README.md'), 'utf-8');
-    expect(readme).not.toMatch(/up to 1M context|delegates might delegate|each potentially nesting more/i);
-    expect(readme).not.toMatch(/\|\s*(?:Opus|Sonnet)[^\n]*\*\*\d+(?:\.\d+)?M tokens\*\*/i);
-    expect(readme).toMatch(/native children inherit[^\n]*pane model/i);
-    expect(readme).toMatch(/max_depth(?:=|:\s*)1/i);
-    expect(readme).toMatch(/context[^\n]*resolved Codex model catalog/i);
+    expect(readme).toMatch(/safe default[^\n]*supervisor owns/i);
+    expect(readme).toMatch(/only extra[^\n]*--add-dir[^\n]*exact[^\n]*task temp/i);
+    expect(readme).toMatch(/MCP path[^\n]*supports only the safe Codex lane/i);
+    expect(readme).toMatch(/Static `tmup-tier1`[^\n]*remain dormant[^\n]*default-off/i);
 
     const faq = fs.readFileSync(path.join(PLUGIN_DIR, 'docs/FAQ.md'), 'utf-8');
-    expect(faq).not.toMatch(/danger-full-access|unsandboxed|full disk|up to 1M tokens|GPT-5\.4/i);
-    expect(faq).toMatch(/workspace-write/i);
-    expect(faq).toMatch(/--add-dir[^\n]*session/i);
-    expect(faq).toMatch(/resolved Codex model catalog/i);
+    expect(faq).toMatch(/Safe Codex workers do not receive shared session state/i);
+    expect(faq).toMatch(/Controller artifacts are separate/i);
+    expect(faq).toMatch(/Sandbox observations are runtime-specific/i);
+    expect(faq).toMatch(/Trusted modes are direct-only escape hatches/i);
 
     const architecture = fs.readFileSync(path.join(PLUGIN_DIR, 'docs/ARCHITECTURE.md'), 'utf-8');
-    expect(architecture).not.toMatch(/full disk access/i);
-    expect(architecture).toMatch(/workspace-write/i);
-    expect(architecture).toMatch(/--add-dir[^\n]*session/i);
+    expect(architecture).toMatch(/Controller-owned coordination state/i);
+    expect(architecture).toMatch(/Codex Workers \(safe default\)/i);
+    expect(architecture).toMatch(/direct-only escape hatches/i);
+    expect(architecture).toMatch(/advisory supervisor-routing policy/i);
+
+    const configuration = fs.readFileSync(path.join(PLUGIN_DIR, 'docs/CONFIGURATION.md'), 'utf-8');
+    expect(configuration).toMatch(/autonomy tiers[\s\S]*not mechanically enforce/i);
 
     const traceHead = fs.readFileSync(path.join(PLUGIN_DIR, 'reports/dispatch-flow-trace.md'), 'utf-8')
       .split('\n')

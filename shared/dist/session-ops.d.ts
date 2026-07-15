@@ -1,4 +1,5 @@
 import type { SessionRegistry } from './types.js';
+export declare function resolveStateRoot(environment?: NodeJS.ProcessEnv): string;
 export declare function validateSessionName(name: string): void;
 export declare function isValidSessionId(id: string): boolean;
 export declare function readRegistry(): SessionRegistry;

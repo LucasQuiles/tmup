@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # pane-manager.sh — Manage pane reservations in grid-state.json
 set -euo pipefail
 source "$(dirname "$0")/lib/common.sh"

@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # portable-lock.sh — grid-state lock helpers for Linux and macOS.
 #
 # Prefer flock when available. macOS does not ship flock by default, so fall

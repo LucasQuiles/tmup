@@ -1,10 +1,11 @@
 name = "tmup-tier1"
-description = "High-capability tmup leaf for bounded implementation or verification."
+description = "Experimental adapter metadata for a high-capability tmup leaf."
 model = "gpt-5.6-terra"
 model_reasoning_effort = "high"
 developer_instructions = """
 You are a direct leaf inside a tmup pane worker's assigned lane.
 Complete one bounded implementation or verification deliverable.
+This pinned model and effort require live catalog validation and a named-role selector receipt before selection.
 
 Rules:
 - Stay inside the assigned outcome, paths, mutations, and stop conditions.

@@ -13,9 +13,9 @@ These are the tools Claude Code uses to orchestrate. They're exposed via the MCP
 | `tmup_init` | Initialize session (DB + registry; grid setup is separate) | Opening the office |
 | `tmup_status` | DAG overview + dead claim recovery | Morning standup, but useful |
 | `tmup_next_action` | "What should I do next?" decision tree | The one coworker who always knows |
-| `tmup_pause` | Pause session, notify all agents | Fire alarm (orderly) |
+| `tmup_pause` | Record pause event/messages; safe-pane delivery uses reprompt | Fire alarm logbook |
 | `tmup_resume` | Resume paused session | False alarm, back to work |
-| `tmup_teardown` | Shut everything down | Closing time |
+| `tmup_teardown` | Record teardown event/messages; grid shutdown is separate | Closing checklist |
 
 ### Task management
 
@@ -34,10 +34,10 @@ These are the tools Claude Code uses to orchestrate. They're exposed via the MCP
 | Tool | What it does | The vibe |
 |------|-------------|----------|
 | `tmup_checkpoint` | Post progress update | "Still alive, still working" |
-| `tmup_send_message` | Inter-agent messaging | Slack but for robots |
+| `tmup_send_message` | Store coordination/audit message; safe-pane delivery uses reprompt | Slack archive for robots |
 | `tmup_inbox` | Check unread messages | The anxiety |
 | `tmup_dispatch` | Launch Codex worker in tmux pane | Hiring |
-| `tmup_harvest` | Capture pane scrollback output | Reading over their shoulder |
+| `tmup_harvest` | Capture scrollback, framed and labeled as untrusted worker output | Reading over their shoulder |
 | `tmup_reprompt` | Send follow-up text into a live worker pane | Manager drive-by |
 | `tmup_heartbeat` | Register agent liveness | Pulse check |
 
@@ -47,9 +47,9 @@ For detailed input/output schemas, see [skills/tmup/REFERENCE.md](../skills/tmup
 
 ## CLI commands (10)
 
-These are the commands Codex workers use from inside their panes. They're exposed via `tmup-cli`, a lightweight CLI binary that talks directly to the shared SQLite database. Claude Code workers (`worker_type='claude_code'`) call the MCP `tmup_heartbeat` tool instead — the same payload via a different transport. The platform enforces a background heartbeat loop for both worker types, so the CLI/MCP call is defensive against the model ignoring its prompt, not the primary liveness signal.
+`tmup-cli` is the low-level controller and trusted-compatibility interface to the SQLite coordination database. Safe MCP-dispatched Codex commands do not receive `TMUP_DB` or `TMUP_SESSION_DIR`, and their prompt does not advertise this CLI. The lead uses MCP tools for claims, checkpoints, messages, completion/failure transitions, and harvesting; the protected launcher invokes the CLI heartbeat with controller-held identity.
 
-Codex workers use this CLI from inside their tmux pane — it's faster than MCP (no server round-trip, just opens the DB file, writes, prints JSON, exits). Claude Code workers use the MCP tools from the enclosing Claude Code session because they have no pane shell; the dispatch-agent.sh launcher pipes the prompt via stdin and captures output to `session-output-<agent_id>.json`. Both transports write to the same SQLite database with the same schema.
+A Codex worker may call these commands only in the separately gated trusted shared-state mode. That direct mode requires policy enablement, `--trusted-shared-state`, and `--trusted-shared-state-receipt`; it restores the session add-dir and database/session variables, so its peer-integrity boundary is advisory. Direct one-shot Claude Code workers are likewise outside the safe MCP path; their protected launcher owns heartbeat and output capture.
 
 ```bash
 tmup-cli claim [--role <role>]              # Claim next available task
@@ -70,7 +70,7 @@ All output is JSON to stdout. Errors are `{"ok": false, "error": "CLI_ERROR", "m
 
 ### Environment variables
 
-Set automatically by `dispatch-agent.sh`:
+The protected launcher supplies the identity needed for its controller-owned heartbeat. The full set below is exposed to worker commands only in trusted shared-state mode; safe worker commands receive agent ID, pane, working directory, optional task ID, and task-temp variables, but not the database or session paths.
 
 | Variable | What | Example |
 |----------|------|---------|
@@ -78,5 +78,6 @@ Set automatically by `dispatch-agent.sh`:
 | `TMUP_DB` | Path to shared SQLite database | `~/.local/state/tmup/.../tmup.db` |
 | `TMUP_PANE_INDEX` | Which tmux pane this agent lives in | `3` |
 | `TMUP_SESSION_NAME` | tmux session name | `tmup-efdfdf` |
+| `TMUP_SESSION_DIR` | tmup session-state directory | `~/.local/state/tmup/tmup-efdfdf` |
 | `TMUP_TASK_ID` | Pre-assigned task (if dispatched with one) | `007` |
 | `TMUP_WORKING_DIR` | Project directory | `/path/to/your/project` |

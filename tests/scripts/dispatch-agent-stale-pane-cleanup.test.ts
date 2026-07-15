@@ -15,6 +15,7 @@ describe('dispatch-agent.sh pane occupancy containment', () => {
   let gridStatePath: string;
   let fakeBin: string;
   let tmuxStateDir: string;
+  let workingDir: string;
 
   beforeEach(() => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tmup-dispatch-occupancy-'));
@@ -24,10 +25,15 @@ describe('dispatch-agent.sh pane occupancy containment', () => {
     gridStatePath = path.join(gridDir, 'grid-state.json');
     fakeBin = path.join(tmpHome, 'fakebin');
     tmuxStateDir = path.join(tmpHome, 'tmux-state');
+    workingDir = path.join(tmpHome, 'workspace');
+    process.env.TMUP_TEST_CONTROLLER_OVERRIDE = '1';
+    process.env.TMUP_TEST_CONTROLLER_TOOL_DIRS = fakeBin;
 
     fs.mkdirSync(gridDir, { recursive: true });
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.mkdirSync(tmuxStateDir, { recursive: true });
+    fs.mkdirSync(workingDir, { recursive: true });
+    fs.writeFileSync(path.join(stateDir, 'tmup.db'), '');
 
     writeGridState({ index: 1, pane_id: '%1', status: 'available' });
     writeTmuxStub();
@@ -39,6 +45,8 @@ describe('dispatch-agent.sh pane occupancy containment', () => {
   });
 
   afterEach(() => {
+    delete process.env.TMUP_TEST_CONTROLLER_OVERRIDE;
+    delete process.env.TMUP_TEST_CONTROLLER_TOOL_DIRS;
     try {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     } catch {}
@@ -184,9 +192,8 @@ describe('dispatch-agent.sh pane occupancy containment', () => {
         '--prompt', 'Pane occupancy verification',
         '--agent-id', agentId,
         '--db-path', path.join(stateDir, 'tmup.db'),
-        '--working-dir', PLUGIN_DIR,
+        '--working-dir', workingDir,
         '--pane-index', '1',
-        '--worker-type', 'claude_code',
       ], {
         env: {
           ...process.env,
@@ -232,6 +239,10 @@ cmd="\${1:-}"
 shift || true
 
 case "$cmd" in
+  list-panes)
+    [[ "$*" == *'-s -t =test-session'* ]] || exit 1
+    printf '1 %%1\\n'
+    ;;
   display-message)
     if [[ "\${TMUX_FAKE_DISPLAY_FAIL:-0}" == "1" ]]; then exit 1; fi
     if [[ "$*" == *'pane_pid'* ]]; then
@@ -246,6 +257,14 @@ case "$cmd" in
     ;;
   send-keys)
     printf '%s\\n' "$*" >> ${sendKeysLog}
+    ;;
+  capture-pane)
+    count_file="$HOME/.tmup-test-capture-count"
+    count=0
+    [[ ! -f "$count_file" ]] || count=$(cat "$count_file")
+    count=$((count + 1))
+    printf '%s' "$count" > "$count_file"
+    printf 'Working (fake-%s)\\n❯\\n' "$count"
     ;;
   *)
     printf 'unexpected tmux command: %s\\n' "$cmd" >&2

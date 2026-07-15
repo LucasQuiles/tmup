@@ -1,23 +1,60 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+
+const isolatedState = vi.hoisted(() => {
+  const originalStateRoot = process.env.TMUP_STATE_ROOT;
+  const base = (process.env.TMPDIR || '/tmp').replace(/\/+$/, '');
+  const stateRoot = `${base}/tmup-session-ops-${process.pid}-${process.env.VITEST_POOL_ID || '0'}`;
+  process.env.TMUP_STATE_ROOT = stateRoot;
+  return { originalStateRoot, stateRoot };
+});
 
 // session-ops uses process.env.HOME for STATE_ROOT, so we can test registry logic
 // by importing the functions directly. The lock and registry tests use real filesystem.
 import {
   readRegistry, initSession, getCurrentSession,
   setCurrentSession, removeFromRegistry, getSessionDbPath, getSessionDir,
-  getSessionProjectDir,
+  getSessionProjectDir, resolveStateRoot,
 } from '../../shared/src/session-ops.js';
 
 describe('session-ops', () => {
-  const STATE_ROOT = path.join(process.env.HOME ?? '/tmp', '.local/state/tmup');
+  const STATE_ROOT = isolatedState.stateRoot;
   const REGISTRY_PATH = path.join(STATE_ROOT, 'registry.json');
   const CURRENT_SESSION_PATH = path.join(STATE_ROOT, 'current-session');
   let originalRegistry: string | null = null;
   let originalCurrentSession: string | null = null;
   let createdSessionIds: string[] = [];
+
+  afterAll(() => {
+    try { fs.rmSync(STATE_ROOT, { recursive: true, force: true }); } catch {}
+    if (isolatedState.originalStateRoot === undefined) {
+      delete process.env.TMUP_STATE_ROOT;
+    } else {
+      process.env.TMUP_STATE_ROOT = isolatedState.originalStateRoot;
+    }
+  });
+
+  describe('state-root resolution', () => {
+    it('normalizes an explicit absolute state root', () => {
+      expect(resolveStateRoot({
+        HOME: '/ignored',
+        TMUP_STATE_ROOT: '/tmp/tmup-state/nested/../root/',
+      })).toBe('/tmp/tmup-state/root');
+    });
+
+    it('uses HOME only when no explicit state root is present', () => {
+      expect(resolveStateRoot({ HOME: '/tmp/tmup-home' }))
+        .toBe('/tmp/tmup-home/.local/state/tmup');
+    });
+
+    it('rejects relative, empty, and filesystem-root state roots', () => {
+      expect(() => resolveStateRoot({ HOME: '/tmp', TMUP_STATE_ROOT: 'relative/state' })).toThrow(/absolute/);
+      expect(() => resolveStateRoot({ HOME: '/tmp', TMUP_STATE_ROOT: '' })).toThrow();
+      expect(() => resolveStateRoot({ HOME: '/tmp', TMUP_STATE_ROOT: '/' })).toThrow(/filesystem root/);
+    });
+  });
 
   beforeEach(() => {
     // Save originals

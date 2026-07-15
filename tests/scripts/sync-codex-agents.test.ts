@@ -23,8 +23,30 @@ describe('sync-codex-agents.sh', () => {
     } catch {}
   });
 
-  it('copies tmup custom agent definitions into ~/.codex/agents', () => {
+  it('keeps experimental agent definitions out of the active palette by default', () => {
     const output = runSync();
+
+    expect(output).toContain('Experimental Codex tiers disabled');
+    expect(fs.existsSync(targetDir)).toBe(false);
+  });
+
+  it('fails closed when enablement lacks catalog and named-role selector receipts', () => {
+    expect(() => runSync({ TMUP_ENABLE_EXPERIMENTAL_CODEX_TIERS: 'true' })).toThrowError(
+      /catalog.*named-role selector.*receipt/i,
+    );
+    expect(fs.existsSync(targetDir)).toBe(false);
+  });
+
+  it('fails closed when default-off mode finds previously installed tier files', () => {
+    runEnabledSync();
+
+    expect(() => runSync()).toThrowError(/disabled.*installed.*remove/i);
+    expect(fs.existsSync(path.join(targetDir, 'tmup-tier1.toml'))).toBe(true);
+    expect(fs.existsSync(path.join(targetDir, 'tmup-tier2.toml'))).toBe(true);
+  });
+
+  it('copies tmup custom agent definitions only after explicit post-canary enablement', () => {
+    const output = runEnabledSync();
 
     expect(output).toContain('Synced 2 agent definition(s)');
 
@@ -37,23 +59,40 @@ describe('sync-codex-agents.sh', () => {
     }
   });
 
-  it('is idempotent when the target files are already current', () => {
-    runSync();
+  it('installs only the exact owned tier list and ignores unrelated source TOMLs', () => {
+    const sourceDir = path.join(tmpHome, 'source-with-unowned-file');
+    fs.mkdirSync(sourceDir, { recursive: true });
+    for (const fileName of ['tmup-tier1.toml', 'tmup-tier2.toml']) {
+      fs.copyFileSync(path.join(SOURCE_DIR, fileName), path.join(sourceDir, fileName));
+    }
+    fs.writeFileSync(path.join(sourceDir, 'unowned-future-role.toml'), 'name = "unowned"\n');
 
-    const secondRunOutput = runSync();
+    const output = runEnabledSync({ TMUP_CODEX_AGENT_SOURCE_DIR: sourceDir });
+
+    expect(output).toContain('Synced 2 agent definition(s)');
+    expect(fs.existsSync(path.join(targetDir, 'unowned-future-role.toml'))).toBe(false);
+    expect(fs.readFileSync(SYNC_CODEX_AGENTS_SH, 'utf-8')).not.toContain(
+      'SOURCE_FILES=("$SOURCE_DIR"/*.toml)',
+    );
+  });
+
+  it('is idempotent when the target files are already current', () => {
+    runEnabledSync();
+
+    const secondRunOutput = runEnabledSync();
 
     expect(secondRunOutput).toBe('Agent definitions up to date');
   });
 
   it('repairs drifted installed agent definitions even when the target file is newer', () => {
-    runSync();
+    runEnabledSync();
 
     const targetPath = path.join(targetDir, 'tmup-tier1.toml');
     fs.writeFileSync(targetPath, 'name = "drifted"\n');
     const future = new Date(Date.now() + 60_000);
     fs.utimesSync(targetPath, future, future);
 
-    const output = runSync();
+    const output = runEnabledSync();
 
     expect(output).toContain('Synced 1 agent definition(s)');
     expect(fs.readFileSync(targetPath, 'utf-8')).toBe(
@@ -61,12 +100,12 @@ describe('sync-codex-agents.sh', () => {
     );
   });
 
-  it('fails closed when the source directory has no tmup agent definitions', () => {
+  it('fails closed when an owned tmup agent definition is missing', () => {
     const emptySourceDir = path.join(tmpHome, 'empty-source');
     fs.mkdirSync(emptySourceDir, { recursive: true });
 
-    expect(() => runSync({ TMUP_CODEX_AGENT_SOURCE_DIR: emptySourceDir })).toThrowError(
-      /no tmup Codex agent definitions found/i,
+    expect(() => runEnabledSync({ TMUP_CODEX_AGENT_SOURCE_DIR: emptySourceDir })).toThrowError(
+      /required tmup Codex agent definition missing/i,
     );
   });
 
@@ -76,10 +115,20 @@ describe('sync-codex-agents.sh', () => {
     fs.chmodSync(lockedTargetDir, 0o500);
 
     try {
-      expect(() => runSync({ TMUP_CODEX_AGENT_TARGET_DIR: lockedTargetDir })).toThrow();
+      expect(() => runEnabledSync({ TMUP_CODEX_AGENT_TARGET_DIR: lockedTargetDir })).toThrow();
     } finally {
       fs.chmodSync(lockedTargetDir, 0o700);
     }
+  });
+
+  it('rejects symlinked target definitions instead of following them', () => {
+    const outsideFile = path.join(tmpHome, 'outside-agent.toml');
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.writeFileSync(outsideFile, 'outside-content\n');
+    fs.symlinkSync(outsideFile, path.join(targetDir, 'tmup-tier1.toml'));
+
+    expect(() => runEnabledSync()).toThrowError(/symlink/i);
+    expect(fs.readFileSync(outsideFile, 'utf-8')).toBe('outside-content\n');
   });
 
   function runSync(overrides: NodeJS.ProcessEnv = {}): string {
@@ -92,5 +141,14 @@ describe('sync-codex-agents.sh', () => {
       encoding: 'utf-8',
       timeout: 30000,
     }).trim();
+  }
+
+  function runEnabledSync(overrides: NodeJS.ProcessEnv = {}): string {
+    return runSync({
+      TMUP_ENABLE_EXPERIMENTAL_CODEX_TIERS: 'true',
+      TMUP_CODEX_CATALOG_VALIDATION_RECEIPT: 'catalog-canary-pass',
+      TMUP_CODEX_NAMED_ROLE_SELECTOR_RECEIPT: 'selector-canary-pass',
+      ...overrides,
+    });
   }
 });

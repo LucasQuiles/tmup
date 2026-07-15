@@ -21,10 +21,10 @@ describe('grid-registry.sh', () => {
     try { fs.rmSync(tmpHome, { recursive: true }); } catch {}
   });
 
-  function runShell(script: string): string {
+  function runShell(script: string, env: NodeJS.ProcessEnv = {}): string {
     // Using execFileSync with bash -c is safe here since script is a hardcoded test string
     return execFileSync('bash', ['-c', script], {
-      env: { ...process.env, HOME: tmpHome },
+      env: { ...process.env, HOME: tmpHome, ...env },
       encoding: 'utf-8',
       timeout: 10000,
     }).trim();
@@ -65,6 +65,25 @@ describe('grid-registry.sh', () => {
       const sessions = registry.sessions as Record<string, Record<string, unknown>>;
       const entry = sessions['test-session'];
       expect(entry.project_dir).toBe(realDir);
+    });
+
+    it('uses one normalized custom state root for the registry and derived database path', () => {
+      const customRootInput = path.join(tmpHome, 'custom', 'nested', '..', 'state');
+      const customRoot = path.join(tmpHome, 'custom', 'state');
+      const projectDir = path.join(tmpHome, 'custom-project');
+      fs.mkdirSync(projectDir, { recursive: true });
+
+      runShell(
+        `source "${GRID_REGISTRY_SH}" && registry_register "custom-session" "${projectDir}"`,
+        { TMUP_STATE_ROOT: customRootInput },
+      );
+
+      const customRegistry = JSON.parse(
+        fs.readFileSync(path.join(customRoot, 'registry.json'), 'utf-8'),
+      ) as { sessions: Record<string, { db_path: string }> };
+      expect(customRegistry.sessions['custom-session']?.db_path)
+        .toBe(path.join(customRoot, 'custom-session', 'tmup.db'));
+      expect(fs.existsSync(registryFile)).toBe(false);
     });
   });
 

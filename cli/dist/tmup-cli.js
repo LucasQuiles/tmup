@@ -635,14 +635,22 @@ function postCheckpoint(db, taskId, agentId, message) {
 
 // ../shared/dist/session-ops.js
 import path3 from "node:path";
-function getStateRoot() {
-  const home = process.env.HOME;
-  if (!home) {
+function resolveStateRoot(environment = process.env) {
+  const configured = Object.prototype.hasOwnProperty.call(environment, "TMUP_STATE_ROOT") ? environment.TMUP_STATE_ROOT : void 0;
+  const raw = configured ?? (environment.HOME ? path3.join(environment.HOME, ".local/state/tmup") : void 0);
+  if (!raw) {
     throw new Error("HOME environment variable is not set \u2014 cannot determine state directory");
   }
-  return path3.join(home, ".local/state/tmup");
+  if (!path3.isAbsolute(raw)) {
+    throw new Error("TMUP_STATE_ROOT must be an absolute path");
+  }
+  const normalized = path3.resolve(raw);
+  if (normalized === path3.parse(normalized).root) {
+    throw new Error("TMUP_STATE_ROOT must not resolve to the filesystem root");
+  }
+  return normalized;
 }
-var STATE_ROOT = getStateRoot();
+var STATE_ROOT = resolveStateRoot();
 var REGISTRY_PATH = path3.join(STATE_ROOT, "registry.json");
 var REGISTRY_LOCK = path3.join(STATE_ROOT, "registry.lock");
 var CURRENT_SESSION_PATH = path3.join(STATE_ROOT, "current-session");

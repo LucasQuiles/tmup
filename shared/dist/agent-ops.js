@@ -47,6 +47,10 @@ export function recoverDeadClaim(db, agentId, staleThresholdSeconds = STALE_AGEN
                 logEvent(db, agentId, 'agent_heartbeat_stale', { action: 'refreshed', reason: 'pane_alive' });
                 return [];
             }
+            if (liveness === 'unknown') {
+                logEvent(db, agentId, 'agent_heartbeat_stale', { action: 'retained', reason: 'pane_liveness_unknown' });
+                return [];
+            }
         }
         const tasks = db.prepare("SELECT * FROM tasks WHERE owner = ? AND status = 'claimed'").all(agentId);
         for (const task of tasks) {

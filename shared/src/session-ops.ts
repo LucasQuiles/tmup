@@ -4,14 +4,24 @@ import crypto from 'node:crypto';
 import type { SessionRegistry, RegistryEntry } from './types.js';
 import { openDatabase, closeDatabase } from './db.js';
 
-function getStateRoot(): string {
-  const home = process.env.HOME;
-  if (!home) {
+export function resolveStateRoot(environment: NodeJS.ProcessEnv = process.env): string {
+  const configured = Object.prototype.hasOwnProperty.call(environment, 'TMUP_STATE_ROOT')
+    ? environment.TMUP_STATE_ROOT
+    : undefined;
+  const raw = configured ?? (environment.HOME ? path.join(environment.HOME, '.local/state/tmup') : undefined);
+  if (!raw) {
     throw new Error('HOME environment variable is not set — cannot determine state directory');
   }
-  return path.join(home, '.local/state/tmup');
+  if (!path.isAbsolute(raw)) {
+    throw new Error('TMUP_STATE_ROOT must be an absolute path');
+  }
+  const normalized = path.resolve(raw);
+  if (normalized === path.parse(normalized).root) {
+    throw new Error('TMUP_STATE_ROOT must not resolve to the filesystem root');
+  }
+  return normalized;
 }
-const STATE_ROOT = getStateRoot();
+const STATE_ROOT = resolveStateRoot();
 const REGISTRY_PATH = path.join(STATE_ROOT, 'registry.json');
 const REGISTRY_LOCK = path.join(STATE_ROOT, 'registry.lock');
 const CURRENT_SESSION_PATH = path.join(STATE_ROOT, 'current-session');

@@ -1,10 +1,17 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # config.sh — Shared configuration loader for tmup plugin
 # Reads config/policy.yaml via yq, falls back to defaults.
 
 _cfg_this_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _cfg_scripts_dir="$(dirname "$_cfg_this_dir")"
 _cfg_plugin_dir="$(dirname "$_cfg_scripts_dir")"
+source "$_cfg_this_dir/state-root.sh"
+if ! _tmup_resolve_state_root CFG_STATE_ROOT; then
+  if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    return 1
+  fi
+  exit 1
+fi
 
 if [[ -z "${CFG_CONFIG_DIR:-}" ]]; then
   CFG_CONFIG_DIR="$_cfg_plugin_dir/config"
@@ -36,33 +43,6 @@ _cfg_read_yaml() {
     return
   fi
   echo "$default"
-}
-
-# Resolve the Codex model dynamically so tmup tracks the installed Codex CLI
-# rather than a frozen literal that silently rots across upgrades. Priority
-# (order of necessity):
-#   1. explicit `codex.model` pin in policy.yaml (any value except "auto")
-#   2. "auto" → the live Codex default from ${CODEX_HOME:-~/.codex}/config.toml
-#   3. policy.yaml `codex.model_preference[0]` (first fallback) when no live config
-#   4. built-in last-resort default
-# (The env override TMUP_CODEX_MODEL is applied downstream in dispatch-agent.sh.)
-_cfg_detect_codex_model() {
-  local codex_home="${CODEX_HOME:-$HOME/.codex}"
-  local detected=""
-  if [[ -r "$codex_home/config.toml" ]]; then
-    detected=$(sed -nE 's/^[[:space:]]*model[[:space:]]*=[[:space:]]*"?([^"#[:space:]]+)"?.*/\1/p' "$codex_home/config.toml" | head -1)
-  fi
-  if [[ -n "$detected" ]]; then
-    echo "$detected"
-    return 0
-  fi
-  local pref
-  pref=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.model_preference[0] // ""' "")
-  if [[ -n "$pref" && "$pref" != "null" ]]; then
-    echo "$pref"
-    return 0
-  fi
-  echo "gpt-5.5"
 }
 
 _cfg_validate_int() {
@@ -132,9 +112,9 @@ _raw_heartbeat_interval=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.dag.hea
 _raw_claimed_warning=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.dag.claimed_duration_warning_seconds // 1800' "1800")
 _raw_reprompt_timeout=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.timeouts.send_reprompt_seconds // 10' "10")
 _raw_codex_model=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.model // "auto"' "auto")
-if [[ "$_raw_codex_model" == "auto" || -z "$_raw_codex_model" ]]; then
-  _raw_codex_model=$(_cfg_detect_codex_model)
-fi
+_raw_codex_explicit_model_pins_enabled=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.explicit_model_pins_enabled // false' "false")
+_raw_codex_trusted_shared_state_enabled=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.trusted_shared_state_enabled // false' "false")
+_raw_claude_code_trusted_unsandboxed_enabled=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.claude_code.trusted_unsandboxed_enabled // false' "false")
 _raw_codex_approval_policy=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.approval_policy // "never"' "never")
 _raw_codex_sandbox=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.sandbox // "workspace-write"' "workspace-write")
 _raw_codex_no_alt_screen=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.no_alt_screen // true' "true")
@@ -147,7 +127,7 @@ _raw_codex_service_tier=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.s
 _raw_codex_tool_output_limit=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.tool_output_token_limit // 50000' "50000")
 _raw_codex_web_search=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.web_search // "live"' "live")
 _raw_codex_history=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.history_persistence // "save-all"' "save-all")
-_raw_codex_shell_inherit=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.shell_env_inherit // "all"' "all")
+_raw_codex_shell_inherit=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.shell_env_inherit // "core"' "core")
 _raw_codex_shell_snapshot=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.shell_snapshot // true' "true")
 _raw_codex_request_compression=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.enable_request_compression // true' "true")
 _raw_codex_notifications=$(_cfg_read_yaml "$CFG_CONFIG_DIR/policy.yaml" '.codex.notifications // true' "true")
@@ -178,13 +158,15 @@ _cfg_validate_session_id() {
 CFG_SESSION_PREFIX="$_raw_prefix"
 CFG_SESSION_NAME=""
 if [[ -n "${TMUP_SESSION_NAME:-}" ]]; then
-  if _cfg_validate_session_name "$TMUP_SESSION_NAME"; then
+  # TMUP_SESSION_NAME carries the active generated session ID, not the
+  # user-facing prefix. Accept the same 71-character contract as the pointer.
+  if _cfg_validate_session_id "$TMUP_SESSION_NAME"; then
     CFG_SESSION_NAME="$TMUP_SESSION_NAME"
   else
     echo "config.sh: invalid TMUP_SESSION_NAME '${TMUP_SESSION_NAME}', ignoring" >&2
   fi
 else
-  _pointer_file="$HOME/.local/state/tmup/current-session"
+  _pointer_file="${CFG_STATE_ROOT%/}/current-session"
   if [[ -f "$_pointer_file" ]]; then
     _raw_session=$(cat "$_pointer_file" 2>/dev/null) || _raw_session=""
     if [[ -n "$_raw_session" ]]; then
@@ -210,9 +192,12 @@ CFG_TEARDOWN_GRACE=$(_cfg_validate_int "CFG_TEARDOWN_GRACE" "$_raw_teardown_grac
 CFG_HEARTBEAT_INTERVAL=$(_cfg_validate_int "CFG_HEARTBEAT_INTERVAL" "$_raw_heartbeat_interval" "60")
 CFG_CLAIMED_WARNING=$(_cfg_validate_int "CFG_CLAIMED_WARNING" "$_raw_claimed_warning" "1800")
 CFG_REPROMPT_TIMEOUT=$(_cfg_validate_int "CFG_REPROMPT_TIMEOUT" "$_raw_reprompt_timeout" "10")
-CFG_CODEX_MODEL=$(_cfg_validate_nonempty "CFG_CODEX_MODEL" "$_raw_codex_model" "gpt-5.5")
+CFG_CODEX_MODEL=$(_cfg_validate_nonempty "CFG_CODEX_MODEL" "$_raw_codex_model" "auto")
+CFG_CODEX_EXPLICIT_MODEL_PINS_ENABLED=$(_cfg_validate_bool "CFG_CODEX_EXPLICIT_MODEL_PINS_ENABLED" "$_raw_codex_explicit_model_pins_enabled" "false")
+CFG_CODEX_TRUSTED_SHARED_STATE_ENABLED=$(_cfg_validate_bool "CFG_CODEX_TRUSTED_SHARED_STATE_ENABLED" "$_raw_codex_trusted_shared_state_enabled" "false")
+CFG_CLAUDE_CODE_TRUSTED_UNSANDBOXED_ENABLED=$(_cfg_validate_bool "CFG_CLAUDE_CODE_TRUSTED_UNSANDBOXED_ENABLED" "$_raw_claude_code_trusted_unsandboxed_enabled" "false")
 CFG_CODEX_APPROVAL_POLICY=$(_cfg_validate_enum "CFG_CODEX_APPROVAL_POLICY" "$_raw_codex_approval_policy" "never" "untrusted" "on-failure" "on-request" "never")
-CFG_CODEX_SANDBOX=$(_cfg_validate_enum "CFG_CODEX_SANDBOX" "$_raw_codex_sandbox" "workspace-write" "read-only" "workspace-write" "danger-full-access")
+CFG_CODEX_SANDBOX=$(_cfg_validate_enum "CFG_CODEX_SANDBOX" "$_raw_codex_sandbox" "workspace-write" "workspace-write")
 CFG_CODEX_NO_ALT_SCREEN=$(_cfg_validate_bool "CFG_CODEX_NO_ALT_SCREEN" "$_raw_codex_no_alt_screen" "true")
 CFG_CODEX_PLAN_FIRST=$(_cfg_validate_bool "CFG_CODEX_PLAN_FIRST" "$_raw_codex_plan_first" "true")
 CFG_CODEX_REASONING_EFFORT=$(_cfg_validate_enum "CFG_CODEX_REASONING_EFFORT" "$_raw_codex_reasoning_effort" "high" "none" "minimal" "low" "medium" "high" "xhigh")
@@ -223,7 +208,7 @@ CFG_CODEX_SERVICE_TIER=$(_cfg_validate_enum "CFG_CODEX_SERVICE_TIER" "$_raw_code
 CFG_CODEX_TOOL_OUTPUT_LIMIT=$(_cfg_validate_int "CFG_CODEX_TOOL_OUTPUT_LIMIT" "$_raw_codex_tool_output_limit" "50000")
 CFG_CODEX_WEB_SEARCH=$(_cfg_validate_enum "CFG_CODEX_WEB_SEARCH" "$_raw_codex_web_search" "live" "disabled" "cached" "live")
 CFG_CODEX_HISTORY=$(_cfg_validate_enum "CFG_CODEX_HISTORY" "$_raw_codex_history" "save-all" "save-all" "none")
-CFG_CODEX_SHELL_INHERIT=$(_cfg_validate_enum "CFG_CODEX_SHELL_INHERIT" "$_raw_codex_shell_inherit" "all" "all" "core" "none")
+CFG_CODEX_SHELL_INHERIT=$(_cfg_validate_enum "CFG_CODEX_SHELL_INHERIT" "$_raw_codex_shell_inherit" "core" "core" "none")
 CFG_CODEX_SHELL_SNAPSHOT=$(_cfg_validate_bool "CFG_CODEX_SHELL_SNAPSHOT" "$_raw_codex_shell_snapshot" "true")
 CFG_CODEX_REQUEST_COMPRESSION=$(_cfg_validate_bool "CFG_CODEX_REQUEST_COMPRESSION" "$_raw_codex_request_compression" "true")
 CFG_CODEX_NOTIFICATIONS=$(_cfg_validate_bool "CFG_CODEX_NOTIFICATIONS" "$_raw_codex_notifications" "true")
@@ -231,6 +216,11 @@ CFG_CODEX_BACKGROUND_TERMINAL_TIMEOUT=$(_cfg_validate_int "CFG_CODEX_BACKGROUND_
 CFG_CODEX_MAX_THREADS=$(_cfg_validate_int "CFG_CODEX_MAX_THREADS" "$_raw_codex_max_threads" "6")
 CFG_CODEX_MAX_DEPTH=$(_cfg_validate_int "CFG_CODEX_MAX_DEPTH" "$_raw_codex_max_depth" "1")
 CFG_CODEX_JOB_TIMEOUT=$(_cfg_validate_int "CFG_CODEX_JOB_TIMEOUT" "$_raw_codex_job_timeout" "3600")
+
+if [[ "$CFG_TRUST_SECONDS" -gt 20 ]]; then
+  echo "config.sh: CFG_TRUST_SECONDS '$CFG_TRUST_SECONDS' exceeds hard cap '20' — using '20'" >&2
+  CFG_TRUST_SECONDS="20"
+fi
 
 if [[ "$CFG_CODEX_MAX_THREADS" -gt 12 ]]; then
   echo "config.sh: CFG_CODEX_MAX_THREADS '$CFG_CODEX_MAX_THREADS' exceeds hard cap '12' — using '12'" >&2
@@ -254,7 +244,6 @@ fi
 
 CFG_TOTAL_PANES=$((CFG_ROWS * CFG_COLS))
 CFG_PLUGIN_DIR="$_cfg_plugin_dir"
-CFG_STATE_ROOT="$HOME/.local/state/tmup"
 
 # Detect config degradation: policy.yaml exists but yq is missing or broken.
 # This probe runs in the current shell (not a subshell) so the flag persists.
@@ -268,7 +257,7 @@ if [[ -f "$CFG_CONFIG_DIR/policy.yaml" ]]; then
 fi
 
 if [[ -n "${CFG_SESSION_NAME:-}" ]]; then
-  CFG_STATE_DIR="$CFG_STATE_ROOT/$CFG_SESSION_NAME"
+  CFG_STATE_DIR="${CFG_STATE_ROOT%/}/$CFG_SESSION_NAME"
 else
   CFG_STATE_DIR=""
 fi
@@ -277,6 +266,8 @@ export CFG_SESSION_NAME CFG_SESSION_PREFIX CFG_ROWS CFG_COLS CFG_WIDTH CFG_HEIGH
 export CFG_STALE_MAX_AGE CFG_HARVEST_LINES CFG_TRUST_SECONDS CFG_TEARDOWN_GRACE
 export CFG_HEARTBEAT_INTERVAL CFG_CLAIMED_WARNING CFG_REPROMPT_TIMEOUT
 export CFG_CODEX_MODEL CFG_CODEX_APPROVAL_POLICY
+export CFG_CODEX_EXPLICIT_MODEL_PINS_ENABLED CFG_CODEX_TRUSTED_SHARED_STATE_ENABLED
+export CFG_CLAUDE_CODE_TRUSTED_UNSANDBOXED_ENABLED
 export CFG_CODEX_SANDBOX CFG_CODEX_NO_ALT_SCREEN CFG_CODEX_PLAN_FIRST
 export CFG_CODEX_REASONING_EFFORT CFG_CODEX_REASONING_SUMMARY CFG_CODEX_PLAN_REASONING
 export CFG_CODEX_VERBOSITY CFG_CODEX_SERVICE_TIER CFG_CODEX_TOOL_OUTPUT_LIMIT
@@ -292,6 +283,8 @@ unset _raw_rows _raw_cols _raw_width _raw_height _raw_prefix
 unset _raw_stale _raw_harvest _raw_trust_seconds _raw_teardown_grace
 unset _raw_heartbeat_interval _raw_claimed_warning _raw_reprompt_timeout
 unset _raw_codex_model _raw_codex_approval_policy
+unset _raw_codex_explicit_model_pins_enabled _raw_codex_trusted_shared_state_enabled
+unset _raw_claude_code_trusted_unsandboxed_enabled
 unset _raw_codex_sandbox _raw_codex_no_alt_screen _raw_codex_plan_first
 unset _raw_codex_reasoning_effort _raw_codex_reasoning_summary _raw_codex_plan_reasoning
 unset _raw_codex_verbosity _raw_codex_service_tier _raw_codex_tool_output_limit _raw_codex_web_search
@@ -301,3 +294,5 @@ unset _raw_codex_max_threads _raw_codex_max_depth _raw_codex_job_timeout
 unset _cfg_yq_warned
 unset -f _cfg_read_yaml _cfg_validate_int _cfg_validate_bool _cfg_validate_enum _cfg_validate_nonempty
 unset -f _cfg_validate_session_name _cfg_validate_session_id
+# state-root.sh is a shared dependency. Keep its functions available for
+# controller-bootstrap callers that intentionally revalidate after config load.

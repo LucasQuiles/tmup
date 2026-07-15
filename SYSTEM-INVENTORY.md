@@ -1,8 +1,8 @@
 # tmup System Inventory
 
 > Multi-agent coordination for Claude Code + Codex CLI via SQLite WAL-backed task DAG
-> Version: 0.1.0 | 20 MCP tools | 9 CLI commands | 22 shared modules
-> 39 test files | All passing
+> Version: 0.1.0 | 20 MCP tools | 10 CLI commands | 22 shared modules
+> 44 test files | Verification status is established by the current quality-gate run
 
 ---
 
@@ -38,34 +38,30 @@
 │                             │                     │             │
 │                    ┌────────▼────────┐            │             │
 │                    │ Bash Scripts    │            │             │
-│                    │ (grid/dispatch) │            │             │
+│                    │ grid/dispatch  │            │             │
 │                    └────────┬────────┘            │             │
-│                             │                     │             │
 └─────────────────────────────┼─────────────────────┼─────────────┘
                               │                     │
-              ┌───────────────▼───────────────┐     │
-              │       tmux NxM Grid (default 2x4)  │     │
-              │  ┌─────┬─────┬─────┬─────┐    │     │
-              │  │ P0  │ P1  │ P2  │ P3  │    │     │
-              │  ├─────┼─────┼─────┼─────┤    │     │
-              │  │ P4  │ P5  │ P6  │ P7  │    │     │
-              │  └──┬──┴──┬──┴──┬──┴──┘    │     │
-              └─────┼─────┼─────┼─────┼───────┘     │
-                    │     │     │     │               │
-              ┌─────▼─────▼─────▼─────▼──────────────┘
-              │   Codex CLI Workers (tmup-cli)
-              │   Each: claim → work → checkpoint → complete
-              └──────────────────────────────────────────
+              ┌───────────────▼──────────────────┐  │
+              │ tmux NxM Grid (default 2x4)      │  │
+              │ P0 P1 P2 P3 / P4 P5 P6 P7       │  │
+              └───────────────┬──────────────────┘  │
+                              │ framed harvest       │
+              ┌───────────────▼──────────────────────┘
+              │ Safe Codex workers: scoped work + pane evidence
+              │ Supervisor: claim → harvest → checkpoint/complete
+              └──────────────────────────────────────────────────
 ```
 
 **Data flow:**
 1. Lead uses MCP tools to create task DAG and dispatch workers
 2. MCP server reads/writes SQLite WAL database via `@tmup/shared`
 3. Bash scripts create tmux grid and launch Codex CLI in panes
-4. Workers use `tmup-cli` binary to coordinate via the same SQLite DB
-5. Lead monitors via `tmup_next_action`, `tmup_inbox`, `tmup_harvest`
+4. Safe workers report through pane output; MCP harvest frames it as untrusted data
+5. Lead verifies evidence and applies checkpoints, messages, completion, or failure
+6. Trusted shared-state mode can restore direct `tmup-cli` access behind policy and receipt gates
 
-**Concurrency model:** SQLite WAL mode allows 1 writer + N readers. All writes use IMMEDIATE transactions to serialize. `busy_timeout=8000ms` prevents lock failures under moderate contention from concurrent workers.
+**Concurrency model:** SQLite WAL mode allows 1 writer + N readers. All writes use IMMEDIATE transactions to serialize. In the safe default, the lead-side MCP/controller is the database client; trusted shared-state workers may add direct clients. `busy_timeout=8000ms` prevents lock failures under moderate contention.
 
 **Multi-session behavior:** Session reuse is registry-driven, canonical-path-based, and conditional on context:
 - Shell path (`grid-registry.sh`): canonicalizes directories, uses the same PID-file registry lock as the TypeScript path, traverses parent directories, and only returns a match if `tmux has-session` succeeds for the registered session.
@@ -78,7 +74,7 @@
 
 ### Installation
 
-**Prerequisites:** Node.js 20, npm, tmux (>=3.0), jq, yq (when `config/policy.yaml` exists), rsync (for `scripts/sync-cache.sh`). Root npm scripts select Homebrew `node@20` via `scripts/with-supported-node.sh` when the workstation default is newer.
+**Prerequisites:** Node.js 20, npm, tmux (>=3.0), jq, yq (when `config/policy.yaml` exists), rsync (for `scripts/sync-cache.sh`). Root npm scripts accept the active compatible ABI, an explicitly verified absolute `TMUP_NODE20_BIN`, or standard Homebrew/Linuxbrew `node@20` locations.
 
 ```bash
 # 1. Build the plugin
@@ -316,9 +312,9 @@ The redundant `AND status='pending'` ensures the UPDATE fails (changes=0) if a c
 | `tmup_init` | Session | Initialize/reattach DB and session registry for project_dir (does not create tmux panes) |
 | `tmup_status` | Session | Status summary + dead-claim recovery side-effect |
 | `tmup_next_action` | Session | Synthesized recommendation (priority-ordered decision tree) |
-| `tmup_pause` | Session | Broadcast shutdown messages to all agents |
+| `tmup_pause` | Session | Store pause event/shutdown records; safe-pane delivery is separate |
 | `tmup_resume` | Session | Re-attach session, run dead-claim recovery |
-| `tmup_teardown` | Session | Grace period shutdown with agent notification |
+| `tmup_teardown` | Session | Store teardown event/optional shutdown records; does not stop panes |
 | `tmup_task_create` | DAG | Create single task with deps/artifacts |
 | `tmup_task_batch` | DAG | Atomic multi-task creation (IMMEDIATE transaction) |
 | `tmup_task_update` | DAG | Lead status transitions (needs_review→pending, etc.) |
@@ -327,10 +323,10 @@ The redundant `AND status='pending'` ensures the UPDATE fails (changes=0) if a c
 | `tmup_fail` | Lifecycle | Report failure — auto-retry with backoff or escalate to needs_review |
 | `tmup_cancel` | Lifecycle | Cancel task, optional cascade to dependents |
 | `tmup_checkpoint` | Communication | Post progress update, update result_summary |
-| `tmup_send_message` | Communication | Send direct/broadcast/finding/blocker |
+| `tmup_send_message` | Communication | Store direct/broadcast/finding/blocker records; safe delivery uses reprompt |
 | `tmup_inbox` | Communication | Check unread count or read messages with framing |
 | `tmup_dispatch` | Execution | Atomic claim+register, launch Codex in pane |
-| `tmup_harvest` | Monitoring | Capture pane scrollback (validated args) |
+| `tmup_harvest` | Monitoring | Capture ANSI-stripped pane scrollback framed/labeled as untrusted |
 | `tmup_reprompt` | Monitoring | Send follow-up text into a live Codex pane |
 | `tmup_heartbeat` | Monitoring | Register agent liveness and optional Codex session ID |
 
@@ -349,7 +345,7 @@ The redundant `AND status='pending'` ensures the UPDATE fails (changes=0) if a c
 - **Session switching:** `switchSession()` cleanly closes old connection, opens new. Failure rolls back to null state.
 - **WAL checkpoint timer:** 60s interval `wal_checkpoint(PASSIVE)` to prevent WAL file growth
 - **Crash resilience:** `uncaughtException` handler with 10-exception threshold before exit
-- **Content framing:** Worker messages wrapped in `[WORKER MESSAGE from {agent}, type={type}]...[END WORKER MESSAGE]` for prompt injection defense
+- **Content framing:** Trusted inbox messages use `WORKER MESSAGE` markers; safe pane harvests use spoof-neutralized `UNTRUSTED PANE OUTPUT` markers plus a trust label. Both remain defense in depth.
 
 ---
 
@@ -387,48 +383,53 @@ Success output is JSON to stdout. CLI-level errors (`CliError`) go to stdout as 
 
 ## 7. Bash Scripts
 
-### Main Scripts (5)
+### Main Scripts (11)
 
 | Script | Purpose | LOC |
 |--------|---------|-----|
-| `grid-setup.sh` | Create tmux NxM grid (default 2x4), write grid-state.json | 165 |
-| `grid-teardown.sh` | Kill tmux session, deregister from registry | 29 |
-| `dispatch-agent.sh` | Launch Codex worker in pane with env vars | 175 |
-| `pane-manager.sh` | List/release pane reservations in grid-state.json | 50 |
-| `trust-sweep.sh` | Auto-accept trust prompts across all panes | 22 |
+| `check-shell-syntax.sh` | Parse every repository shell entrypoint/library | 28 |
+| `dispatch-agent.sh` | Validate boundaries and launch a protected worker | 1182 |
+| `grid-setup.sh` | Create tmux NxM grid and write receipted grid state | 348 |
+| `grid-teardown.sh` | Verify the live grid receipt, stop its immutable tmux target, and clean exact owned state | 184 |
+| `pane-manager.sh` | List/release pane reservations | 68 |
+| `quality-gate.sh` | Fail-closed build, test, type, drift, and audit gate | 116 |
+| `reprompt-agent.sh` | Validate idleness and receipt literal follow-up submission | 151 |
+| `sync-cache.sh` | Synchronize built plugin cache | 30 |
+| `sync-codex-agents.sh` | Receipt-gated dormant Codex profile sync | 104 |
+| `trust-sweep.sh` | Bounded exact-pane trust-prompt sweep | 44 |
+| `with-supported-node.sh` | Select a verified Node 20 ABI runtime | 46 |
 
-### Library Scripts (8)
+### Library Scripts (12)
 
 | Script | Purpose | LOC |
 |--------|---------|-----|
-| `lib/config.sh` | YAML config loader (via yq), env validation, all `CFG_*` exports | 85 |
-| `lib/validators.sh` | `validate_pane_index`, `validate_role`, `validate_working_dir` | 47 |
-| `lib/tmux-helpers.sh` | `is_agent_process`, `wait_for_shell_ready`, `strip_ansi` | 33 |
-| `lib/grid-registry.sh` | Multi-grid project-to-session registry (JSON + shared PID-file lock) | 143 |
-| `lib/grid-identity.sh` | Grid ownership tracking (PID-based) with `jq -n` safe JSON | 46 |
+| `lib/common.sh` | Shared minimal shell helpers | 4 |
+| `lib/config.sh` | Policy loader, validation, caps, and `CFG_*` exports | 298 |
+| `lib/control-boundary.sh` | Protected controller-state boundary and cleanup | 148 |
+| `lib/controller-bootstrap.sh` | Fixed physical controller toolchain bootstrap | 202 |
+| `lib/grid-identity.sh` | Complete live grid receipt and immutable tmux identity verification | 123 |
+| `lib/grid-registry.sh` | Multi-grid registry using the canonical state root | 145 |
 | `lib/portable-lock.sh` | Cross-platform grid-state lock helper (`flock` when available, `mkdir` fallback on macOS) | 93 |
 | `lib/portable-system.sh` | Linux/macOS shell compatibility helpers for timestamps, hostnames, and canonical paths | 41 |
 | `lib/prerequisites.sh` | Verify tmux (>=3.0), node, jq, and policy-required yq | 41 |
+| `lib/state-root.sh` | Normalize and validate the absolute non-root state root | 67 |
+| `lib/tmux-helpers.sh` | Exact pane/process inspection, readiness, submit receipts, and rollback helpers | 496 |
+| `lib/validators.sh` | Pane, role, directory, and identifier validation | 63 |
 
 ### Security Patterns
 
-- **No shell interpolation in `tmux send-keys`**: `dispatch-agent.sh` writes env vars to a launcher wrapper script using `printf '%q'`, then sends `bash '$LAUNCHER'` to the pane.
+- **Protected prompt handoff**: dispatch writes controller-owned prompt/launcher artifacts, validates their hashes and modes, and confirms literal submission before committing launch success.
 - **`jq -n` for JSON construction**: `grid-setup.sh` and `grid-identity.sh` build JSON entirely through `jq --arg`/`--argjson` — never heredoc interpolation.
 - **Cross-platform portability helpers**: `lib/portable-lock.sh` centralizes `flock`/`mkdir` locking and `lib/portable-system.sh` avoids GNU-only shell flags for timestamps, hostnames, and canonical paths.
-- **Restrictive permissions**: `umask 0077`, `chmod 600` for state files, `chmod 700` for launcher scripts.
+- **Restrictive permissions**: `umask 0077`, mode 0600 prompts/logs/state files, mode 0700 launchers/task temp/controller directories.
 
 ---
 
 ## 8. Agent Definitions
 
-Six agent role definitions in `agents/*.md`. Each has frontmatter (`name`, `description`) and a body containing:
-- Role description
-- Full `tmup-cli` reference with examples
-- Error recovery table
-- Autonomy tier documentation
-- Role-specific constraints
+Six compact agent role definitions live in `agents/*.md`. Frontmatter carries adapter metadata; each runtime-neutral body contains `Mission`, `Workflow`, `Constraints`, and `Deliverable` sections. Runtime, model, sandbox, lifecycle, and routing semantics are injected by the dispatcher instead of repeated in every role prompt.
 
-| Agent | Autonomy | Messaging | Focus |
+| Agent | Advisory routing | Intended messaging | Focus |
 |-------|----------|-----------|-------|
 | `implementer` | Checkpoint | Lead only | Write production code |
 | `tester` | Checkpoint | Lead only | Write/run tests, report evidence |
@@ -437,9 +438,7 @@ Six agent role definitions in `agents/*.md`. Each has frontmatter (`name`, `desc
 | `refactorer` | Checkpoint | Lead only | Restructure without behavior change |
 | `documenter` | Checkpoint | Lead only | Write docs from source |
 
-**Autonomy tiers:**
-- **Checkpoint:** Can only message lead. Post checkpoints at milestones. Cannot broadcast.
-- **Full participant:** Can message any agent or broadcast. Can ask clarifying questions to peers.
+These tiers are supervisor-routing guidance, not recipient ACLs. Safe workers have no direct messaging surface; trusted shared-state workers operate under an advisory boundary.
 
 Agent definitions are injected into the Codex worker prompt by `dispatch-agent.sh` (frontmatter stripped via awk).
 
@@ -451,7 +450,7 @@ Agent definitions are injected into the Codex worker prompt by `dispatch-agent.s
 
 Registered as `/tmup` in Claude Code. Frontmatter declares all 20 MCP tools in `allowed-tools`. Body documents:
 - Usage patterns (`/tmup`, `/tmup init`, `/tmup status`, `/tmup next`, `/tmup teardown`)
-- 5-step workflow (initialize → plan → execute → monitor → complete)
+- 6-step workflow (initialize → create grid → plan → supervise → reconcile → explicit teardown)
 - Task DAG semantics
 - Role/autonomy/messaging table
 
@@ -466,7 +465,7 @@ Loaded when tmup-related work is detected. Contains:
 
 ### Reference (`skills/tmup/REFERENCE.md`)
 
-Complete API reference for all 20 MCP tools and 9 CLI commands with:
+Complete API reference for all 20 MCP tools and 10 CLI commands with:
 - Input/output JSON examples for every tool
 - Valid transition documentation
 - CLI env var requirements
@@ -488,12 +487,12 @@ Complete API reference for all 20 MCP tools and 9 CLI commands with:
 | `grid` | `rows` / `cols` | 2 / 4 | Grid dimensions |
 | `grid` | `width` / `height` | 240 / 55 | Terminal character dimensions |
 | `harvesting` | `capture_scrollback_lines` | 500 | Default harvest depth |
-| `harvesting` | `poll_interval_seconds` | 30 | Harvest polling interval |
+| `harvesting` | `poll_interval_seconds` | 30 | Reserved; no automatic poller currently consumes it |
 | `timeouts` | `dispatch_trust_prompt_seconds` | 6 | Trust prompt auto-accept window |
-| `timeouts` | `teardown_grace_seconds` | 60 | Graceful shutdown timeout |
-| `timeouts` | `pause_checkpoint_seconds` | 30 | Pause checkpoint window |
-| `autonomy` | `full_participant_roles` | investigator, reviewer | Full messaging |
-| `autonomy` | `checkpoint_roles` | implementer, tester, refactorer, documenter | Lead-only messaging |
+| `timeouts` | `teardown_grace_seconds` | 60 | Reserved; MCP teardown does not currently wait or stop panes |
+| `timeouts` | `pause_checkpoint_seconds` | 30 | Reserved; MCP pause does not currently wait |
+| `autonomy` | `full_participant_roles` | investigator, reviewer | Advisory supervisor routing to any agent |
+| `autonomy` | `checkpoint_roles` | implementer, tester, refactorer, documenter | Advisory supervisor routing to lead |
 | `collaboration` | `patterns` | research, plan, implement, review, test, audit, document | Reusable workflow patterns |
 | `lifecycle` | `prune_max_age_seconds` | 86400 | Lifecycle event retention (24h) |
 | `lifecycle` | `enabled_events` | claude_session_start/end, claude_precompact, claude_task_completed, claude_subagent_stop | Claude-native events for tmup ingress |
@@ -546,7 +545,7 @@ tmup/
 
 ## 12. Test Suite
 
-**Runner:** Vitest | **Config:** `vitest.config.ts` | **39 test files**
+**Runner:** Vitest | **Config:** `vitest.config.ts` | **44 test files**
 
 | Test File | Tests | Coverage Focus |
 |-----------|-------|---------------|
@@ -574,6 +573,10 @@ tmup/
 | `tests/cli/handle-command.test.ts` | 31 | Actor identity, fail validation, exit codes, checkpoint contract, message routing, heartbeat validation |
 | `tests/scripts/grid-registry.test.ts` | 8 | Shell registry CRUD, canonical path matching, lock semantics |
 | `tests/scripts/config-shell-boundary.test.ts` | 15 | Session name resolution from current-session pointer, TMUP_SESSION_NAME precedence, validation, state directory derivation |
+| `tests/scripts/control-boundary.test.ts` | 8 | Controller/session/plugin path containment, symlink rejection, and isolated-worktree allowance |
+| `tests/scripts/controller-toolchain-boundary.test.ts` | 6 | Fixed controller PATH, cross-root and symlink-target rejection, and protected reprompt/teardown bootstrap |
+| `tests/scripts/trusted-bootstrap-path.test.ts` | 2 | Physical dispatcher/teardown entrypoint resolution before sibling library loading |
+| `tests/scripts/with-supported-node.test.ts` | 2 | Explicit portable Node 20 selection and relative-override rejection |
 
 **Test patterns:**
 - Each test uses a unique temp DB path with `Date.now()` + random suffix
@@ -589,7 +592,7 @@ tmup/
 ### State Directory Structure
 
 ```
-~/.local/state/tmup/
+${TMUP_STATE_ROOT:-~/.local/state/tmup}/
 ├── current-session           # Points to active session ID
 ├── registry.json             # Session-to-project mapping
 ├── registry.lock             # Shared shell/TypeScript PID-file lock
@@ -601,10 +604,14 @@ tmup/
     ├── grid/
     │   ├── grid-state.json   # Pane assignments and status
     │   └── grid-state.lock   # cross-platform lock for atomic grid updates
-    ├── logs/                 # (Reserved for future use)
-    ├── artifacts/            # Artifact storage
-    ├── prompt-N-UUID.txt     # Worker prompt files (ephemeral — cleaned up before exec)
-    └── launcher-N.sh         # Worker launcher scripts (ephemeral — self-deleting)
+    ├── logs/                 # Session-side logs/reserved data
+    └── artifacts/            # Session artifact records
+
+~/.local/state/tmup-control/<session>/
+├── artifacts/                # Mode-0600 prompts and mode-0700 launchers
+├── logs/                     # Mode-0600 controller-consumed output
+├── locks/                    # Controller-owned dispatch locks
+└── tasks/                    # Exact mode-0700 per-task temp roots
 ```
 
 ### Registry Format (`registry.json`)
@@ -715,7 +722,7 @@ tmup/
 |--------|---------|
 | SQL injection | Parameterized queries everywhere (never string interpolation in SQL) |
 | Shell injection | `printf '%q'` for env vars, `jq -n` for JSON, validated pane_index/lines |
-| Prompt injection | Content framing (`[WORKER MESSAGE]...[END WORKER MESSAGE]`) |
+| Prompt injection | Spoof-neutralized harvest framing/trust labels plus trusted-inbox message framing; still defense in depth |
 | Path traversal | `validateArtifactPath` checks resolved path starts with project dir; canonical realpath |
 | Race conditions | IMMEDIATE transactions on all read-then-write; grid-state lock held through pane check |
 | TOCTOU | `verifyArtifact` catches ENOENT; dispatch lock covers check+reserve atomically |
@@ -748,7 +755,7 @@ cli/
   src/
     index.ts                     # CLI entry point (CliError, exit codes)
     commands/
-      index.ts                   # 9 CLI command handlers
+      index.ts                   # 10 CLI command handlers
 
 commands/
   tmup.md                        # /tmup slash command definition
@@ -767,16 +774,28 @@ mcp-server/
       index.ts                   # 20 MCP tool definitions and handlers
 
 scripts/
+  check-shell-syntax.sh          # Parse every repository shell source
   dispatch-agent.sh              # Launch Codex worker in tmux pane
   grid-setup.sh                  # Create tmux NxM grid (default 2x4)
   grid-teardown.sh               # Tear down tmux session
   pane-manager.sh                # Manage pane reservations
+  quality-gate.sh                # Fail-closed local quality gate
+  reprompt-agent.sh              # Validate and submit literal follow-up text
+  sync-cache.sh                  # Synchronize built plugin cache
+  sync-codex-agents.sh           # Receipt-gated dormant profile sync
   trust-sweep.sh                 # Auto-accept trust prompts
+  with-supported-node.sh         # Select a verified Node 20 ABI runtime
   lib/
+    common.sh                    # Minimal shared helpers
     config.sh                    # YAML config loader, CFG_* exports
-    grid-identity.sh             # Grid ownership (PID-based)
+    control-boundary.sh          # Protected controller-state boundary
+    controller-bootstrap.sh      # Fixed physical controller toolchain
+    grid-identity.sh             # Complete live grid receipt verification
     grid-registry.sh             # Multi-grid project-to-session registry
+    portable-lock.sh             # Cross-platform file/directory locking
+    portable-system.sh           # Cross-platform system primitives
     prerequisites.sh             # Tool version checks (tmux >= 3.0)
+    state-root.sh                # Canonical non-root state-root resolver
     tmux-helpers.sh              # Process detection, shell ready, ANSI strip
     validators.sh                # Input validation (pane index, role, directory)
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # prerequisites.sh — Verify required tools are installed
 
 check_prerequisites() {

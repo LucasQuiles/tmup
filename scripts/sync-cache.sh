@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Sync tmup plugin source to Claude Code plugin cache
 # Run after making changes to source files
 set -euo pipefail

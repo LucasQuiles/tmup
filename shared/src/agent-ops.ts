@@ -52,7 +52,7 @@ export function recoverDeadClaim(
   db: Database,
   agentId: string,
   staleThresholdSeconds: number = STALE_AGENT_THRESHOLD_SECONDS,
-  paneLivenessCallback?: (paneIndex: number) => 'alive' | 'shell' | 'dead'
+  paneLivenessCallback?: (paneIndex: number) => 'alive' | 'shell' | 'dead' | 'unknown'
 ): string[] {
   const recover = db.transaction(() => {
     const recovered: string[] = [];
@@ -72,6 +72,10 @@ export function recoverDeadClaim(
           "UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?"
         ).run(agentId);
         logEvent(db, agentId, 'agent_heartbeat_stale', { action: 'refreshed', reason: 'pane_alive' });
+        return [];
+      }
+      if (liveness === 'unknown') {
+        logEvent(db, agentId, 'agent_heartbeat_stale', { action: 'retained', reason: 'pane_liveness_unknown' });
         return [];
       }
     }

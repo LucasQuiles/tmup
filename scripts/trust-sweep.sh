@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # trust-sweep.sh — Auto-accept trust prompts across all panes
 # DEPRECATED: Global trust sweep is disabled by default.
 # Per-pane trust acceptance is handled by dispatch-agent.sh.
@@ -8,6 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/config.sh"
 source "$SCRIPT_DIR/lib/portable-system.sh"
+source "$SCRIPT_DIR/lib/tmux-helpers.sh"
 
 if [[ "${1:-}" != "--force" ]]; then
   echo "WARNING: Global trust sweep is deprecated. Per-pane trust handling is in dispatch-agent.sh." >&2
@@ -27,10 +28,14 @@ if ! _PANE_INDEXES=$(jq -r '.panes[].index' "$_GRID_STATE" 2>/dev/null); then
 fi
 
 for pane_idx in $_PANE_INDEXES; do
-  CAPTURE=$(tmux capture-pane -t "$SESSION_NAME:0.$pane_idx" -p -S -10 2>/dev/null || true)
+  if ! PANE_TARGET=$(tmup_exact_pane_target "$SESSION_NAME" "$pane_idx"); then
+    echo "WARNING: Could not verify exact pane target for index $pane_idx" >&2
+    continue
+  fi
+  CAPTURE=$(tmux capture-pane -t "$PANE_TARGET" -p -S -10 2>/dev/null || true)
   # Narrow pattern: only match the specific codex trust prompt ("Do you trust ...?")
   if echo "$CAPTURE" | grep -qiE "^[[:space:]]*Do you trust([[:space:]]|$)"; then
-    tmux send-keys -t "$SESSION_NAME:0.$pane_idx" Enter
+    tmux send-keys -t "$PANE_TARGET" Enter
     ACCEPTED=$((ACCEPTED + 1))
     echo "Accepted trust prompt in pane $pane_idx"
   fi

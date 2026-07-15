@@ -166,6 +166,26 @@ describe('recoverDeadClaim with paneLivenessCallback', () => {
     expect(agent.status).toBe('shutdown');
   });
 
+  it('unknown callback: retains the stale claim without refreshing heartbeat', () => {
+    const taskId = setupStaleAgentWithTask('agent-unknown', 0);
+    const before = getAgent(db, 'agent-unknown')!.last_heartbeat_at;
+
+    const recovered = recoverDeadClaim(db, 'agent-unknown', 300, () => 'unknown');
+
+    expect(recovered).toEqual([]);
+    const agent = getAgent(db, 'agent-unknown')!;
+    expect(agent.status).toBe('active');
+    expect(agent.last_heartbeat_at).toBe(before);
+    const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as TaskRow;
+    expect(task.status).toBe('claimed');
+    expect(task.owner).toBe('agent-unknown');
+
+    const event = db.prepare(
+      "SELECT payload FROM events WHERE event_type = 'agent_heartbeat_stale' AND actor = 'agent-unknown' ORDER BY id DESC LIMIT 1"
+    ).get() as { payload: string };
+    expect(JSON.parse(event.payload)).toEqual({ action: 'retained', reason: 'pane_liveness_unknown' });
+  });
+
   it('no callback (backward compat): recovers task with full state mutation', () => {
     const taskId = setupStaleAgentWithTask('agent-stale', 0);
 

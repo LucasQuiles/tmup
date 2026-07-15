@@ -17,12 +17,14 @@ grid:
 
 codex:
   # Fresh tmup workers launch as interactive Codex sessions in tmux panes.
-  # Model selection: "auto" detects the installed Codex CLI's default from
-  # ${CODEX_HOME:-~/.codex}/config.toml, so tmup tracks Codex upgrades instead
-  # of pinning an id that silently rots. Set an explicit model id to override.
+  # "auto" omits -m and lets the installed Codex CLI resolve its default.
+  # Explicit pins are requested values (never an observed-model claim) and
+  # require policy enablement plus a per-dispatch validation receipt.
   model: "auto"
-  # Fallback order when auto-detection finds no live Codex config (first wins):
-  model_preference: ["gpt-5.6-sol", "gpt-5.5", "gpt-5"]
+  explicit_model_pins_enabled: false
+  # Direct shared SQLite/grid access is a trusted legacy mode. Safe supervisor-
+  # owned Codex lanes leave this false and expose only their exact task temp.
+  trusted_shared_state_enabled: false
   approval_policy: "never"
   sandbox: "workspace-write"
   no_alt_screen: true
@@ -35,7 +37,9 @@ codex:
   tool_output_token_limit: 50000
   web_search: "live"
   history_persistence: "save-all"
-  shell_env_inherit: "all"
+  # Keep the default command environment trimmed. A single dispatch may opt in
+  # to broader inheritance through TMUP_CODEX_SHELL_INHERIT_OVERRIDE=all.
+  shell_env_inherit: "core"
   shell_snapshot: true
   enable_request_compression: true
   notifications: true
@@ -45,11 +49,18 @@ codex:
     max_threads: 6
     max_depth: 1
     tiers:
-      # root pane worker: auto-detected (set via codex.model: "auto" above)
+      # root pane worker: CLI-selected (codex.model: "auto" omits -m above)
+      # Dormant, default-off experimental adapter metadata. Installation and prompt exposure
+      # require explicit post-canary enablement plus live catalog validation and a named-role selector receipt.
       tier1:
         model: "gpt-5.6-terra"
       tier2:
         model: "gpt-5.6-luna"
+
+claude_code:
+  # bypassPermissions lanes are same-UID trusted/unsandboxed and require a
+  # separate direct-dispatch flag plus receipt even when policy enables them.
+  trusted_unsandboxed_enabled: false
 
 harvesting:
   capture_scrollback_lines: 500
@@ -61,6 +72,8 @@ timeouts:
   pause_checkpoint_seconds: 30
   send_reprompt_seconds: 10
 
+# Advisory supervisor-routing metadata. Safe workers cannot message directly;
+# trusted shared-state mode does not mechanically enforce these recipient tiers.
 autonomy:
   full_participant_roles:
     - investigator

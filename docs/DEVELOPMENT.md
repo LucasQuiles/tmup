@@ -10,7 +10,8 @@ npm run test:watch  # Watch mode for development
 
 The npm scripts run through `scripts/with-supported-node.sh`. tmup's current
 `better-sqlite3` dependency is built for Node 20's native-module ABI; the
-wrapper selects Homebrew `node@20` when the workstation default is newer.
+wrapper uses the active compatible runtime, an explicitly verified absolute
+`TMUP_NODE20_BIN`, or a standard Homebrew/Linuxbrew `node@20` location.
 
 ## Dev workflow (after making changes)
 
@@ -42,7 +43,7 @@ The suite spans shared library behavior, MCP handlers, CLI commands, shell bound
 Coverage includes:
 - Task DAG operations and dependency resolution (including cycle detection)
 - Task lifecycle state machine (every transition, including edge cases)
-- Inter-agent messaging (framing, inbox, broadcast, autonomy enforcement)
+- Inter-agent messaging (framing, inbox, broadcast, supervisor routing metadata)
 - Dead claim recovery (stale heartbeats, task reassignment)
 - Concurrent SQLite access patterns
 - MCP tool handler integration (including dispatch shell boundary)

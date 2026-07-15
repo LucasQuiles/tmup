@@ -16,20 +16,25 @@ describe('dispatch-agent.sh Codex submit verification', () => {
   let tmuxStateDir: string;
   let captureSequencePath: string;
   let sendLogPath: string;
+  let workingDir: string;
 
   beforeEach(() => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tmup-dispatch-submit-'));
-    sessionName = 'test-session';
+    sessionName = `${'s'.repeat(64)}-abcdef`;
     stateDir = path.join(tmpHome, '.local/state/tmup', sessionName);
     gridDir = path.join(stateDir, 'grid');
     fakeBin = path.join(tmpHome, 'fakebin');
     tmuxStateDir = path.join(tmpHome, 'tmux-state');
     captureSequencePath = path.join(tmuxStateDir, 'capture-sequence.txt');
     sendLogPath = path.join(tmuxStateDir, 'send-keys.log');
+    workingDir = path.join(tmpHome, 'workspace');
+    process.env.TMUP_TEST_CONTROLLER_OVERRIDE = '1';
+    process.env.TMUP_TEST_CONTROLLER_TOOL_DIRS = fakeBin;
 
     fs.mkdirSync(gridDir, { recursive: true });
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.mkdirSync(tmuxStateDir, { recursive: true });
+    fs.mkdirSync(workingDir, { recursive: true });
 
     fs.writeFileSync(
       path.join(gridDir, 'grid-state.json'),
@@ -37,6 +42,7 @@ describe('dispatch-agent.sh Codex submit verification', () => {
         panes: [{ index: 1, pane_id: '%1', status: 'available' }],
       }, null, 2)
     );
+    fs.writeFileSync(path.join(stateDir, 'tmup.db'), '');
 
     writeTmuxStub();
     writeExecutable('ps', "#!/bin/bash\nprintf '100 1 100 100 S /bin/bash\\n'\n");
@@ -44,6 +50,7 @@ describe('dispatch-agent.sh Codex submit verification', () => {
     writeExecutable('yq', '#!/bin/bash\nprintf \'null\\n\'\n');
     // Keep dispatch tests independent from the host lock implementation.
     writeExecutable('flock', '#!/bin/bash\nexit 0\n');
+    writeExecutable('codex', '#!/bin/bash\nexit 0\n');
 
     for (const commandName of [
       'awk',
@@ -65,6 +72,8 @@ describe('dispatch-agent.sh Codex submit verification', () => {
   });
 
   afterEach(() => {
+    delete process.env.TMUP_TEST_CONTROLLER_OVERRIDE;
+    delete process.env.TMUP_TEST_CONTROLLER_TOOL_DIRS;
     try {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     } catch {}
@@ -74,6 +83,8 @@ describe('dispatch-agent.sh Codex submit verification', () => {
     writeCaptureSequence([
       'Working (boot)\\n',
       '❯\\n',
+      '❯ still idle\\n',
+      '❯ still idle\\n',
       '❯ still idle\\n',
       'Working (tool call)\\n',
     ]);
@@ -86,6 +97,7 @@ describe('dispatch-agent.sh Codex submit verification', () => {
     });
 
     const sendLog = readSendLog();
+    expect(sendLog.some((line) => line.includes('/bin/bash -p '))).toBe(true);
     expect(sendLog.filter((line) => line.includes(' S-Tab'))).toHaveLength(1);
     expect(sendLog.filter((line) => line.includes(' Enter'))).toHaveLength(3);
     expect(sendLog.filter((line) => line.startsWith('-l ') || line.includes(' -l '))).toHaveLength(1);
@@ -95,18 +107,10 @@ describe('dispatch-agent.sh Codex submit verification', () => {
     writeCaptureSequence([
       'Working (boot)\\n',
       '❯\\n',
-      '❯ still idle\\n',
-      '❯ still idle\\n',
-      '❯ still idle\\n',
-      '❯ still idle\\n',
-      '❯ still idle\\n',
-      '❯ still idle\\n',
-      '❯ still idle\\n',
-      '❯ still idle\\n',
-      '❯ still idle\\n',
+      ...Array.from({ length: 18 }, () => '❯ still idle\\n'),
     ]);
 
-    let failure: { status?: number; stderr?: Buffer | string } | undefined;
+    let failure: { status?: number; stdout?: Buffer | string; stderr?: Buffer | string } | undefined;
     try {
       execFileSync('/bin/bash', dispatchArgs('agent-full-retry-failure'), {
         env: shellEnv(),
@@ -120,10 +124,14 @@ describe('dispatch-agent.sh Codex submit verification', () => {
 
     expect(failure?.status).toBe(1);
     expect(String(failure?.stderr ?? '')).toContain('failed to confirm Codex accepted the initial prompt');
+    expect(String(failure?.stdout ?? '')).toContain('TMUP_DISPATCH_ROLLBACK=released');
+
+    const gridState = JSON.parse(fs.readFileSync(path.join(gridDir, 'grid-state.json'), 'utf-8'));
+    expect(gridState.panes[0]).toEqual({ index: 1, pane_id: '%1', status: 'available' });
 
     const sendLog = readSendLog();
     expect(sendLog.filter((line) => line.startsWith('-l ') || line.includes(' -l '))).toHaveLength(3);
-    expect(sendLog.filter((line) => line.includes(' C-c'))).toHaveLength(3);
+    expect(sendLog.filter((line) => line.includes(' C-c')).length).toBeGreaterThanOrEqual(3);
   });
 
   // Invariant: submit confirmation must distinguish echoed prompt text from
@@ -135,19 +143,13 @@ describe('dispatch-agent.sh Codex submit verification', () => {
     // names — no Working (...), no tool-call output.
     writeCaptureSequence([
       'Working (boot)\\n',
-      '❯ call update_plan when done and apply_patch the README\\n',
-      '❯ call update_plan when done and apply_patch the README\\n',
-      '❯ call update_plan when done and apply_patch the README\\n',
-      '❯ call update_plan when done and apply_patch the README\\n',
-      '❯ call update_plan when done and apply_patch the README\\n',
-      '❯ call update_plan when done and apply_patch the README\\n',
-      '❯ call update_plan when done and apply_patch the README\\n',
-      '❯ call update_plan when done and apply_patch the README\\n',
-      '❯ call update_plan when done and apply_patch the README\\n',
-      '❯ call update_plan when done and apply_patch the README\\n',
+      ...Array.from(
+        { length: 19 },
+        () => '❯ call update_plan when done and apply_patch the README\\n',
+      ),
     ]);
 
-    let failure: { status?: number; stderr?: Buffer | string } | undefined;
+    let failure: { status?: number; stdout?: Buffer | string; stderr?: Buffer | string } | undefined;
     try {
       execFileSync('/bin/bash', dispatchArgsWithPrompt(
         'agent-c1-regression',
@@ -181,7 +183,7 @@ describe('dispatch-agent.sh Codex submit verification', () => {
       '--prompt', prompt,
       '--agent-id', agentId,
       '--db-path', path.join(stateDir, 'tmup.db'),
-      '--working-dir', PLUGIN_DIR,
+      '--working-dir', workingDir,
       '--pane-index', '1',
     ];
   }
@@ -224,6 +226,10 @@ cmd="\${1:-}"
 shift || true
 
 case "$cmd" in
+  list-panes)
+    [[ "$*" == *'-s -t =${sessionName}'* ]] || exit 1
+    printf '1 %%1\\n'
+    ;;
   display-message)
     if [[ "$*" == *'pane_pid'* ]]; then
       printf '100\\n'
@@ -244,6 +250,8 @@ case "$cmd" in
     line=$(sed -n "\${count}p" ${captureSequence} 2>/dev/null || true)
     printf '%b' "$line"
     ;;
+  respawn-pane)
+    ;;
   *)
     printf 'unexpected tmux command: %s\\n' "$cmd" >&2
     exit 1
@@ -252,18 +260,7 @@ esac
 `);
   }
 
-  function linkSystemBinary(fileName: string): void {
-    const filePath = path.join(fakeBin, fileName);
-    if (fs.existsSync(filePath)) {
-      return;
-    }
-
-    const systemPath = execFileSync('/bin/bash', ['-lc', `command -v ${fileName}`], {
-      encoding: 'utf-8',
-      env: process.env,
-    }).trim();
-    fs.symlinkSync(systemPath, filePath);
-  }
+  function linkSystemBinary(_fileName: string): void {}
 
   function shellQuote(value: string): string {
     return `'${value.replace(/'/g, `'\"'\"'`)}'`;

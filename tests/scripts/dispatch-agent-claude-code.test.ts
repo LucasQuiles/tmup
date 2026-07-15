@@ -19,13 +19,15 @@ describe('dispatch-agent.sh worker-type claude_code', () => {
   let workingDir: string;
 
   beforeEach(() => {
-    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tmup-claude-code-'));
+    tmpHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tmup-claude-code-')));
     sessionName = 'test-session';
     stateDir = path.join(tmpHome, '.local/state/tmup', sessionName);
     gridDir = path.join(stateDir, 'grid');
     fakeBin = path.join(tmpHome, 'fakebin');
     tmuxStateDir = path.join(tmpHome, 'tmux-state');
     workingDir = path.join(tmpHome, 'work');
+    process.env.TMUP_TEST_CONTROLLER_OVERRIDE = '1';
+    process.env.TMUP_TEST_CONTROLLER_TOOL_DIRS = fakeBin;
 
     fs.mkdirSync(gridDir, { recursive: true });
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -38,12 +40,18 @@ describe('dispatch-agent.sh worker-type claude_code', () => {
         panes: [{ index: 1, pane_id: '%1', status: 'available' }],
       }, null, 2)
     );
+    fs.writeFileSync(path.join(stateDir, 'tmup.db'), '');
 
     writeTmuxStub();
     writeExecutable('ps', "#!/bin/bash\nprintf '100 1 100 100 S /bin/bash\\n'\n");
     writeExecutable('sleep', '#!/bin/bash\nexit 0\n');
     writeExecutable('flock', '#!/bin/bash\nexit 0\n');
-    writeExecutable('yq', "#!/bin/bash\nprintf 'null\\n'\n");
+    writeExecutable('yq', `#!/bin/bash
+case "\${2:-}" in
+  '.claude_code.trusted_unsandboxed_enabled // false') printf 'true\\n' ;;
+  *) printf 'null\\n' ;;
+esac
+`);
     // Stubs for both worker binaries — the launcher is written but never
     // executed by the tmux stub, so these exist only as PATH defensive nets.
     writeExecutable('codex', '#!/bin/bash\nexit 0\n');
@@ -51,18 +59,20 @@ describe('dispatch-agent.sh worker-type claude_code', () => {
   });
 
   afterEach(() => {
+    delete process.env.TMUP_TEST_CONTROLLER_OVERRIDE;
+    delete process.env.TMUP_TEST_CONTROLLER_TOOL_DIRS;
     try {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     } catch { /* best effort */ }
   });
 
-  it('bakes the claude -p runtime contract into the launcher when --worker-type claude_code', () => {
-    execFileSync('bash', [
+  it('rejects claude_code unless the direct dispatcher receives both trust flag and receipt', () => {
+    expect(() => execFileSync('bash', [
       DISPATCH_AGENT_SH,
       '--session', sessionName,
       '--role', 'tester',
-      '--prompt', 'Claude code worker verification',
-      '--agent-id', 'agent-cc',
+      '--prompt', 'Untrusted Claude code worker',
+      '--agent-id', 'agent-cc-untrusted',
       '--db-path', path.join(stateDir, 'tmup.db'),
       '--working-dir', workingDir,
       '--pane-index', '1',
@@ -76,14 +86,64 @@ describe('dispatch-agent.sh worker-type claude_code', () => {
       encoding: 'utf-8',
       timeout: 30000,
       stdio: ['ignore', 'pipe', 'pipe'],
+    })).toThrowError(/allow-unconfined-claude-code.*trust receipt/i);
+
+    expect(fs.readFileSync(path.join(gridDir, 'grid-state.json'), 'utf-8')).toContain(
+      '"status": "available"',
+    );
+  });
+
+  it('rejects resume IDs for direct claude_code one-shot dispatches', () => {
+    expect(() => execFileSync('bash', [
+      DISPATCH_AGENT_SH,
+      '--session', sessionName,
+      '--role', 'tester',
+      '--prompt', 'Invalid Claude resume',
+      '--agent-id', 'agent-cc-resume',
+      '--db-path', path.join(stateDir, 'tmup.db'),
+      '--working-dir', workingDir,
+      '--pane-index', '1',
+      '--worker-type', 'claude_code',
+      '--resume-session-id', 'csid-not-supported',
+      '--allow-unconfined-claude-code',
+      '--claude-code-trust-receipt', 'operator-asserted',
+    ], {
+      env: {
+        ...process.env,
+        HOME: tmpHome,
+        PATH: `${fakeBin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+      },
+      encoding: 'utf-8',
+      timeout: 30000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })).toThrowError(/resume-session-id.*not supported.*claude_code/i);
+  });
+
+  it('bakes the claude -p runtime contract into the launcher when --worker-type claude_code', () => {
+    execFileSync('bash', [
+      DISPATCH_AGENT_SH,
+      '--session', sessionName,
+      '--role', 'tester',
+      '--prompt', 'Claude code worker verification',
+      '--agent-id', 'agent-cc',
+      '--db-path', path.join(stateDir, 'tmup.db'),
+      '--working-dir', workingDir,
+      '--pane-index', '1',
+      '--worker-type', 'claude_code',
+      '--allow-unconfined-claude-code',
+      '--claude-code-trust-receipt', 'test-reviewed-claude-lane',
+    ], {
+      env: {
+        ...process.env,
+        HOME: tmpHome,
+        PATH: `${fakeBin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+      },
+      encoding: 'utf-8',
+      timeout: 30000,
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
 
-    // Launcher is written to $CFG_STATE_DIR/launcher-${PANE_INDEX}.sh.
-    // $CFG_STATE_DIR = $HOME/.local/state/tmup/$SESSION_NAME under a test env.
-    // The launcher file is NOT removed on successful dispatch — the self-delete
-    // `rm -f "$0"` lives inside the launcher body and only fires if the launcher
-    // is actually executed. Our tmux stub never runs it.
-    const launcherPath = path.join(stateDir, 'launcher-1.sh');
+    const launcherPath = launcherPathFor('agent-cc');
     expect(fs.existsSync(launcherPath)).toBe(true);
     const launcher = fs.readFileSync(launcherPath, 'utf-8');
 
@@ -94,7 +154,9 @@ describe('dispatch-agent.sh worker-type claude_code', () => {
     // claude -p invocation with the one-shot runtime contract.
     // Model and fallback selection must inherit Claude Code settings instead
     // of pinning an implicit Sonnet worker model here.
-    expect(launcher).toContain('claude -p');
+    expect(launcher).toContain(`export CLAUDE_BIN=${path.join(fakeBin, 'claude')}`);
+    expect(launcher).toContain('"$CLAUDE_BIN" -p');
+    expect(launcher).not.toMatch(/(^|\s)claude -p/);
     expect(launcher).not.toContain('--model sonnet');
     expect(launcher).toContain('--permission-mode bypassPermissions');
     expect(launcher).toContain('--max-budget-usd 3.00');
@@ -106,15 +168,29 @@ describe('dispatch-agent.sh worker-type claude_code', () => {
     // Prompt file wired via stdin redirect, not via --prompt-file / argv
     expect(launcher).toContain('< "$_PROMPT_FILE"');
 
-    // Output scoped to a per-agent file under TMUP_WORKING_DIR
-    expect(launcher).toContain('"$TMUP_WORKING_DIR/session-output-$TMUP_AGENT_ID.json"');
+    // Output is opened only under the protected controller log root.
+    expect(launcher).toContain('> "$_CLAUDE_OUTPUT" 2>&1');
+    expect(launcher).not.toContain('"$TMUP_WORKING_DIR/session-output-$TMUP_AGENT_ID.json"');
 
     // Prompt file cleanup runs after claude exits
-    expect(launcher).toContain('rm -f "$_PROMPT_FILE"');
+    expect(launcher).toContain('"$_SYSTEM_RM_BIN" -f "$_PROMPT_FILE"');
+
+    const promptPath = path.join(
+      tmpHome,
+      '.local/state/tmup-control',
+      sessionName,
+      'artifacts',
+      'prompt-1-agent-cc.txt',
+    );
+    const prompt = fs.readFileSync(promptPath, 'utf-8');
+    expect(prompt).toContain('Runtime Contract — CLAUDE CODE ONE-SHOT');
+    expect(prompt).toContain('outside the sandboxed Codex integrity guarantee');
+    expect(prompt).toContain('Coordination Mode — SUPERVISOR OWNED');
+    expect(prompt).not.toMatch(/INTERACTIVE CODEX|max_threads|max_depth|native children|Codex skills/i);
 
     // Claude_code branch must still run the background heartbeat loop —
     // platform-enforced liveness that matches the codex lane.
-    expect(launcher).toContain('node "$_CLI_PATH" heartbeat');
+    expect(launcher).toContain('"$TMUP_NODE_BIN" "$_CLI_PATH" heartbeat');
 
     // Grid state reflects reservation
     const gridState = JSON.parse(fs.readFileSync(path.join(gridDir, 'grid-state.json'), 'utf-8'));
@@ -143,7 +219,7 @@ describe('dispatch-agent.sh worker-type claude_code', () => {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
-    const launcherPath = path.join(stateDir, 'launcher-1.sh');
+    const launcherPath = launcherPathFor('agent-codex-default');
     expect(fs.existsSync(launcherPath)).toBe(true);
     const launcher = fs.readFileSync(launcherPath, 'utf-8');
 
@@ -158,12 +234,14 @@ describe('dispatch-agent.sh worker-type claude_code', () => {
 
     // Positive configured Codex contract. Context, compaction, and undo come
     // from the resolved runtime rather than explicit tmup launch overrides.
-    expect(launcher).toContain('"$CODEX_BIN"');
+    expect(launcher).toContain('_CODEX_COMMAND=("$CODEX_BIN")');
     const codexContractPins = [
-      '-m "$TMUP_CODEX_MODEL"',
       '-a "$TMUP_CODEX_APPROVAL_POLICY"',
       '-s "$TMUP_CODEX_SANDBOX"',
-      '--add-dir "$TMUP_SESSION_DIR"',
+      '--add-dir "$TMUP_TASK_TMPDIR"',
+      'sandbox_workspace_write.exclude_slash_tmp=true',
+      'sandbox_workspace_write.exclude_tmpdir_env_var=true',
+      'sandbox_workspace_write.network_access=false',
       'model_reasoning_effort=$TMUP_CODEX_REASONING_EFFORT',
       'model_reasoning_summary=$TMUP_CODEX_REASONING_SUMMARY',
       'plan_mode_reasoning_effort=$TMUP_CODEX_PLAN_REASONING',
@@ -205,6 +283,8 @@ describe('dispatch-agent.sh worker-type claude_code', () => {
       '--working-dir', workingDir,
       '--pane-index', '1',
       '--worker-type', 'claude_code',
+      '--allow-unconfined-claude-code',
+      '--claude-code-trust-receipt', 'test-reviewed-claude-lane',
     ], {
       env: {
         ...process.env,
@@ -234,6 +314,8 @@ describe('dispatch-agent.sh worker-type claude_code', () => {
       '--working-dir', workingDir,
       '--pane-index', '1',
       '--worker-type', 'claude_code',
+      '--allow-unconfined-claude-code',
+      '--claude-code-trust-receipt', 'test-reviewed-claude-lane',
     ], {
       env: {
         ...process.env,
@@ -254,10 +336,10 @@ describe('dispatch-agent.sh worker-type claude_code', () => {
     // into the clone branch without aborting, this assertion catches it.
     expect(output).not.toMatch(/^CLONE_DIR=/m);
 
-    const launcherPath = path.join(stateDir, 'launcher-1.sh');
+    const launcherPath = launcherPathFor('agent-cc-no-clone');
     expect(fs.existsSync(launcherPath)).toBe(true);
     const launcher = fs.readFileSync(launcherPath, 'utf-8');
-    expect(launcher).toContain('claude -p');
+    expect(launcher).toContain('"$CLAUDE_BIN" -p');
     expect(launcher).toContain("_WORKER_TYPE=claude_code");
   });
 
@@ -272,6 +354,10 @@ cmd="\${1:-}"
 shift || true
 
 case "$cmd" in
+  list-panes)
+    [[ "$*" == *'-s -t =test-session'* ]] || exit 1
+    printf '1 %%1\\n'
+    ;;
   display-message)
     if [[ "$*" == *'pane_pid'* ]]; then
       printf '100\\n'
@@ -284,6 +370,14 @@ case "$cmd" in
     ;;
   capture-pane)
     printf '${captureOutput}'
+    if [[ '${captureOutput}' == *'Working ('* ]]; then
+      count_file="$HOME/.tmup-test-capture-count"
+      count=0
+      [[ ! -f "$count_file" ]] || count=$(cat "$count_file")
+      count=$((count + 1))
+      printf '%s' "$count" > "$count_file"
+      printf 'Working (receipt-%s)\\n' "$count"
+    fi
     ;;
   *)
     printf 'unexpected tmux command: %s\\n' "$cmd" >&2
@@ -297,6 +391,16 @@ esac
     const filePath = path.join(fakeBin, fileName);
     fs.writeFileSync(filePath, contents);
     fs.chmodSync(filePath, 0o755);
+  }
+
+  function launcherPathFor(agentId: string): string {
+    return path.join(
+      tmpHome,
+      '.local/state/tmup-control',
+      sessionName,
+      'artifacts',
+      `launcher-1-${agentId}.sh`,
+    );
   }
 
   function shellQuote(value: string): string {

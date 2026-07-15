@@ -15,18 +15,18 @@ Claude Code and Codex CLI, duct-taped together with bash scripts and a SQLite da
   +-------+--------+     +----+----+----+----+
           |                    |
           +------ SQLite WAL --+
-               (shared brain)
+            (supervisor-owned state)
 ```
 
-One Claude Code session makes the plan. Up to 8 Codex CLI workers try to execute it. They coordinate through a task DAG backed by SQLite WAL mode, which is a fancy way of saying they all read and write to the same file on disk and somehow this doesn't end in tears. Dependencies cascade. Failed tasks retry. Dead workers get their claims recovered. You get to sit there and watch, which is either supervisory oversight or voyeurism depending on your perspective.
+One Claude Code session makes the plan. A configurable grid of Codex CLI workers tries to execute it (the default is 2x4). A lead-side MCP service coordinates them through a task DAG backed by SQLite WAL mode. In the safe default, workers report through pane output while the supervisor owns claims, lifecycle transitions, messages, and database writes. Dependencies cascade. Failed tasks retry. Dead workers get their claims recovered. You get to sit there and watch, which is either supervisory oversight or voyeurism depending on your perspective.
 
 ## Documentation
 
 | | |
 |---|---|
 | **[Architecture](docs/ARCHITECTURE.md)** | How it actually works under the hood |
-| **[API Reference](docs/API.md)** | All 20 MCP tools + 9 CLI commands |
-| **[Configuration](docs/CONFIGURATION.md)** | Grid layout, DAG behavior, autonomy tiers, project structure |
+| **[API Reference](docs/API.md)** | All 20 MCP tools + 10 CLI commands |
+| **[Configuration](docs/CONFIGURATION.md)** | Grid layout, DAG behavior, advisory routing tiers, project structure |
 | **[Development](docs/DEVELOPMENT.md)** | Dev workflow, the cache sync thing that will absolutely trip you up |
 | **[FAQ & Limitations](docs/FAQ.md)** | Honest answers and honest limitations |
 | **[SYSTEM-INVENTORY.md](SYSTEM-INVENTORY.md)** | 46 KB of engineering notes. You probably don't need this. |
@@ -38,13 +38,13 @@ One Claude Code session makes the plan. Up to 8 Codex CLI workers try to execute
 tmup is a [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) that lets you coordinate multiple AI coding agents from a single session:
 
 - **Claude Code** is the lead. It decides what needs doing, breaks it into tasks, and dispatches workers. Occasionally it makes questionable prioritization decisions, just like a real manager.
-- **Codex CLI** workers run in tmux panes. They claim tasks, write code, and report back. They're good at this. They're also good at confidently doing the wrong thing and then explaining why it's actually correct. Just like real interns.
-- **SQLite WAL** is the coordination layer. Every agent reads and writes to the same `.db` file. This should not work as well as it does. We have stopped asking why.
+- **Codex CLI** workers run in tmux panes. The supervisor assigns tasks; workers write code and report evidence through pane output. They're good at this. They're also good at confidently doing the wrong thing and then explaining why it's actually correct. Just like real interns.
+- **SQLite WAL** is the coordination layer. The safe lane keeps the `.db` file on the controller side; the lead applies worker lifecycle changes after harvesting output. A separately gated trusted mode restores direct shared-state access for legacy workflows.
 - **tmux** is the grid. You can watch the agents work in real time. You cannot make them go faster by watching. We've tried.
 
 ## Why this exists
 
-We wanted to parallelize coding tasks across multiple AI agents without building a distributed system. So we didn't build a distributed system. We just put a bunch of AI processes in tmux panes and gave them a SQLite file to share. The bar was on the floor and we are proud to report that we cleared it.
+We wanted to parallelize coding tasks across multiple AI agents without building a distributed system. So we didn't build a distributed system. We put AI processes in tmux panes and kept the SQLite coordination layer behind a lead-side controller. The bar was on the floor and we are proud to report that we cleared it.
 
 tmup exists because:
 
@@ -80,14 +80,28 @@ We're not going to pretend this is a carefully designed agent hierarchy. It's mo
 
 Worker count, model capacity, and compaction behavior depend on the active policy and installed runtime. Check the resolved runtime receipt instead of assuming a fixed model or adding context windows together.
 
+Native-child admission is pane-local and not shared across panes. Configured pane and thread counts can multiply concurrency, but they are not a shared cap or a measured safe limit. Performance and fanout remain a pilot; shared admission is a measured follow-up.
+
+### Safe worker boundary
+
+The default MCP-dispatched worker is a Codex-only, supervisor-owned lane. `codex.model: "auto"` means tmup omits `-m` and lets the installed Codex CLI choose its default; an explicit model pin requires `codex.explicit_model_pins_enabled: true` plus a per-dispatch `--model-validation-receipt`. A requested pin and its receipt are not proof of the model actually served.
+
+Safe workers run in `workspace-write` with direct shell network access disabled, while Codex-mediated web search can remain available. Both ambient temp grants are excluded. The only extra `--add-dir` is one exact mode-0700 task temp beneath protected controller state. Beyond Codex's core inherited command environment, tmup explicitly sets only agent ID, pane, working directory, optional task ID, and `TMPDIR`/`TMP`/`TEMP`; it does not set `TMUP_DB` or `TMUP_SESSION_DIR`. The worker prompt does not advertise `tmup-cli`: the supervisor owns claim, lifecycle, message, and harvest operations, while the protected launcher owns background heartbeat. Harvested scrollback is ANSI-stripped, framed with `UNTRUSTED PANE OUTPUT` markers, and returned with an explicit trust label; marker text printed by a worker is neutralized before framing.
+
+Prompt, launcher, and log artifacts live under the protected controller root, outside the worker working directory, session directory, and task-temp root. Prompts/logs are mode 0600, launchers are mode 0700, and prompt/launcher hashes and modes are checked before use. Teardown removes the exact protected controller session root after validating its boundary. Deterministic tests cover the task-temp and controller boundaries; host- and release-specific live sandbox canaries remain pending.
+
+Trusted shared state is a direct-dispatch-only compatibility mode. It requires `codex.trusted_shared_state_enabled: true`, `--trusted-shared-state`, and `--trusted-shared-state-receipt`; only then does tmup add the session directory and expose `TMUP_DB`/`TMUP_SESSION_DIR`. This is advisory same-UID trust, not peer isolation. The MCP path strips ambient shell, tier, trust, and shared-state overrides and supports only the safe Codex lane. Direct Claude Code dispatch is likewise default-off and unsandboxed: policy enablement, `--allow-unconfined-claude-code`, and `--claude-code-trust-receipt` are all required, and that lane is outside the Codex sandbox guarantee.
+
+Static `tmup-tier1` and `tmup-tier2` profiles remain dormant and default-off. The dispatcher neither activates nor advertises them. Native children inherit the pane model unless a live named-role selector proves otherwise.
+
 ---
 
 ## Prerequisites
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (CLI)
-- [Codex CLI](https://github.com/openai/codex) (`~/.local/bin/codex` or in PATH)
+- [Codex CLI](https://github.com/openai/codex). Direct dispatch resolves an explicit valid absolute `CODEX_BIN`, executable `~/.local/bin/codex`, then the fixed controller `PATH`. MCP ignores inherited `CODEX_BIN`, resolves a validated absolute executable from `~/.local/bin/codex` or its original process `PATH`, and hands that path to the protected dispatcher.
 - [tmux](https://github.com/tmux/tmux) >= 3.0
-- Node.js 20 (root npm scripts select Homebrew `node@20` when available)
+- Node.js 20. Root npm scripts use the active ABI-compatible runtime, an explicitly verified absolute `TMUP_NODE20_BIN`, or a standard Homebrew/Linuxbrew `node@20` location.
 - jq
 - yq (required when `config/policy.yaml` is present)
 - rsync (required for `scripts/sync-cache.sh`)
@@ -212,7 +226,7 @@ Real output from a tmup session where we used tmup to review tmup (yes, really):
 }
 ```
 
-Real messages from workers:
+Historical direct/shared-state messages from workers (safe panes now report through framed harvest output instead):
 
 ```json
 {

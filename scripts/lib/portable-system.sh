@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # portable-system.sh — small Linux/macOS shell compatibility helpers.
 
 tmup_iso_timestamp() {

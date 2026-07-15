@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # tmux-helpers.sh — Tmux utility functions for tmup
 
 # Check if a process in a pane is an agent (not a shell).
@@ -14,13 +14,54 @@ is_agent_process() {
   esac
 }
 
+# tmux accepts unique session-name prefixes by default. Every controller
+# operation must opt into exact matching so a stale short name can never
+# address a different, longer-lived session.
+tmup_exact_session_target() {
+  local session="${1:-}"
+  [[ "$session" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,70}$ ]] || return 1
+  printf '=%s\n' "$session"
+}
+
+tmup_exact_pane_target() {
+  local session="${1:-}" pane_index="${2:-}"
+  [[ "$session" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,70}$ ]] || return 1
+  [[ "$pane_index" =~ ^[0-9]+$ ]] || return 1
+
+  local state_dir="${CFG_STATE_DIR:-}" grid_state recorded_pane_id
+  [[ -n "$state_dir" ]] || return 1
+  grid_state="$state_dir/grid/grid-state.json"
+  [[ -f "$grid_state" && ! -L "$grid_state" ]] || return 1
+  recorded_pane_id=$(jq -er --argjson idx "$pane_index" '
+    [.panes[] | select(.index == $idx) | .pane_id]
+    | select(length == 1)
+    | .[0]
+    | select(type == "string" and test("^%[0-9]+$"))
+  ' "$grid_state" 2>/dev/null) || return 1
+
+  local session_target live_panes live_pane_id="" live_match_count=0 live_index candidate_id
+  session_target=$(tmup_exact_session_target "$session") || return 1
+  live_panes=$(tmux list-panes -s -t "$session_target" -F '#{pane_index} #{pane_id}' 2>/dev/null) || return 1
+  while IFS=' ' read -r live_index candidate_id; do
+    if [[ "$live_index" == "$pane_index" && "$candidate_id" =~ ^%[0-9]+$ ]]; then
+      live_match_count=$((live_match_count + 1))
+      live_pane_id="$candidate_id"
+    fi
+  done <<<"$live_panes"
+  [[ "$live_match_count" -eq 1 && "$live_pane_id" == "$recorded_pane_id" ]] || return 1
+
+  # Pane IDs are tmux's exact, window-index-independent pane targets.
+  printf '%s\n' "$recorded_pane_id"
+}
+
 # Wait for a pane to be at a shell prompt
 wait_for_shell_ready() {
   local session="$1" pane="$2" max_wait="${3:-5}"
-  local waited=0
+  local waited=0 target
+  target=$(tmup_exact_pane_target "$session" "$pane") || return 1
   while [[ $waited -lt $max_wait ]]; do
     local cmd
-    cmd=$(tmux display-message -t "$session:0.$pane" -p '#{pane_current_command}' 2>/dev/null) || cmd=""
+    cmd=$(tmux display-message -t "$target" -p '#{pane_current_command}' 2>/dev/null) || cmd=""
     case "$cmd" in
       bash|zsh|sh|fish) return 0 ;;
     esac
@@ -55,7 +96,8 @@ respawn_pane() {
 # when tmux/process inspection is unavailable or ambiguous.
 pane_foreground_descendant_command() {
   local session="${1:-}" pane_index="${2:-0}"
-  local target="${session}:0.${pane_index}"
+  local target
+  target=$(tmup_exact_pane_target "$session" "$pane_index") || return 2
   local pane_pid process_snapshot
 
   pane_pid=$(tmux display-message -t "$target" -p '#{pane_pid}' 2>/dev/null) || return 2
@@ -142,7 +184,8 @@ pane_foreground_descendant_command() {
 # when occupancy cannot be verified.
 pane_occupancy_command() {
   local session="${1:-}" pane_index="${2:-0}"
-  local target="${session}:0.${pane_index}"
+  local target
+  target=$(tmup_exact_pane_target "$session" "$pane_index") || return 2
   local cmd foreground_command inspection_status
 
   cmd=$(tmux display-message -t "$target" -p '#{pane_current_command}' 2>/dev/null) || return 2
@@ -171,7 +214,8 @@ pane_occupancy_command() {
 # Get the actual running command in a pane (walks process tree)
 get_pane_command() {
   local session="${1:-}" pane_index="${2:-0}"
-  local target="${session}:0.${pane_index}"
+  local target
+  target=$(tmup_exact_pane_target "$session" "$pane_index") || return 1
   tmux display-message -t "$target" -p '#{pane_current_command}' 2>/dev/null || echo ""
 }
 
@@ -202,12 +246,26 @@ codex_scrollback_shows_active_work() {
 codex_scrollback_shows_work() {
   local scrollback="${1:-}"
   local prompt_text="${2:-}"
-
-  if codex_scrollback_shows_active_work "$scrollback"; then
-    return 0
-  fi
+  local pre_submit_baseline="${3:-}"
 
   local work_area="$scrollback"
+  if [[ -n "$pre_submit_baseline" ]]; then
+    # Only new lines can prove acceptance on a reused pane. Stale tool output
+    # from an earlier turn must never receipt a failed Enter as delivered.
+    work_area=$(TMUX_PRE_SUBMIT_BASELINE="$pre_submit_baseline" awk '
+      BEGIN {
+        count = split(ENVIRON["TMUX_PRE_SUBMIT_BASELINE"], baseline, "\n")
+        for (i = 1; i <= count; i++) seen[baseline[i]]++
+      }
+      {
+        if (seen[$0] > 0) { seen[$0]--; next }
+        print
+      }
+    ' <<<"$work_area")
+  fi
+  if codex_scrollback_shows_active_work "$work_area"; then
+    return 0
+  fi
   if [[ -n "$prompt_text" ]]; then
     # Strip any line whose content is an echo of the typed prompt. The input
     # area may render as `❯ <text>`, `› <text>`, `│ > <text>`, or wrapped
@@ -235,7 +293,7 @@ codex_scrollback_shows_work() {
         if (index(p, line) > 0) { next }
         print
       }
-    ' <<<"$scrollback")
+    ' <<<"$work_area")
   fi
 
   if echo "$work_area" | grep -qiE \
@@ -259,13 +317,14 @@ codex_scrollback_shows_idle_prompt() {
 }
 
 wait_for_codex_submit_confirmation() {
-  local session="${1:-}" pane_index="${2:-0}" delay_seconds="${3:-2}" prompt_text="${4:-}"
-  local target="${session}:0.${pane_index}"
+  local session="${1:-}" pane_index="${2:-0}" delay_seconds="${3:-2}" prompt_text="${4:-}" pre_submit_baseline="${5:-}"
+  local target
+  target=$(tmup_exact_pane_target "$session" "$pane_index") || return 1
   local scrollback
 
   sleep "$delay_seconds"
   scrollback=$(capture_pane_scrollback "$target" "-40") || scrollback=""
-  codex_scrollback_shows_work "$scrollback" "$prompt_text"
+  codex_scrollback_shows_work "$scrollback" "$prompt_text" "$pre_submit_baseline"
 }
 
 # Check if a pane is at an idle shell prompt
@@ -282,7 +341,8 @@ is_shell_ready() {
 # Check if an agent in a pane is idle (not actively "Working")
 is_agent_idle() {
   local session="$1" pane_index="${2:-0}"
-  local target="${session}:0.${pane_index}"
+  local target
+  target=$(tmup_exact_pane_target "$session" "$pane_index") || return 1
   local scrollback
   scrollback=$(capture_pane_scrollback "$target" "-20") || return 1
   codex_scrollback_shows_idle_prompt "$scrollback"
@@ -292,7 +352,8 @@ is_agent_idle() {
 # Codex shows "Tab to queue" or similar indicator when a prompt can be queued.
 is_agent_queueable() {
   local session="$1" pane_index="${2:-0}"
-  local target="${session}:0.${pane_index}"
+  local target
+  target=$(tmup_exact_pane_target "$session" "$pane_index") || return 1
   local scrollback
   scrollback=$(capture_pane_scrollback "$target" "-20") || return 1
   # Must be actively working (not idle)
@@ -304,14 +365,19 @@ is_agent_queueable() {
 # Clear any stale input from a pane
 clear_pane_input() {
   local session="$1" pane_index="${2:-0}"
-  local target="${session}:0.${pane_index}"
+  local target
+  target=$(tmup_exact_pane_target "$session" "$pane_index") || return 1
   tmux send-keys -t "$target" C-u 2>/dev/null || true
   sleep 0.1
 }
 
 send_codex_prompt_with_retry() {
   local session="${1:-}" pane_index="${2:-0}" prompt_text="${3:-}" mode="${4:-dispatch}"
-  local target="${session}:0.${pane_index}"
+  local target
+  target=$(tmup_exact_pane_target "$session" "$pane_index") || {
+    echo "send_codex_prompt_with_retry: invalid session or pane target" >&2
+    return 1
+  }
   local max_full_retries=1
   local failure_message="failed to confirm Codex accepted the prompt"
 
@@ -358,8 +424,19 @@ send_codex_prompt_with_retry() {
         sleep 0.2
       fi
 
+      local pre_submit_baseline
+      if ! pre_submit_baseline=$(capture_pane_scrollback "$target" "-40"); then
+        echo "send_codex_prompt_with_retry: failed to capture a pre-submit baseline for $target" >&2
+        clear_pane_input "$session" "$pane_index"
+        return 1
+      fi
+      if [[ ! "$pre_submit_baseline" =~ [^[:space:]] ]]; then
+        echo "send_codex_prompt_with_retry: pre-submit baseline was empty for $target" >&2
+        clear_pane_input "$session" "$pane_index"
+        return 1
+      fi
       tmux send-keys -t "$target" Enter 2>/dev/null || true
-      if wait_for_codex_submit_confirmation "$session" "$pane_index" 2 "$prompt_text"; then
+      if wait_for_codex_submit_confirmation "$session" "$pane_index" 2 "$prompt_text" "$pre_submit_baseline"; then
         return 0
       fi
     done
@@ -381,12 +458,21 @@ send_reprompt() {
   fi
 
   # Verify session exists
-  if ! tmux has-session -t "$session" 2>/dev/null; then
+  local session_target
+  session_target=$(tmup_exact_session_target "$session") || {
+    echo "send_reprompt: invalid session name '$session'" >&2
+    return 1
+  }
+  if ! tmux has-session -t "$session_target" 2>/dev/null; then
     echo "send_reprompt: session '$session' does not exist" >&2
     return 1
   fi
 
-  local target="${session}:0.${pane_index}"
+  local target
+  target=$(tmup_exact_pane_target "$session" "$pane_index") || {
+    echo "send_reprompt: invalid pane index '$pane_index'" >&2
+    return 1
+  }
 
   # Guard: pane must be running a process, NOT at an idle shell prompt
   if is_shell_ready "$session" "$pane_index"; then
@@ -394,37 +480,15 @@ send_reprompt() {
     return 1
   fi
 
-  # Guard: agent must be idle OR queueable (actively working but accepting queued input)
-  local _reprompt_mode="reprompt"
+  # Queue acceptance has no pane-specific receipt. Only idle agents are safe
+  # to reprompt; an actively working pane must be retried after it becomes idle.
   if is_agent_idle "$session" "$pane_index"; then
-    _reprompt_mode="reprompt"
+    :
   elif is_agent_queueable "$session" "$pane_index"; then
-    _reprompt_mode="queue"
-  else
-    echo "send_reprompt: pane $target is neither idle nor queueable" >&2
+    echo "send_reprompt: pane $target is actively working; wait until idle (queue delivery is disabled without an acceptance receipt)" >&2
     return 1
-  fi
-
-  if [[ "$_reprompt_mode" == "queue" ]]; then
-    # Queueable pane: type text and press Tab to queue (not Enter)
-    clear_pane_input "$session" "$pane_index"
-    tmux send-keys -l -t "$target" "$prompt_text" 2>/dev/null || {
-      echo "send_reprompt: failed to send text to $target" >&2
-      return 1
-    }
-    sleep 0.2
-    tmux send-keys -t "$target" Tab 2>/dev/null || {
-      echo "send_reprompt: failed to send Tab to $target" >&2
-      return 1
-    }
-    # Verify queue acceptance — scrollback should still show active work
-    sleep 0.2
-    local _queue_check
-    _queue_check=$(capture_pane_scrollback "$target" "-10") || _queue_check=""
-    if codex_scrollback_shows_active_work "$_queue_check"; then
-      return 0
-    fi
-    echo "send_reprompt: Tab sent but could not confirm queue acceptance on $target" >&2
+  else
+    echo "send_reprompt: pane $target is not at a verified idle agent prompt" >&2
     return 1
   fi
 
