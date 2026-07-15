@@ -19,13 +19,17 @@ All workers are interactive Codex sessions in tmux panes. Use `tmup_dispatch` to
 
 ## Fresh Worker Runtime
 
-Fresh tmup workers launch with the auto-detected Codex model (`codex.model: "auto"` resolves the live Codex CLI default; override with an explicit id in policy.yaml), `model_context_window=1050000`, `model_auto_compact_token_limit=750000`, `model_reasoning_effort=high`, `model_reasoning_summary=concise`, `plan_mode_reasoning_effort=xhigh`, `model_verbosity=low`, `service_tier=fast`, `tool_output_token_limit=50000`, `web_search=live`, `history.persistence=save-all`, `features.undo=true`, `shell_environment_policy.inherit=all`, `features.shell_snapshot=true`, `features.enable_request_compression=true`, `tui.notifications=true`, `background_terminal_max_timeout=600000`, autonomous shell execution, inline-mode scrollback, and Codex subagent caps of `max_threads=6`, `max_depth=2`, and `job_max_runtime_seconds=3600`. Planning-first behavior is supplied in the initial prompt rather than via an undocumented CLI startup flag.
+Fresh pane roots use the auto-detected Codex model (`codex.model: "auto"`). Context and compaction come from the resolved Codex model catalog; tmup does not override them. Pane roots use the `workspace-write` sandbox. Native subagent caps include `agents.max_depth=1`.
+
+Other fresh-lane settings are `model_reasoning_effort=high`, `model_reasoning_summary=concise`, `plan_mode_reasoning_effort=xhigh`, `model_verbosity=low`, `service_tier=fast`, `tool_output_token_limit=50000`, `web_search=live`, `history.persistence=save-all`, `shell_environment_policy.inherit=all`, `features.shell_snapshot=true`, `features.enable_request_compression=true`, `tui.notifications=true`, `background_terminal_max_timeout=600000`, `agents.max_threads=6`, and `agents.job_max_runtime_seconds=3600`. Planning-first behavior is supplied in the initial prompt rather than via an undocumented CLI startup flag.
 
 Tiered subagent pack:
 
-- `tmup-tier1` in `~/.codex/agents/tmup-tier1.toml` — `gpt-5.5`
-- `tmup-tier2` in `~/.codex/agents/tmup-tier2.toml` — `gpt-5.5`
+- `tmup-tier1` is the `gpt-5.6-terra` / high-reasoning leaf profile.
+- `tmup-tier2` is the `gpt-5.6-luna` / medium-reasoning leaf profile.
 - `grid-setup.sh` syncs these files from plugin-local `agents/codex/` before returning success, including on existing-grid reattach paths
+
+Native children inherit the pane model unless the live spawn schema explicitly exposes named-role selection. Task names do not select or pin a role or model. When named-role selection is available, `tmup-tier1` and `tmup-tier2` are direct leaves and must not delegate further. Without named-role selection, native children are same-model leaves; use a model-explicit Codex/tmup process or lane for a distinct model. Never claim model or tier selection without a runtime receipt.
 
 ### tmup_init
 Initializes or reattaches DB and session registry for a project directory. Does not create tmux panes (grid-setup.sh handles grid creation).
@@ -116,7 +120,7 @@ Registers agent, claims task, and launches an interactive Codex session in a pan
    "launch_output": "Dispatched implementer to pane 2 (agent uuid)"}
 ```
 
-With `resume_session_id`, resumes the existing Codex session via `codex resume <ID>` internally while reapplying the full TMUP_CODEX_* runtime contract (model, context, compaction, approval, sandbox, reasoning effort, subagent caps). **Do not run bare `codex resume` — it bypasses the runtime contract.**
+With `resume_session_id`, resumes the existing Codex session via `codex resume <ID>` internally while reapplying the configured TMUP_CODEX_* runtime contract (model, approval, sandbox, reasoning effort, subagent caps). **Do not run bare `codex resume` — it bypasses the runtime contract.**
 
 ### tmup_harvest
 ```json
@@ -146,7 +150,7 @@ Safety guards:
 {} / {"session_id?": "tmup-a3f1b2"} / {"force?": true}
 ```
 
-`tmup_resume` returns a `resume_commands` array. Each entry instructs the caller to use `tmup_dispatch` with `resume_session_id` — **never** run bare `codex resume`, which would bypass the pinned runtime contract (model, sandbox, subagent caps).
+`tmup_resume` returns a `resume_commands` array. Each entry instructs the caller to use `tmup_dispatch` with `resume_session_id` — **never** run bare `codex resume`, which would bypass the configured runtime contract (model, sandbox, subagent caps).
 
 ## CLI Commands (tmup-cli)
 

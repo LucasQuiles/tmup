@@ -84,16 +84,21 @@ Workers are interactive Codex sessions in tmux panes. Use `tmup_dispatch` to sta
 
 ## Fresh Worker Runtime
 
-- Fresh tmup workers launch on the auto-detected Codex model (`codex.model: "auto"` in policy.yaml resolves the live Codex CLI default).
-- tmup also requests the GPT-5.4 1M Codex context window through `model_context_window=1050000`.
-- tmup sets `model_auto_compact_token_limit=750000` to compact well before context quality degrades.
-- tmup pins worker reasoning and output controls with `model_reasoning_effort=high`, `model_reasoning_summary=low`, `plan_mode_reasoning_effort=xhigh`, and `model_verbosity=low`.
+- Fresh pane roots use the auto-detected Codex model (`codex.model: "auto"`).
+- Context and compaction come from the resolved Codex model catalog; tmup does not override them.
+- Pane roots use the `workspace-write` sandbox.
+- tmup configures `model_reasoning_effort=high`, `model_reasoning_summary=concise`, `plan_mode_reasoning_effort=xhigh`, and `model_verbosity=low`.
 - tmup enables `service_tier=fast`, `tool_output_token_limit=50000`, and `web_search=live` for higher-throughput interactive lanes.
-- tmup preserves resumability and operator ergonomics with `history.persistence=save-all`, `features.undo=true`, `shell_environment_policy.inherit=all`, `features.shell_snapshot=true`, `features.enable_request_compression=true`, `tui.notifications=true`, and `background_terminal_max_timeout=600000`.
+- tmup preserves resumability and operator ergonomics with `history.persistence=save-all`, `shell_environment_policy.inherit=all`, `features.shell_snapshot=true`, `features.enable_request_compression=true`, `tui.notifications=true`, and `background_terminal_max_timeout=600000`.
 - tmup configures worker lanes for interactive Codex use with autonomous execution and inline scrollback-friendly mode.
 - Planning-first behavior is enforced by the initial worker prompt. tmup does not rely on an undocumented Codex startup flag for this.
-- Fresh lanes also set Codex subagent caps (`agents.max_threads=6`, `agents.max_depth=2`, `agents.job_max_runtime_seconds=3600`) so each pane can use internal teams when appropriate.
-- `grid-setup.sh` syncs the named tiered agents into `~/.codex/agents/`: `tmup-tier1` and `tmup-tier2`, both on `gpt-5.5` (models pinned in `config/policy.yaml`).
+- Native subagent caps include `agents.max_depth=1`. Fresh lanes also set `agents.max_threads=6` and `agents.job_max_runtime_seconds=3600`.
+- `tmup-tier1` is the `gpt-5.6-terra` / high-reasoning leaf profile.
+- `tmup-tier2` is the `gpt-5.6-luna` / medium-reasoning leaf profile.
+- Native children inherit the pane model unless the live spawn schema explicitly exposes named-role selection. Task names do not select or pin a role or model.
+- When named-role selection is available, `tmup-tier1` and `tmup-tier2` are direct leaves and must not delegate further.
+- Without named-role selection, native children are same-model leaves; use a model-explicit Codex/tmup process or lane for a distinct model.
+- Never claim model or tier selection without a runtime receipt.
 
 ## Task DAG
 

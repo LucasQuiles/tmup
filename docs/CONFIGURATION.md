@@ -35,9 +35,11 @@ codex:
         model: "gpt-5.6-luna"
 ```
 
-`model: auto` resolves the pane-root model from the active Codex configuration and catalog, then uses `model_preference` when no live default is available. tmup no longer overrides the model's context window or compaction threshold; both come from the resolved Codex model catalog. Pane roots launch with the workspace-scoped `workspace-write` sandbox.
+Fresh pane roots use the auto-detected Codex model (`codex.model: "auto"`). Context and compaction come from the resolved Codex model catalog; tmup does not override them. Pane roots use the `workspace-write` sandbox. Native subagent caps include `agents.max_depth=1`.
 
-`tmup-tier1` is the direct high-capability leaf for bounded implementation or verification, and `tmup-tier2` is the direct fast leaf for discovery, tests, or focused analysis. The pane root may dispatch either named tier; neither tier delegates further.
+`tmup-tier1` is the `gpt-5.6-terra` / high-reasoning leaf profile. `tmup-tier2` is the `gpt-5.6-luna` / medium-reasoning leaf profile.
+
+Native children inherit the pane model unless the live spawn schema explicitly exposes named-role selection. Task names do not select or pin a role or model. When named-role selection is available, `tmup-tier1` and `tmup-tier2` are direct leaves and must not delegate further. Without named-role selection, native children are same-model leaves; use a model-explicit Codex/tmup process or lane for a distinct model. Never claim model or tier selection without a runtime receipt.
 
 Explicit process-isolated Codex workers use `--ignore-user-config --disable multi_agent` so they do not inherit or activate the native multi-agent runtime.
 

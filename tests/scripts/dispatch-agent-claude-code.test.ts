@@ -156,15 +156,11 @@ describe('dispatch-agent.sh worker-type claude_code', () => {
     expect(launcher).toContain("_WORKER_TYPE=codex");
     expect(launcher).toContain('if [[ "$_WORKER_TYPE" == "claude_code" ]]');
 
-    // Positive codex contract — full runtime pin. Per plugins/tmup/.claude/CLAUDE.md
-    // "Hard Rules": the Codex launch path must preserve the full TMUP_CODEX_*
-    // runtime contract; bare-default regressions are forbidden. Stripping any
-    // of these flags would be such a regression, so we guard them explicitly.
+    // Positive configured Codex contract. Context, compaction, and undo come
+    // from the resolved runtime rather than explicit tmup launch overrides.
     expect(launcher).toContain('"$CODEX_BIN"');
     const codexContractPins = [
       '-m "$TMUP_CODEX_MODEL"',
-      'model_context_window=$TMUP_CODEX_CONTEXT_WINDOW',
-      'model_auto_compact_token_limit=$TMUP_CODEX_AUTO_COMPACT',
       '-a "$TMUP_CODEX_APPROVAL_POLICY"',
       '-s "$TMUP_CODEX_SANDBOX"',
       'model_reasoning_effort=$TMUP_CODEX_REASONING_EFFORT',
@@ -175,7 +171,6 @@ describe('dispatch-agent.sh worker-type claude_code', () => {
       'tool_output_token_limit=$TMUP_CODEX_TOOL_OUTPUT_LIMIT',
       'web_search=$TMUP_CODEX_WEB_SEARCH',
       'history.persistence=$TMUP_CODEX_HISTORY',
-      'features.undo=$TMUP_CODEX_UNDO',
       'shell_environment_policy.inherit=$TMUP_CODEX_SHELL_INHERIT',
       'features.shell_snapshot=$TMUP_CODEX_SHELL_SNAPSHOT',
       'features.enable_request_compression=$TMUP_CODEX_REQUEST_COMPRESSION',

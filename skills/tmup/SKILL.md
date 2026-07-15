@@ -75,35 +75,35 @@ This is the tmup equivalent of the `/using-tmux-for-interactive-commands` patter
 
 Fresh tmup workers currently launch with:
 
-- `--model <auto-detected>` (the live Codex CLI default; configured via `codex.model` in policy.yaml)
-- `-c model_context_window=1050000`
-- `-c model_auto_compact_token_limit=750000`
+- Fresh pane roots use the auto-detected Codex model (`codex.model: "auto"`).
+- Context and compaction come from the resolved Codex model catalog; tmup does not override them.
 - `-a never`
-- `-s danger-full-access`
+- Pane roots use the `workspace-write` sandbox.
 - `--no-alt-screen`
 - `-c model_reasoning_effort=high`
-- `-c model_reasoning_summary=low`
+- `-c model_reasoning_summary=concise`
 - `-c plan_mode_reasoning_effort=xhigh`
 - `-c model_verbosity=low`
 - `-c service_tier=fast`
 - `-c tool_output_token_limit=50000`
 - `-c web_search=live`
 - `-c history.persistence=save-all`
-- `-c features.undo=true`
 - `-c shell_environment_policy.inherit=all`
 - `-c features.shell_snapshot=true`
 - `-c features.enable_request_compression=true`
 - `-c tui.notifications=true`
 - `-c background_terminal_max_timeout=600000`
 - `-c agents.max_threads=6`
-- `-c agents.max_depth=2`
+- Native subagent caps include `agents.max_depth=1`.
 - `-c agents.job_max_runtime_seconds=3600`
 
 Tiered subagent pack:
 
-- `tmup-tier1` — `gpt-5.5`, high reasoning, first-tier helper
-- `tmup-tier2` — `gpt-5.5`, medium reasoning, narrow leaf helper
+- `tmup-tier1` is the `gpt-5.6-terra` / high-reasoning leaf profile.
+- `tmup-tier2` is the `gpt-5.6-luna` / medium-reasoning leaf profile.
 - `grid-setup.sh` syncs these TOMLs from `agents/codex/` into `~/.codex/agents/`
+
+Native children inherit the pane model unless the live spawn schema explicitly exposes named-role selection. Task names do not select or pin a role or model. When named-role selection is available, `tmup-tier1` and `tmup-tier2` are direct leaves and must not delegate further. Without named-role selection, native children are same-model leaves; use a model-explicit Codex/tmup process or lane for a distinct model. Never claim model or tier selection without a runtime receipt.
 
 The planning-first behavior is carried by the initial prompt. tmup does not depend on an undocumented CLI startup flag for plan mode.
 

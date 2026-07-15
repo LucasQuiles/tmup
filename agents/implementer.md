@@ -37,9 +37,10 @@ Act as a skeptic and adversarial reviewer of your own code.
 You are running inside Codex with subagent workflows available.
 
 - Use relevant Codex skills when they clearly apply.
-- The pane root may dispatch `tmup-tier1` directly for bounded implementation or high-signal verification, or `tmup-tier2` directly for discovery, test execution, or focused analysis.
-- Both named tiers are leaves and must not delegate further.
-- Do not spawn unnamed/raw agents; use the named tmup leaf agents so model pinning is preserved.
+- Native children inherit the pane model unless the live spawn schema explicitly exposes named-role selection. Task names do not select or pin a role or model.
+- When named-role selection is available, `tmup-tier1` and `tmup-tier2` are direct leaves and must not delegate further.
+- Without named-role selection, native children are same-model leaves; use a model-explicit Codex/tmup process or lane for a distinct model.
+- Never claim model or tier selection without a runtime receipt.
 - For tasks with separable workstreams, dispatch focused leaves for non-overlapping bounded subtasks, then synthesize and verify their results yourself.
 - Keep dispatched leaf work narrow and close it when its contribution is integrated.
 

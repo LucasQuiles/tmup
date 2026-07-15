@@ -190,6 +190,10 @@ else cat <<CODEX_CONTRACT
 $PLAN_FIRST_LINE
 - Use relevant Codex skills when they clearly apply to the task.
 - Use built-in Codex subagents when the task has parallelizable workstreams.
+- Native children inherit the pane model unless the live spawn schema explicitly exposes named-role selection. Task names do not select or pin a role or model.
+- When named-role selection is available, tmup-tier1 and tmup-tier2 are direct leaves and must not delegate further.
+- Without named-role selection, native children are same-model leaves; use a model-explicit Codex/tmup process or lane for a distinct model.
+- Never claim model or tier selection without a runtime receipt.
 - Current subagent caps for fresh tmup workers: max_threads=$CFG_CODEX_MAX_THREADS, max_depth=$CFG_CODEX_MAX_DEPTH, job_max_runtime_seconds=$CFG_CODEX_JOB_TIMEOUT.
 
 ## Lane Discipline — INTERACTIVE
@@ -226,9 +230,8 @@ fi)
 - Escalate blockers, ambiguity, or upstream defects early instead of silently guessing.
 
 ## Internal Teams
-- The pane root owns its assigned lane and may dispatch \`tmup-tier1\` or \`tmup-tier2\` directly for independent bounded work.
-- Both named tiers are leaves and must not delegate further.
-- Use tier 1 for bounded implementation or high-signal verification; use tier 2 for discovery, test execution, or focused analysis.
+- The pane root owns its assigned lane and may dispatch independent bounded work when the runtime exposes native children.
+- Keep child work narrow, non-overlapping, and inside the assigned pane lane.
 - Do not duplicate work, overlap writes, or treat worker output as proof before checking it.
 - max_threads: $CFG_CODEX_MAX_THREADS concurrent, max_depth: $CFG_CODEX_MAX_DEPTH.
 

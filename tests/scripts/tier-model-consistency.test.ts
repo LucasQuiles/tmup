@@ -13,6 +13,27 @@ const PANE_ROLE_FILES = [
   'documenter.md',
   'reviewer.md',
 ];
+const RUNTIME_DOC_FILES = [
+  'commands/tmup.md',
+  'skills/tmup/SKILL.md',
+  'skills/tmup/REFERENCE.md',
+  'docs/CONFIGURATION.md',
+];
+const CAPABILITY_ROUTING_GUIDANCE = [
+  'Native children inherit the pane model unless the live spawn schema explicitly exposes named-role selection.',
+  'Task names do not select or pin a role or model.',
+  'When named-role selection is available, `tmup-tier1` and `tmup-tier2` are direct leaves and must not delegate further.',
+  'Without named-role selection, native children are same-model leaves; use a model-explicit Codex/tmup process or lane for a distinct model.',
+  'Never claim model or tier selection without a runtime receipt.',
+];
+const RUNTIME_DOC_GUIDANCE = [
+  'Fresh pane roots use the auto-detected Codex model (`codex.model: "auto"`).',
+  'Context and compaction come from the resolved Codex model catalog; tmup does not override them.',
+  'Pane roots use the `workspace-write` sandbox.',
+  'Native subagent caps include `agents.max_depth=1`.',
+  '`tmup-tier1` is the `gpt-5.6-terra` / high-reasoning leaf profile.',
+  '`tmup-tier2` is the `gpt-5.6-luna` / medium-reasoning leaf profile.',
+];
 
 describe('Tier model consistency', () => {
   it('should ensure TOML models match policy.yaml single source of truth', () => {
@@ -44,15 +65,38 @@ describe('Tier model consistency', () => {
     expect(m2?.[1]).toBe(policy.codex.subagents.tiers.tier2.model);
   });
 
-  it.each(PANE_ROLE_FILES)('%s keeps named tier delegation direct and leaf-only', (file) => {
-    const markdown = fs.readFileSync(path.join(PLUGIN_DIR, 'agents', file), 'utf-8');
+  it('keeps pane prompts and the generated Codex contract capability-aware', () => {
+    const prompts = PANE_ROLE_FILES.map((file) => [
+      file,
+      fs.readFileSync(path.join(PLUGIN_DIR, 'agents', file), 'utf-8'),
+    ] as const);
+    const script = fs.readFileSync(path.join(PLUGIN_DIR, 'scripts/dispatch-agent.sh'), 'utf-8');
+    expect(script).not.toContain('\\`tmup-tier1\\`');
+    prompts.push([
+      'scripts/dispatch-agent.sh',
+      script,
+    ]);
 
-    expect(markdown).not.toMatch(/delegated helper.*(?:spawn|dispatch).*`tmup-tier2`/i);
-    expect(markdown).not.toMatch(/`tmup-tier1`.*(?:spawn|dispatch).*`tmup-tier2`/i);
-    expect(markdown).toContain(
-      'The pane root may dispatch `tmup-tier1` directly for bounded implementation or high-signal verification, or `tmup-tier2` directly for discovery, test execution, or focused analysis.',
-    );
-    expect(markdown).toContain('Both named tiers are leaves and must not delegate further.');
-    expect(markdown).toContain('Do not spawn unnamed/raw agents');
+    for (const [file, prompt] of prompts) {
+      expect(prompt, file).not.toMatch(/pane root may dispatch `tmup-tier|model pinning is preserved/i);
+      for (const guidance of CAPABILITY_ROUTING_GUIDANCE) {
+        expect(prompt, file).toContain(
+          file === 'scripts/dispatch-agent.sh' ? guidance.replaceAll('`', '') : guidance,
+        );
+      }
+    }
+  });
+
+  it('keeps tmup runtime docs aligned with reviewed capability and policy semantics', () => {
+    for (const file of RUNTIME_DOC_FILES) {
+      const markdown = fs.readFileSync(path.join(PLUGIN_DIR, file), 'utf-8');
+
+      expect(markdown, file).not.toMatch(
+        /model_context_window|model_auto_compact_token_limit|features\.undo|danger-full-access|agents\.max_depth=2|runtime contract \(model, context, compaction|`tmup-tier[12]`[^\n]*`gpt-5\.5`/i,
+      );
+      for (const guidance of [...RUNTIME_DOC_GUIDANCE, ...CAPABILITY_ROUTING_GUIDANCE]) {
+        expect(markdown, file).toContain(guidance);
+      }
+    }
   });
 });
