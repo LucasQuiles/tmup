@@ -278,7 +278,12 @@ _resolve_system_tools() {
 }
 
 _file_link_count() {
-  stat -f '%l' "$1" 2>/dev/null || stat -c '%h' "$1" 2>/dev/null
+  local value
+  if value=$(stat -f '%l' "$1" 2>/dev/null); then
+    printf '%s\n' "$value"
+  else
+    stat -c '%h' "$1" 2>/dev/null
+  fi
 }
 
 _validate_single_link_regular() {
@@ -313,7 +318,12 @@ _hash_file() {
 }
 
 _file_mode() {
-  stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null
+  local value
+  if value=$(stat -f '%Lp' "$1" 2>/dev/null); then
+    printf '%s\n' "$value"
+  else
+    stat -c '%a' "$1" 2>/dev/null
+  fi
 }
 
 _verify_control_artifact() {

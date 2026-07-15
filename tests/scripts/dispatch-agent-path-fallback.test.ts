@@ -197,6 +197,23 @@ exit 0
     expect(() => runDispatch('agent-hardlink-grid')).toThrowError(/grid state.*single-link|single-link.*grid state/i);
   });
 
+  it('ignores failed BSD stat probe output before using the GNU fallback', () => {
+    writeExecutable('codex', '#!/bin/bash\nexit 0\n');
+    writeExecutable('stat', `#!/bin/bash
+if [[ "\${1:-}" == '-f' ]]; then
+  printf 'partial filesystem report\\n'
+  exit 1
+fi
+case "\${1:-}:\${2:-}" in
+  '-c:%h') exec /usr/bin/perl -e '@s = stat($ARGV[0]); exit 1 unless @s; print "$s[3]\\n"' "\${3:-}" ;;
+  '-c:%a') exec /usr/bin/perl -e '@s = stat($ARGV[0]); exit 1 unless @s; printf "%o\\n", $s[2] & 07777' "\${3:-}" ;;
+  *) exit 2 ;;
+esac
+`);
+
+    expect(() => runDispatch('agent-gnu-stat-fallback')).not.toThrow();
+  });
+
   it('rejects a symlinked grid directory even when grid-state.json itself is regular', () => {
     writeExecutable('codex', '#!/bin/bash\nexit 0\n');
     const outsideGrid = path.join(tmpHome, 'outside-grid');
