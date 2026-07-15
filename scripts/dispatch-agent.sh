@@ -342,6 +342,7 @@ else
     -m "\$TMUP_CODEX_MODEL"
     -a "\$TMUP_CODEX_APPROVAL_POLICY"
     -s "\$TMUP_CODEX_SANDBOX"
+    --add-dir "\$TMUP_SESSION_DIR"
     -c "model_reasoning_effort=\$TMUP_CODEX_REASONING_EFFORT"
     -c "model_reasoning_summary=\$TMUP_CODEX_REASONING_SUMMARY"
     -c "plan_mode_reasoning_effort=\$TMUP_CODEX_PLAN_REASONING"

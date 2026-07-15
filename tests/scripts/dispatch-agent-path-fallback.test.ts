@@ -147,6 +147,7 @@ exit 0
     expect(launcher).not.toContain('model_auto_compact_token_limit');
     expect(launcher).toContain('-a "$TMUP_CODEX_APPROVAL_POLICY"');
     expect(launcher).toContain('-s "$TMUP_CODEX_SANDBOX"');
+    expect(readCommonArgs(launcher)).toContain('--add-dir "$TMUP_SESSION_DIR"');
     expect(launcher).toContain('-c "model_reasoning_effort=$TMUP_CODEX_REASONING_EFFORT"');
     expect(launcher).toContain('-c "model_reasoning_summary=$TMUP_CODEX_REASONING_SUMMARY"');
     expect(launcher).toContain('-c "plan_mode_reasoning_effort=$TMUP_CODEX_PLAN_REASONING"');
@@ -180,6 +181,7 @@ exit 0
     expect(launcher).not.toContain('model_auto_compact_token_limit');
     expect(launcher).toContain('-a "$TMUP_CODEX_APPROVAL_POLICY"');
     expect(launcher).toContain('-s "$TMUP_CODEX_SANDBOX"');
+    expect(readCommonArgs(launcher)).toContain('--add-dir "$TMUP_SESSION_DIR"');
     expect(launcher).toContain('-c "model_reasoning_effort=$TMUP_CODEX_REASONING_EFFORT"');
     expect(launcher).toContain('-c "model_reasoning_summary=$TMUP_CODEX_REASONING_SUMMARY"');
     expect(launcher).toContain('-c "plan_mode_reasoning_effort=$TMUP_CODEX_PLAN_REASONING"');
@@ -234,6 +236,14 @@ exit 0
 
   function readLauncher(): string {
     return fs.readFileSync(path.join(stateDir, 'launcher-1.sh'), 'utf-8');
+  }
+
+  function readCommonArgs(launcher: string): string {
+    const start = launcher.indexOf('_COMMON_ARGS=(');
+    const end = launcher.indexOf('_COMMON_ARGS+=', start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    return launcher.slice(start, end);
   }
 
   function shellEnv(): NodeJS.ProcessEnv {

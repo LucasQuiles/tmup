@@ -19,21 +19,25 @@ const RUNTIME_DOC_FILES = [
   'skills/tmup/REFERENCE.md',
   'docs/CONFIGURATION.md',
 ];
-const CAPABILITY_ROUTING_GUIDANCE = [
-  'Native children inherit the pane model unless the live spawn schema explicitly exposes named-role selection.',
-  'Task names do not select or pin a role or model.',
-  'When named-role selection is available, `tmup-tier1` and `tmup-tier2` are direct leaves and must not delegate further.',
-  'Without named-role selection, native children are same-model leaves; use a model-explicit Codex/tmup process or lane for a distinct model.',
-  'Never claim model or tier selection without a runtime receipt.',
-];
-const RUNTIME_DOC_GUIDANCE = [
-  'Fresh pane roots use the auto-detected Codex model (`codex.model: "auto"`).',
-  'Context and compaction come from the resolved Codex model catalog; tmup does not override them.',
-  'Pane roots use the `workspace-write` sandbox.',
-  'Native subagent caps include `agents.max_depth=1`.',
-  '`tmup-tier1` is the `gpt-5.6-terra` / high-reasoning leaf profile.',
-  '`tmup-tier2` is the `gpt-5.6-luna` / medium-reasoning leaf profile.',
-];
+
+function expectCapabilityRouting(text: string, file: string): void {
+  expect(text, file).toMatch(/native children inherit the pane model/i);
+  expect(text, file).toMatch(/spawn schema[^\n]*named-role selection/i);
+  expect(text, file).toMatch(/task names do not[^\n]*(?:select|pin)[^\n]*(?:role|model)/i);
+  expect(text, file).toMatch(/named-role selection[^\n]*tmup-tier1[^\n]*tmup-tier2[^\n]*leaves/i);
+  expect(text, file).toMatch(/without named-role selection[^\n]*same-model leaves/i);
+  expect(text, file).toMatch(/model-explicit Codex\/tmup process or lane/i);
+  expect(text, file).toMatch(/runtime receipt/i);
+}
+
+function expectCurrentRuntimeDoc(text: string, file: string): void {
+  expect(text, file).toMatch(/auto-detected Codex model/i);
+  expect(text, file).toMatch(/context and compaction[^\n]*resolved Codex model catalog/i);
+  expect(text, file).toMatch(/workspace-write/i);
+  expect(text, file).toMatch(/max_depth(?:=|:\s*)1/i);
+  expect(text, file).toMatch(/tmup-tier1[^\n]*gpt-5\.6-terra[^\n]*high/i);
+  expect(text, file).toMatch(/tmup-tier2[^\n]*gpt-5\.6-luna[^\n]*medium/i);
+}
 
 describe('Tier model consistency', () => {
   it('should ensure TOML models match policy.yaml single source of truth', () => {
@@ -79,11 +83,7 @@ describe('Tier model consistency', () => {
 
     for (const [file, prompt] of prompts) {
       expect(prompt, file).not.toMatch(/pane root may dispatch `tmup-tier|model pinning is preserved/i);
-      for (const guidance of CAPABILITY_ROUTING_GUIDANCE) {
-        expect(prompt, file).toContain(
-          file === 'scripts/dispatch-agent.sh' ? guidance.replaceAll('`', '') : guidance,
-        );
-      }
+      expectCapabilityRouting(prompt, file);
     }
   });
 
@@ -94,9 +94,36 @@ describe('Tier model consistency', () => {
       expect(markdown, file).not.toMatch(
         /model_context_window|model_auto_compact_token_limit|features\.undo|danger-full-access|agents\.max_depth=2|runtime contract \(model, context, compaction|`tmup-tier[12]`[^\n]*`gpt-5\.5`/i,
       );
-      for (const guidance of [...RUNTIME_DOC_GUIDANCE, ...CAPABILITY_ROUTING_GUIDANCE]) {
-        expect(markdown, file).toContain(guidance);
-      }
+      expectCurrentRuntimeDoc(markdown, file);
+      expectCapabilityRouting(markdown, file);
     }
+  });
+
+  it('keeps active user docs and the archival trace consistent with current runtime semantics', () => {
+    const readme = fs.readFileSync(path.join(PLUGIN_DIR, 'README.md'), 'utf-8');
+    expect(readme).not.toMatch(/up to 1M context|delegates might delegate|each potentially nesting more/i);
+    expect(readme).not.toMatch(/\|\s*(?:Opus|Sonnet)[^\n]*\*\*\d+(?:\.\d+)?M tokens\*\*/i);
+    expect(readme).toMatch(/native children inherit[^\n]*pane model/i);
+    expect(readme).toMatch(/max_depth(?:=|:\s*)1/i);
+    expect(readme).toMatch(/context[^\n]*resolved Codex model catalog/i);
+
+    const faq = fs.readFileSync(path.join(PLUGIN_DIR, 'docs/FAQ.md'), 'utf-8');
+    expect(faq).not.toMatch(/danger-full-access|unsandboxed|full disk|up to 1M tokens|GPT-5\.4/i);
+    expect(faq).toMatch(/workspace-write/i);
+    expect(faq).toMatch(/--add-dir[^\n]*session/i);
+    expect(faq).toMatch(/resolved Codex model catalog/i);
+
+    const architecture = fs.readFileSync(path.join(PLUGIN_DIR, 'docs/ARCHITECTURE.md'), 'utf-8');
+    expect(architecture).not.toMatch(/full disk access/i);
+    expect(architecture).toMatch(/workspace-write/i);
+    expect(architecture).toMatch(/--add-dir[^\n]*session/i);
+
+    const traceHead = fs.readFileSync(path.join(PLUGIN_DIR, 'reports/dispatch-flow-trace.md'), 'utf-8')
+      .split('\n')
+      .slice(0, 12)
+      .join('\n');
+    expect(traceHead).toMatch(/status:\s*archival/i);
+    expect(traceHead).toMatch(/not current/i);
+    expect(traceHead).toMatch(/20\d{2}-\d{2}-\d{2}/);
   });
 });

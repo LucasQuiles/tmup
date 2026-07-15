@@ -1,5 +1,7 @@
 # Dispatch Flow Trace
 
+> **Status: archival (2026-07-14).** This snapshot preserves an obsolete line trace and is not current runtime documentation. Use the source and active docs for current behavior.
+
 ## Scope
 
 This report traces the runtime path from MCP `tmup_dispatch` to `scripts/dispatch-agent.sh` to the final Codex CLI launch. It also notes the prerequisite session and grid setup that dispatch depends on.

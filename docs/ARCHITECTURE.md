@@ -36,9 +36,9 @@ Claude Code (Lead)
             |  The workforce. Each Codex process gets a prompt,
             |  a role, and access to tmup-cli for coordination.
             |  They claim tasks, do the work, post checkpoints,
-            |  and complete. They run with full disk access and
-            |  zero approval prompts because they are here to
-            |  work, not to ask permission.
+            |  and complete. They run in workspace-write with
+            |  --add-dir for the resolved tmup session directory,
+            |  plus zero approval prompts.
             |
             +- claim -> work -> checkpoint -> complete
             +- All share the same SQLite DB

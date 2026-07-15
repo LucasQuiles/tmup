@@ -163,6 +163,7 @@ describe('dispatch-agent.sh worker-type claude_code', () => {
       '-m "$TMUP_CODEX_MODEL"',
       '-a "$TMUP_CODEX_APPROVAL_POLICY"',
       '-s "$TMUP_CODEX_SANDBOX"',
+      '--add-dir "$TMUP_SESSION_DIR"',
       'model_reasoning_effort=$TMUP_CODEX_REASONING_EFFORT',
       'model_reasoning_summary=$TMUP_CODEX_REASONING_SUMMARY',
       'plan_mode_reasoning_effort=$TMUP_CODEX_PLAN_REASONING',

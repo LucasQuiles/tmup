@@ -8,7 +8,7 @@ Yes. Claude Code is the lead (orchestrator). Codex CLI workers do the actual cod
 
 **Q: How many workers can I run?**
 
-The default grid is 2x4 (8 panes). You can change this in `config/policy.yaml`. Each worker is a Codex CLI process with its own context window (up to 1M tokens with GPT-5.4). More workers = more parallelism = more SQLite contention = more fun. We've run 8 workers reviewing tmup's own codebase simultaneously. They found real bugs. They filed them through the tmup messaging system. We are still processing this emotionally.
+The default grid is 2x4 (8 panes). You can change this in `config/policy.yaml`. Each worker is a Codex CLI process whose context and compaction behavior come from the resolved Codex model catalog. More workers = more parallelism = more SQLite contention = more fun. We've run 8 workers reviewing tmup's own codebase simultaneously. They found real bugs. They filed them through the tmup messaging system. We are still processing this emotionally.
 
 **Q: What happens if a worker crashes?**
 
@@ -51,6 +51,6 @@ We believe in radical transparency about the things that don't work. Here's what
 - **Terminal auto-launch is Linux-specific.** The shell scripts avoid the known GNU-only blockers (flock-only locking, GNU date ISO flags, realpath-only canonicalization, and GNU find minute filters) via portable helpers, so the tmux/grid path works on macOS too. GNOME Terminal auto-launch still assumes a Linux desktop; on macOS, attach to the tmux session manually.
 - **No hot-reload.** The MCP server loads at session start. Code changes require build + cache sync + session restart. Every time. Yes, it's annoying. No, there's no fix. The MCP protocol doesn't support runtime code swaps.
 - **CLI flag parsing is intentionally small.** Unknown flags fail closed instead of changing behavior silently. If a positional message starts with `--`, pass `--` first: `tmup-cli message -- "--not-a-flag"`.
-- **Codex workers run unsandboxed.** Workers use `-a never -s danger-full-access` because they need to write to the shared `tmup.db` outside the project directory. This means workers have full disk access. Don't run this on a machine you don't trust.
+- **Codex workers need access to shared session state.** Workers use the `workspace-write` sandbox, and the launcher passes `--add-dir` for the resolved tmup session directory when it is outside the project workspace. Write access remains scoped to the workspace and that dynamically resolved state directory.
 - **Heartbeat timeout is coarse.** Default stale threshold is 5 minutes. If a worker crashes, the lead won't notice until the next `tmup_status` call after the timeout. Fast recovery requires frequent status polling.
 - **One grid per project directory.** The session registry is keyed by canonical project path. If you want two grids for the same project, you'll need to hack the session name.

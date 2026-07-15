@@ -61,7 +61,7 @@ Here's where it gets silly. Claude Code can spawn **sub-agents** for research, c
 
 ```
 You (human, allegedly in charge)
- +-- Claude Code (lead, up to 1M context)
+ +-- Claude Code (lead)
       +-- Claude sub-agent: research
       +-- Claude sub-agent: code review
       +-- tmux pane 0: Codex worker
@@ -69,24 +69,16 @@ You (human, allegedly in charge)
       |    +-- Codex sub-agent: test
       +-- tmux pane 1: Codex worker
       |    +-- Codex sub-agent: refactor
-      +-- ... (8 panes, each potentially nesting more)
+      +-- ... (8 panes; native children stop after one level)
 ```
 
-Russian nesting dolls of AI agents. We didn't plan this. Each Codex worker is a full Codex session with its own context window and tool access, so when it needs to explore a codebase before editing, it just... spawns another agent to do the reading. The workers delegate. The delegates might delegate. At some point your laptop fan turns on and that's how you know it's working.
+Russian nesting dolls of AI agents. We didn't plan this. Each Codex worker is a full Codex session with its own context window and tool access, so when it needs to explore a codebase before editing, it can spawn another agent to do the reading. Native children inherit the pane model unless the live spawn schema exposes named-role selection, and `agents.max_depth=1` means those children do not delegate further. Context and compaction behavior come from the resolved Codex model catalog. At some point your laptop fan turns on and that's how you know it's working.
 
 We're not going to pretend this is a carefully designed agent hierarchy. It's more like a bacterial colony with a task list.
 
-### The numbers
+### Runtime capacity
 
-Context windows vary by model. Here's what you might end up with:
-
-| Configuration | Lead | Workers (x8) | Combined |
-|--------------|------|-------------|----------|
-| Opus 4.6 (1M) + GPT-5.4 (1M) | 1M | 8M | **9M tokens** |
-| Sonnet 4.6 (200K) + GPT-4.1 (200K) | 200K | 1.6M | **1.8M tokens** |
-| Opus 4.6 (1M) + GPT-4.1 (200K) | 1M | 1.6M | **2.6M tokens** |
-
-That's a lot of context. Whether any of it is being used well is a separate question that we are choosing not to investigate.
+Worker count, model capacity, and compaction behavior depend on the active policy and installed runtime. Check the resolved runtime receipt instead of assuming a fixed model or adding context windows together.
 
 ---
 
