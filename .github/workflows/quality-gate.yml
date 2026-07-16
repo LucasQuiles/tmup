@@ -29,5 +29,8 @@ jobs:
           cache: npm
       - name: Install dependencies (lockfile)
         run: npm ci
+      - name: Ensure tmux is available (trusted controller toolchain requires a real tmux; macOS runners lack it)
+        if: runner.os == 'macOS'
+        run: brew install tmux && tmux -V
       - name: Run quality gate
         run: bash scripts/quality-gate.sh --ci
