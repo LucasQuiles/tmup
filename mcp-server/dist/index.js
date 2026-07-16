@@ -3108,6 +3108,9 @@ var require_utils = __commonJS({
     "use strict";
     var isUUID = RegExp.prototype.test.bind(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu);
     var isIPv4 = RegExp.prototype.test.bind(/^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)$/u);
+    var isHexPair = RegExp.prototype.test.bind(/^[\da-f]{2}$/iu);
+    var isUnreserved = RegExp.prototype.test.bind(/^[\da-z\-._~]$/iu);
+    var isPathCharacter = RegExp.prototype.test.bind(/^[\da-z\-._~!$&'()*+,;=:@/]$/iu);
     function stringArrayToHexStripped(input) {
       let acc = "";
       let code = 0;
@@ -3300,27 +3303,77 @@ var require_utils = __commonJS({
       }
       return output.join("");
     }
-    function normalizeComponentEncoding(component, esc2) {
-      const func = esc2 !== true ? escape : unescape;
-      if (component.scheme !== void 0) {
-        component.scheme = func(component.scheme);
+    var HOST_DELIMS = { "@": "%40", "/": "%2F", "?": "%3F", "#": "%23", ":": "%3A" };
+    var HOST_DELIM_RE = /[@/?#:]/g;
+    var HOST_DELIM_NO_COLON_RE = /[@/?#]/g;
+    function reescapeHostDelimiters(host, isIP) {
+      const re = isIP ? HOST_DELIM_NO_COLON_RE : HOST_DELIM_RE;
+      re.lastIndex = 0;
+      return host.replace(re, (ch) => HOST_DELIMS[ch]);
+    }
+    function normalizePercentEncoding(input, decodeUnreserved = false) {
+      if (input.indexOf("%") === -1) {
+        return input;
       }
-      if (component.userinfo !== void 0) {
-        component.userinfo = func(component.userinfo);
+      let output = "";
+      for (let i = 0; i < input.length; i++) {
+        if (input[i] === "%" && i + 2 < input.length) {
+          const hex = input.slice(i + 1, i + 3);
+          if (isHexPair(hex)) {
+            const normalizedHex = hex.toUpperCase();
+            const decoded = String.fromCharCode(parseInt(normalizedHex, 16));
+            if (decodeUnreserved && isUnreserved(decoded)) {
+              output += decoded;
+            } else {
+              output += "%" + normalizedHex;
+            }
+            i += 2;
+            continue;
+          }
+        }
+        output += input[i];
       }
-      if (component.host !== void 0) {
-        component.host = func(component.host);
+      return output;
+    }
+    function normalizePathEncoding(input) {
+      let output = "";
+      for (let i = 0; i < input.length; i++) {
+        if (input[i] === "%" && i + 2 < input.length) {
+          const hex = input.slice(i + 1, i + 3);
+          if (isHexPair(hex)) {
+            const normalizedHex = hex.toUpperCase();
+            const decoded = String.fromCharCode(parseInt(normalizedHex, 16));
+            if (decoded !== "." && isUnreserved(decoded)) {
+              output += decoded;
+            } else {
+              output += "%" + normalizedHex;
+            }
+            i += 2;
+            continue;
+          }
+        }
+        if (isPathCharacter(input[i])) {
+          output += input[i];
+        } else {
+          output += escape(input[i]);
+        }
       }
-      if (component.path !== void 0) {
-        component.path = func(component.path);
+      return output;
+    }
+    function escapePreservingEscapes(input) {
+      let output = "";
+      for (let i = 0; i < input.length; i++) {
+        if (input[i] === "%" && i + 2 < input.length) {
+          const hex = input.slice(i + 1, i + 3);
+          if (isHexPair(hex)) {
+            output += "%" + hex.toUpperCase();
+            i += 2;
+            continue;
+          }
+        }
+        output += escape(input[i]);
       }
-      if (component.query !== void 0) {
-        component.query = func(component.query);
-      }
-      if (component.fragment !== void 0) {
-        component.fragment = func(component.fragment);
-      }
-      return component;
+      return output;
     }
     function recomposeAuthority(component) {
       const uriTokens = [];
@@ -3335,7 +3388,7 @@ var require_utils = __commonJS({
           if (ipV6res.isIPV6 === true) {
             host = `[${ipV6res.escapedHost}]`;
           } else {
-            host = component.host;
+            host = reescapeHostDelimiters(host, false);
           }
         }
         uriTokens.push(host);
@@ -3349,7 +3402,10 @@ var require_utils = __commonJS({
     module.exports = {
       nonSimpleDomain,
       recomposeAuthority,
-      normalizeComponentEncoding,
+      reescapeHostDelimiters,
+      normalizePercentEncoding,
+      normalizePathEncoding,
+      escapePreservingEscapes,
       removeDotSegments,
       isIPv4,
       isUUID,
@@ -3573,12 +3629,12 @@ var require_schemes = __commonJS({
 var require_fast_uri = __commonJS({
   "../node_modules/fast-uri/index.js"(exports, module) {
     "use strict";
-    var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizeComponentEncoding, isIPv4, nonSimpleDomain } = require_utils();
+    var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizePercentEncoding, normalizePathEncoding, escapePreservingEscapes, reescapeHostDelimiters, isIPv4, nonSimpleDomain } = require_utils();
     var { SCHEMES, getSchemeHandler } = require_schemes();
     function normalize(uri, options) {
       if (typeof uri === "string") {
         uri = /** @type {T} */
-        serialize(parse3(uri, options), options);
+        normalizeString(uri, options);
       } else if (typeof uri === "object") {
         uri = /** @type {T} */
         parse3(serialize(uri, options), options);
@@ -3645,19 +3701,9 @@ var require_fast_uri = __commonJS({
       return target;
     }
     function equal(uriA, uriB, options) {
-      if (typeof uriA === "string") {
-        uriA = unescape(uriA);
-        uriA = serialize(normalizeComponentEncoding(parse3(uriA, options), true), { ...options, skipEscape: true });
-      } else if (typeof uriA === "object") {
-        uriA = serialize(normalizeComponentEncoding(uriA, true), { ...options, skipEscape: true });
-      }
-      if (typeof uriB === "string") {
-        uriB = unescape(uriB);
-        uriB = serialize(normalizeComponentEncoding(parse3(uriB, options), true), { ...options, skipEscape: true });
-      } else if (typeof uriB === "object") {
-        uriB = serialize(normalizeComponentEncoding(uriB, true), { ...options, skipEscape: true });
-      }
-      return uriA.toLowerCase() === uriB.toLowerCase();
+      const normalizedA = normalizeComparableURI(uriA, options);
+      const normalizedB = normalizeComparableURI(uriB, options);
+      return normalizedA !== void 0 && normalizedB !== void 0 && normalizedA.toLowerCase() === normalizedB.toLowerCase();
     }
     function serialize(cmpts, opts) {
       const component = {
@@ -3682,12 +3728,12 @@ var require_fast_uri = __commonJS({
       if (schemeHandler && schemeHandler.serialize) schemeHandler.serialize(component, options);
       if (component.path !== void 0) {
         if (!options.skipEscape) {
-          component.path = escape(component.path);
+          component.path = escapePreservingEscapes(component.path);
           if (component.scheme !== void 0) {
             component.path = component.path.split("%3A").join(":");
           }
         } else {
-          component.path = unescape(component.path);
+          component.path = normalizePercentEncoding(component.path);
         }
       }
       if (options.reference !== "suffix" && component.scheme) {
@@ -3722,7 +3768,16 @@ var require_fast_uri = __commonJS({
       return uriTokens.join("");
     }
     var URI_PARSE = /^(?:([^#/:?]+):)?(?:\/\/((?:([^#/?@]*)@)?(\[[^#/?\]]+\]|[^#/:?]*)(?::(\d*))?))?([^#?]*)(?:\?([^#]*))?(?:#((?:.|[\n\r])*))?/u;
-    function parse3(uri, opts) {
+    function getParseError(parsed, matches) {
+      if (matches[2] !== void 0 && parsed.path && parsed.path[0] !== "/") {
+        return 'URI path must start with "/" when authority is present.';
+      }
+      if (typeof parsed.port === "number" && (parsed.port < 0 || parsed.port > 65535)) {
+        return "URI port is malformed.";
+      }
+      return void 0;
+    }
+    function parseWithStatus(uri, opts) {
       const options = Object.assign({}, opts);
       const parsed = {
         scheme: void 0,
@@ -3733,6 +3788,7 @@ var require_fast_uri = __commonJS({
         query: void 0,
         fragment: void 0
       };
+      let malformedAuthorityOrPort = false;
       let isIP = false;
       if (options.reference === "suffix") {
         if (options.scheme) {
@@ -3752,6 +3808,11 @@ var require_fast_uri = __commonJS({
         parsed.fragment = matches[8];
         if (isNaN(parsed.port)) {
           parsed.port = matches[5];
+        }
+        const parseError = getParseError(parsed, matches);
+        if (parseError !== void 0) {
+          parsed.error = parsed.error || parseError;
+          malformedAuthorityOrPort = true;
         }
         if (parsed.host) {
           const ipv4result = isIPv4(parsed.host);
@@ -3779,7 +3840,7 @@ var require_fast_uri = __commonJS({
         if (!options.unicodeSupport && (!schemeHandler || !schemeHandler.unicodeSupport)) {
           if (parsed.host && (options.domainHost || schemeHandler && schemeHandler.domainHost) && isIP === false && nonSimpleDomain(parsed.host)) {
             try {
-              parsed.host = URL.domainToASCII(parsed.host.toLowerCase());
+              parsed.host = new URL("http://" + parsed.host).hostname;
             } catch (e) {
               parsed.error = parsed.error || "Host's domain name can not be converted to ASCII: " + e;
             }
@@ -3791,14 +3852,18 @@ var require_fast_uri = __commonJS({
               parsed.scheme = unescape(parsed.scheme);
             }
             if (parsed.host !== void 0) {
-              parsed.host = unescape(parsed.host);
+              parsed.host = reescapeHostDelimiters(unescape(parsed.host), isIP);
             }
           }
           if (parsed.path) {
-            parsed.path = escape(unescape(parsed.path));
+            parsed.path = normalizePathEncoding(parsed.path);
           }
           if (parsed.fragment) {
-            parsed.fragment = encodeURI(decodeURIComponent(parsed.fragment));
+            try {
+              parsed.fragment = encodeURI(decodeURIComponent(parsed.fragment));
+            } catch {
+              parsed.error = parsed.error || "URI malformed";
+            }
           }
         }
         if (schemeHandler && schemeHandler.parse) {
@@ -3807,7 +3872,29 @@ var require_fast_uri = __commonJS({
       } else {
         parsed.error = parsed.error || "URI can not be parsed.";
       }
-      return parsed;
+      return { parsed, malformedAuthorityOrPort };
+    }
+    function parse3(uri, opts) {
+      return parseWithStatus(uri, opts).parsed;
+    }
+    function normalizeString(uri, opts) {
+      return normalizeStringWithStatus(uri, opts).normalized;
+    }
+    function normalizeStringWithStatus(uri, opts) {
+      const { parsed, malformedAuthorityOrPort } = parseWithStatus(uri, opts);
+      return {
+        normalized: malformedAuthorityOrPort ? uri : serialize(parsed, opts),
+        malformedAuthorityOrPort
+      };
+    }
+    function normalizeComparableURI(uri, opts) {
+      if (typeof uri === "string") {
+        const { normalized, malformedAuthorityOrPort } = normalizeStringWithStatus(uri, opts);
+        return malformedAuthorityOrPort ? void 0 : normalized;
+      }
+      if (typeof uri === "object") {
+        return serialize(uri, opts);
+      }
     }
     var fastUri = {
       SCHEMES,
@@ -8958,6 +9045,7 @@ function $constructor(name, initializer3, params) {
   Object.defineProperty(_, "name", { value: name });
   return _;
 }
+var $brand = Symbol("zod_brand");
 var $ZodAsyncError = class extends Error {
   constructor() {
     super(`Encountered Promise during synchronous parse. Use .parseAsync() instead.`);
@@ -11459,6 +11547,8 @@ function en_default() {
 }
 
 // ../node_modules/zod/v4/core/registries.js
+var $output = Symbol("ZodOutput");
+var $input = Symbol("ZodInput");
 var $ZodRegistry = class {
   constructor() {
     this._map = /* @__PURE__ */ new Map();
@@ -14213,6 +14303,9 @@ var UrlElicitationRequiredError = class extends McpError {
 function isTerminal(status) {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
+
+// ../node_modules/zod-to-json-schema/dist/esm/Options.js
+var ignoreOverride = Symbol("Let zodToJsonSchema decide on which parser to use");
 
 // ../node_modules/zod-to-json-schema/dist/esm/parsers/string.js
 var ALPHA_NUMERIC = new Set("ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvxyz0123456789");
