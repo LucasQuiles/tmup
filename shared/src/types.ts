@@ -388,6 +388,35 @@ export interface CreateAttemptInput {
   agent_id?: string;
   execution_target_id?: string;
   model_family?: string;
+  role?: string;
+  selector?: string;
+  requested_model?: string;
+  observed_model?: string;
+  fallback_used?: boolean | null;
+  fallback_model?: string;
+  fallback_reason?: string;
+}
+
+export interface BeginDispatchInput {
+  attempt_id: string;
+  task_id: string;
+  agent_id: string;
+  pane_index: number;
+  role: string;
+  selector: string;
+  requested_model: string;
+  observed_model: string;
+  fallback_used: boolean | null;
+  fallback_model?: string;
+  fallback_reason?: string;
+  execution_target_id?: string;
+}
+
+export interface AttemptAttestationInput {
+  observed_model: string;
+  fallback_used: boolean;
+  fallback_model?: string;
+  fallback_reason?: string;
 }
 
 export interface CreateEvidenceInput {

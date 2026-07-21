@@ -23,14 +23,27 @@ export function createAttempt(
   input: CreateAttemptInput
 ): TaskAttemptRow {
   db.prepare(`
-    INSERT INTO task_attempts (id, task_id, agent_id, execution_target_id, model_family, status)
-    VALUES (?, ?, ?, ?, ?, 'running')
+    INSERT INTO task_attempts (
+      id, task_id, agent_id, execution_target_id, model_family, status,
+      role, selector, requested_model, observed_model,
+      fallback_used, fallback_model, fallback_reason
+    )
+    VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?)
   `).run(
     attemptId,
     input.task_id,
     input.agent_id ?? null,
     input.execution_target_id ?? null,
-    input.model_family ?? null
+    input.model_family ?? null,
+    input.role ?? null,
+    input.selector ?? null,
+    input.requested_model ?? 'unknown',
+    input.observed_model ?? 'unknown',
+    input.fallback_used === undefined || input.fallback_used === null
+      ? null
+      : input.fallback_used ? 1 : 0,
+    input.fallback_model ?? null,
+    input.fallback_reason ?? null,
   );
 
   return db.prepare('SELECT * FROM task_attempts WHERE id = ?').get(attemptId) as TaskAttemptRow;
