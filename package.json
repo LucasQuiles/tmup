@@ -13,6 +13,10 @@
     "mcp-server",
     "cli"
   ],
+  "overrides": {
+    "@hono/node-server": "^2.0.5",
+    "body-parser": "^2.3.0"
+  },
   "scripts": {
     "build": "bash scripts/with-supported-node.sh npm run build --workspaces",
     "test": "bash scripts/with-supported-node.sh vitest run",

@@ -543,6 +543,8 @@ tmup/
 | `better-sqlite3` | ^12.4.1 | SQLite3 native binding |
 | `js-yaml` | ^4.1.0 | YAML config parsing |
 | `@modelcontextprotocol/sdk` | ^1.20.0 | MCP server framework |
+| `@hono/node-server` | ^2.0.5 override | Patched transitive MCP HTTP adapter; Node 20+ |
+| `body-parser` | ^2.3.0 override | Patched transitive Express parser |
 | `zod` | ^3.25.76 | Schema validation (declared, minimally used) |
 | `typescript` | ^5.9.3 | Type checking |
 | `esbuild` | ^0.25.11 | Bundle MCP server and CLI |
