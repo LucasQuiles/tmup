@@ -36,6 +36,7 @@ describe('dispatch-ops', () => {
       selector: 'tmup-policy',
       requested_model: 'auto',
       observed_model: 'unknown',
+      observation_source: null,
       fallback_used: null,
     });
 
@@ -52,6 +53,7 @@ describe('dispatch-ops', () => {
       selector: 'tmup-policy',
       requested_model: 'auto',
       observed_model: 'unknown',
+      observation_source: null,
       fallback_used: null,
       fallback_model: null,
       fallback_reason: null,
@@ -111,6 +113,7 @@ describe('dispatch-ops', () => {
 
     const receipt = attestAttempt(db, 'attempt-1', {
       observed_model: 'model-b',
+      observation_source: 'runtime-session-banner',
       fallback_used: true,
       fallback_model: 'model-b',
       fallback_reason: 'requested model unavailable',
@@ -119,6 +122,7 @@ describe('dispatch-ops', () => {
     expect(receipt).toEqual(expect.objectContaining({
       requested_model: 'model-a',
       observed_model: 'model-b',
+      observation_source: 'runtime-session-banner',
       fallback_used: true,
       fallback_model: 'model-b',
       fallback_reason: 'requested model unavailable',
@@ -136,6 +140,7 @@ describe('dispatch-ops', () => {
 
     expect(() => attestAttempt(db, 'attempt-1', {
       observed_model: 'model-b',
+      observation_source: 'runtime-session-banner',
       fallback_used: true,
       fallback_model: 'model-b',
     })).toThrow('fallback_reason is required');

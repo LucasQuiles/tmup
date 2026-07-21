@@ -37,7 +37,7 @@ These are the tools Claude Code uses to orchestrate. They're exposed via the MCP
 | `tmup_send_message` | Store coordination/audit message; safe-pane delivery uses reprompt | Slack archive for robots |
 | `tmup_inbox` | Check unread messages | The anxiety |
 | `tmup_dispatch` | Atomically create a dispatch receipt and launch a Codex worker | Hiring with paperwork |
-| `tmup_attempt_attest` | Record the model observed from the live runtime | Check the badge |
+| `tmup_attempt_attest` | Persist the model and source observed from the live runtime into the dispatch receipt | Infer identity from a badge or role |
 | `tmup_evidence_add` | Attach unreviewed evidence to an attempt | Submit the work |
 | `tmup_evidence_review` | Approve, challenge, or reject attempt evidence | Sign-off |
 | `tmup_harvest` | Capture scrollback, framed and labeled as untrusted worker output | Reading over their shoulder |

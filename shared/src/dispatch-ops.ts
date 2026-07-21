@@ -46,6 +46,7 @@ export function toDispatchReceipt(row: TaskAttemptRow): DispatchReceipt {
     selector: row.selector ?? 'unknown',
     requested_model: row.requested_model,
     observed_model: row.observed_model,
+    observation_source: row.observation_source,
     fallback_used: row.fallback_used === null ? null : row.fallback_used === 1,
     fallback_model: row.fallback_model,
     fallback_reason: row.fallback_reason,
@@ -113,6 +114,7 @@ export function attestAttempt(
   input: AttemptAttestationInput,
 ): DispatchReceipt {
   requireNonEmpty(input.observed_model, 'observed_model');
+  requireNonEmpty(input.observation_source, 'observation_source');
   if (input.observed_model === 'unknown') {
     throw new Error('observed_model attestation must identify the observed model');
   }
@@ -121,10 +123,11 @@ export function attestAttempt(
   const attest = db.transaction(() => {
     const result = db.prepare(`
       UPDATE task_attempts
-      SET observed_model = ?, fallback_used = ?, fallback_model = ?, fallback_reason = ?
+      SET observed_model = ?, observation_source = ?, fallback_used = ?, fallback_model = ?, fallback_reason = ?
       WHERE id = ? AND status = 'running' AND execution_outcome IS NULL
     `).run(
       input.observed_model,
+      input.observation_source,
       input.fallback_used ? 1 : 0,
       input.fallback_model ?? null,
       input.fallback_reason ?? null,

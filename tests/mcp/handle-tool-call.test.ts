@@ -207,6 +207,7 @@ describe('handleToolCall adapter integration', () => {
       }));
       expect(attested.receipt).toEqual(expect.objectContaining({
         observed_model: 'model-b',
+        observation_source: 'runtime-session-banner',
         fallback_used: false,
       }));
       const event = db.prepare(
@@ -1074,6 +1075,7 @@ describe('handleToolCall adapter integration', () => {
       });
       attestAttempt(db, 'attempt-terminal', {
         observed_model: 'observed-runtime-model',
+        observation_source: 'runtime-session-banner',
         fallback_used: false,
       });
       completeTask(db, taskId, 'verified', undefined, undefined, 'agent-terminal');

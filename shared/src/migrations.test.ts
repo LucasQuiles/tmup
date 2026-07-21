@@ -180,12 +180,32 @@ describe('migration v4: colony support', () => {
     db.close();
   });
 
-  it('schema version is 5 after migration', () => {
+  it('schema version is 6 after migration', () => {
     const db = freshDb();
     runMigrations(db);
 
     const version = getSchemaVersion(db);
-    expect(version).toBe(5);
+    expect(version).toBe(6);
+
+    db.close();
+  });
+});
+
+describe('migration v6: model observation provenance', () => {
+  it('persists observation source on task attempts', () => {
+    const db = freshDb();
+    runMigrations(db);
+
+    const attemptColumns = (db.prepare('PRAGMA table_info(task_attempts)').all() as Array<{ name: string }>).map(
+      (column) => column.name
+    );
+    expect(attemptColumns).toContain('observation_source');
+
+    db.prepare("INSERT INTO tasks (id, subject) VALUES ('t1', 'review')").run();
+    db.prepare("INSERT INTO task_attempts (id, task_id) VALUES ('a1', 't1')").run();
+    expect(db.prepare("SELECT observation_source FROM task_attempts WHERE id = 'a1'").get()).toEqual({
+      observation_source: null,
+    });
 
     db.close();
   });

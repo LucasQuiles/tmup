@@ -136,6 +136,7 @@ export interface TaskAttemptRow {
     selector: string | null;
     requested_model: string;
     observed_model: string;
+    observation_source: string | null;
     fallback_used: 0 | 1 | null;
     fallback_model: string | null;
     fallback_reason: string | null;
@@ -149,6 +150,7 @@ export interface DispatchReceipt {
     selector: string;
     requested_model: string;
     observed_model: string;
+    observation_source: string | null;
     fallback_used: boolean | null;
     fallback_model: string | null;
     fallback_reason: string | null;
@@ -267,6 +269,7 @@ export interface BeginDispatchInput {
 }
 export interface AttemptAttestationInput {
     observed_model: string;
+    observation_source: string;
     fallback_used: boolean;
     fallback_model?: string;
     fallback_reason?: string;

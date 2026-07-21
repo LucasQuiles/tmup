@@ -314,6 +314,13 @@ export const migrations: Migration[] = [
       db.prepare("ALTER TABLE task_attempts ADD COLUMN execution_outcome TEXT CHECK (execution_outcome IS NULL OR execution_outcome IN ('unavailable','skipped','inconclusive'))").run();
     },
   },
+  {
+    version: 6,
+    description: 'Persist model observation provenance on dispatch receipts',
+    up: (db: Database) => {
+      db.prepare('ALTER TABLE task_attempts ADD COLUMN observation_source TEXT').run();
+    },
+  },
 ];
 
 /**

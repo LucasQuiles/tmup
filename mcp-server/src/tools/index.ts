@@ -1029,6 +1029,7 @@ export async function handleToolCall(
       }
       const receipt = attestAttempt(db, args.attempt_id, {
         observed_model: args.observed_model,
+        observation_source: args.observation_source,
         fallback_used: args.fallback_used,
         fallback_model: args.fallback_model as string | undefined,
         fallback_reason: args.fallback_reason as string | undefined,

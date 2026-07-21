@@ -7231,6 +7231,13 @@ var init_migrations = __esm({
           db2.prepare("ALTER TABLE task_attempts ADD COLUMN fallback_reason TEXT").run();
           db2.prepare("ALTER TABLE task_attempts ADD COLUMN execution_outcome TEXT CHECK (execution_outcome IS NULL OR execution_outcome IN ('unavailable','skipped','inconclusive'))").run();
         }
+      },
+      {
+        version: 6,
+        description: "Persist model observation provenance on dispatch receipts",
+        up: (db2) => {
+          db2.prepare("ALTER TABLE task_attempts ADD COLUMN observation_source TEXT").run();
+        }
       }
     ];
   }
@@ -8945,6 +8952,7 @@ function toDispatchReceipt(row) {
     selector: row.selector ?? "unknown",
     requested_model: row.requested_model,
     observed_model: row.observed_model,
+    observation_source: row.observation_source,
     fallback_used: row.fallback_used === null ? null : row.fallback_used === 1,
     fallback_model: row.fallback_model,
     fallback_reason: row.fallback_reason,
@@ -8999,6 +9007,7 @@ function beginDispatch(db2, input) {
 }
 function attestAttempt(db2, attemptId, input) {
   requireNonEmpty(input.observed_model, "observed_model");
+  requireNonEmpty(input.observation_source, "observation_source");
   if (input.observed_model === "unknown") {
     throw new Error("observed_model attestation must identify the observed model");
   }
@@ -9006,9 +9015,9 @@ function attestAttempt(db2, attemptId, input) {
   const attest = db2.transaction(() => {
     const result = db2.prepare(`
       UPDATE task_attempts
-      SET observed_model = ?, fallback_used = ?, fallback_model = ?, fallback_reason = ?
+      SET observed_model = ?, observation_source = ?, fallback_used = ?, fallback_model = ?, fallback_reason = ?
       WHERE id = ? AND status = 'running' AND execution_outcome IS NULL
-    `).run(input.observed_model, input.fallback_used ? 1 : 0, input.fallback_model ?? null, input.fallback_reason ?? null, attemptId);
+    `).run(input.observed_model, input.observation_source, input.fallback_used ? 1 : 0, input.fallback_model ?? null, input.fallback_reason ?? null, attemptId);
     if (result.changes === 0) {
       const existing = db2.prepare("SELECT status, execution_outcome FROM task_attempts WHERE id = ?").get(attemptId);
       if (!existing)
@@ -17415,6 +17424,7 @@ ${neutralizeFramingMarkers(m.payload, "WORKER MESSAGE")}
       }
       const receipt = attestAttempt(db2, args.attempt_id, {
         observed_model: args.observed_model,
+        observation_source: args.observation_source,
         fallback_used: args.fallback_used,
         fallback_model: args.fallback_model,
         fallback_reason: args.fallback_reason

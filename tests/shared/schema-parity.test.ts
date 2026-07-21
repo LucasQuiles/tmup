@@ -216,7 +216,7 @@ describe('schema-parity', () => {
 
     it('schema_version table records applied migrations', () => {
       const versions = db.prepare('SELECT version, description FROM schema_version ORDER BY version').all() as Array<{ version: number; description: string }>;
-      expect(versions.length).toBe(5);
+      expect(versions.length).toBe(6);
       expect(versions[0].version).toBe(1);
       expect(versions[0].description).toContain('dead states');
       expect(versions[1].version).toBe(2);
@@ -227,6 +227,8 @@ describe('schema-parity', () => {
       expect(versions[3].description).toContain('colony');
       expect(versions[4].version).toBe(5);
       expect(versions[4].description).toContain('dispatch receipt');
+      expect(versions[5].version).toBe(6);
+      expect(versions[5].description).toContain('observation provenance');
     });
   });
 
