@@ -133,6 +133,21 @@ export function getAttemptEvidence(db: Database, attemptId: string): EvidencePac
 }
 
 /**
+ * Return whether an attempt has at least one evidence packet and every packet is approved.
+ * The attempt may still be running; completion promotes it only after this precondition passes.
+ */
+export function hasAcceptedAttemptEvidence(db: Database, attemptId: string): boolean {
+  const row = db.prepare(`
+    SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN reviewer_disposition = 'approved' THEN 0 ELSE 1 END) AS unaccepted
+    FROM evidence_packets
+    WHERE attempt_id = ?
+  `).get(attemptId) as { total: number; unaccepted: number | null };
+  return row.total > 0 && row.unaccepted === 0;
+}
+
+/**
  * Check if a task has accepted evidence (at least one attempt with succeeded status
  * and all evidence packets approved).
  */

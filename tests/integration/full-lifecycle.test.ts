@@ -7,6 +7,7 @@ import { createTask, createTaskBatch } from '../../shared/src/task-ops.js';
 import { claimTask, completeTask, failTask, cancelTask } from '../../shared/src/task-lifecycle.js';
 import { sendMessage, getInbox, getUnreadCount, postCheckpoint } from '../../shared/src/message-ops.js';
 import { registerAgent, updateHeartbeat, getStaleAgents, recoverDeadClaim, getAgent } from '../../shared/src/agent-ops.js';
+import { beginDispatch } from '../../shared/src/dispatch-ops.js';
 import { findArtifactByName, verifyArtifact } from '../../shared/src/artifact-ops.js';
 import { logEvent, getRecentEvents } from '../../shared/src/event-ops.js';
 import type { Database, TaskRow, EventRow } from '../../shared/src/types.js';
@@ -42,8 +43,11 @@ describe('full lifecycle integration', () => {
     expect((db.prepare('SELECT status FROM tasks WHERE id = ?').get('003') as TaskRow).status).toBe('blocked');
 
     // Agent 1 claims T-001
-    registerAgent(db, 'agent-1', 0, 'implementer');
-    const claimed = claimTask(db, 'agent-1', 'implementer');
+    const claimed = beginDispatch(db, {
+      attempt_id: 'attempt-1', task_id: '001', agent_id: 'agent-1', pane_index: 0,
+      role: 'implementer', selector: 'tmup-policy', requested_model: 'auto',
+      observed_model: 'unknown', fallback_used: null,
+    }).task;
     expect(claimed!.id).toBe('001');
     expect(claimed!.status).toBe('claimed');
     expect(claimed!.owner).toBe('agent-1');
@@ -61,27 +65,36 @@ describe('full lifecycle integration', () => {
 
     // Agent 1 completes T-001
     const result1 = completeTask(db, '001', 'Schema defined', undefined, undefined, 'agent-1');
+    expect(db.prepare("SELECT status FROM task_attempts WHERE id = 'attempt-1'").get()).toEqual({ status: 'succeeded' });
     expect(result1.unblocked).toContain('002');
     expect((db.prepare('SELECT status FROM tasks WHERE id = ?').get('002') as TaskRow).status).toBe('pending');
     expect((db.prepare('SELECT status FROM tasks WHERE id = ?').get('003') as TaskRow).status).toBe('blocked');
 
     // Agent 2 claims T-002
-    registerAgent(db, 'agent-2', 1, 'implementer');
-    const claimed2 = claimTask(db, 'agent-2', 'implementer');
+    const claimed2 = beginDispatch(db, {
+      attempt_id: 'attempt-2', task_id: '002', agent_id: 'agent-2', pane_index: 1,
+      role: 'implementer', selector: 'tmup-policy', requested_model: 'auto',
+      observed_model: 'unknown', fallback_used: null,
+    }).task;
     expect(claimed2!.id).toBe('002');
 
     // Agent 2 completes T-002
     const result2 = completeTask(db, '002', 'Models implemented', undefined, undefined, 'agent-2');
+    expect(db.prepare("SELECT status FROM task_attempts WHERE id = 'attempt-2'").get()).toEqual({ status: 'succeeded' });
     expect(result2.unblocked).toContain('003');
     expect((db.prepare('SELECT status FROM tasks WHERE id = ?').get('003') as TaskRow).status).toBe('pending');
 
     // Agent 3 claims T-003
-    registerAgent(db, 'agent-3', 2, 'tester');
-    const claimed3 = claimTask(db, 'agent-3', 'tester');
+    const claimed3 = beginDispatch(db, {
+      attempt_id: 'attempt-3', task_id: '003', agent_id: 'agent-3', pane_index: 2,
+      role: 'tester', selector: 'tmup-policy', requested_model: 'auto',
+      observed_model: 'unknown', fallback_used: null,
+    }).task;
     expect(claimed3!.id).toBe('003');
 
     // Agent 3 completes T-003
     completeTask(db, '003', 'Tests passing', undefined, undefined, 'agent-3');
+    expect(db.prepare("SELECT status FROM task_attempts WHERE id = 'attempt-3'").get()).toEqual({ status: 'succeeded' });
 
     // All tasks completed
     const incomplete = db.prepare("SELECT COUNT(*) as cnt FROM tasks WHERE status != 'completed'").get() as { cnt: number };
@@ -416,7 +429,11 @@ describe('full lifecycle integration', () => {
   });
 
   it('artifact modified between checksum validation and publish commits stale metadata', () => {
-    createTask(db, { subject: 'Build artifact', produces: ['bundle.txt'] });
+    createTask(db, {
+      subject: 'Build artifact',
+      produces: ['bundle.txt'],
+      evidence_required: false,
+    });
     registerAgent(db, 'agent-1', 0);
     claimTask(db, 'agent-1');
 

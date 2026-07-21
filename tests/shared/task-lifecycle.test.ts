@@ -6,6 +6,8 @@ import { openDatabase, closeDatabase } from '../../shared/src/db.js';
 import { createTask, createTaskBatch, updateTask } from '../../shared/src/task-ops.js';
 import { claimTask, claimSpecificTask, completeTask, failTask, cancelTask } from '../../shared/src/task-lifecycle.js';
 import { registerAgent } from '../../shared/src/agent-ops.js';
+import { beginDispatch, finalizeAttempt } from '../../shared/src/dispatch-ops.js';
+import { addEvidence, reviewEvidence } from '../../shared/src/evidence-ops.js';
 import { createArtifact, linkTaskArtifact, findArtifactByName, computeChecksum } from '../../shared/src/artifact-ops.js';
 import { postCheckpoint } from '../../shared/src/message-ops.js';
 import type { Database, TaskRow } from '../../shared/src/types.js';
@@ -137,6 +139,15 @@ describe('task lifecycle', () => {
         role: 'reviewer',
         model_requirement: 'cross_model',
       })).toThrow('reference_model is required');
+
+      expect(db.prepare('SELECT COUNT(*) AS count FROM tasks').get()).toEqual({ count: 0 });
+    });
+
+    it('requires a named role when role execution is required', () => {
+      expect(() => createTask(db, {
+        subject: 'Malformed role policy',
+        role_required: true,
+      })).toThrow('role is required when role_required is true');
 
       expect(db.prepare('SELECT COUNT(*) AS count FROM tasks').get()).toEqual({ count: 0 });
     });
@@ -331,6 +342,167 @@ describe('task lifecycle', () => {
   });
 
   describe('completeTask', () => {
+    const beginRequiredTask = (
+      input: Parameters<typeof createTask>[1],
+      observedModel = 'unknown',
+    ): { taskId: string; attemptId: string; agentId: string; dependentId: string } => {
+      const taskId = createTask(db, input);
+      const attemptId = `attempt-${taskId}`;
+      const agentId = `agent-${taskId}`;
+      beginDispatch(db, {
+        attempt_id: attemptId,
+        task_id: taskId,
+        agent_id: agentId,
+        pane_index: Number(taskId),
+        role: input.role ?? 'worker',
+        selector: 'tmup-policy',
+        requested_model: 'auto',
+        observed_model: observedModel,
+        fallback_used: null,
+      });
+      const dependentId = createTask(db, { subject: `Dependent on ${taskId}`, deps: [taskId] });
+      return { taskId, attemptId, agentId, dependentId };
+    };
+
+    const expectCompletionRejected = (
+      run: { taskId: string; attemptId: string; dependentId: string },
+    ): void => {
+      expect(db.prepare('SELECT status FROM tasks WHERE id = ?').get(run.taskId)).toEqual({ status: 'claimed' });
+      expect(db.prepare('SELECT status FROM task_attempts WHERE id = ?').get(run.attemptId)).not.toEqual({ status: 'succeeded' });
+      expect(db.prepare('SELECT status FROM tasks WHERE id = ?').get(run.dependentId)).toEqual({ status: 'blocked' });
+    };
+
+    it('rejects a role-required task with no dispatch attempt', () => {
+      const taskId = createTask(db, { subject: 'Review', role: 'reviewer' });
+      claimSpecificTask(db, taskId, 'legacy-agent', 'reviewer');
+      const dependentId = createTask(db, { subject: 'Dependent', deps: [taskId] });
+
+      expect(() => completeTask(db, taskId, 'Done', undefined, undefined, 'legacy-agent'))
+        .toThrow('requires a dispatch attempt');
+      expect(db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskId)).toEqual({ status: 'claimed' });
+      expect(db.prepare('SELECT status FROM tasks WHERE id = ?').get(dependentId)).toEqual({ status: 'blocked' });
+    });
+
+    it('rejects a receipt whose role no longer matches the required role', () => {
+      const run = beginRequiredTask({ subject: 'Review', role: 'reviewer' });
+      db.prepare("UPDATE task_attempts SET role = 'tester' WHERE id = ?").run(run.attemptId);
+
+      expect(() => completeTask(db, run.taskId, 'Done', undefined, undefined, run.agentId))
+        .toThrow('does not match required role');
+      expectCompletionRejected(run);
+    });
+
+    it('rejects an unknown observed model when observation is required', () => {
+      const run = beginRequiredTask({
+        subject: 'Observed review',
+        role: 'reviewer',
+        model_requirement: 'observed',
+      });
+
+      expect(() => completeTask(db, run.taskId, 'Done', undefined, undefined, run.agentId))
+        .toThrow('requires an observed model');
+      expectCompletionRejected(run);
+    });
+
+    it('rejects the reference model for cross-model work', () => {
+      const run = beginRequiredTask({
+        subject: 'Cross-model review',
+        role: 'reviewer',
+        model_requirement: 'cross_model',
+        reference_model: 'model-a',
+      }, 'model-a');
+
+      expect(() => completeTask(db, run.taskId, 'Done', undefined, undefined, run.agentId))
+        .toThrow('must differ from reference_model');
+      expectCompletionRejected(run);
+    });
+
+    it('rejects absent and challenged evidence', () => {
+      const missing = beginRequiredTask({
+        subject: 'Evidence review',
+        role: 'reviewer',
+        evidence_required: true,
+      });
+      expect(() => completeTask(db, missing.taskId, 'Done', undefined, undefined, missing.agentId))
+        .toThrow('requires accepted evidence');
+      expectCompletionRejected(missing);
+
+      const challenged = beginRequiredTask({
+        subject: 'Challenged review',
+        role: 'reviewer',
+        evidence_required: true,
+      });
+      addEvidence(db, 'evidence-challenged', {
+        attempt_id: challenged.attemptId,
+        type: 'review_comment',
+        payload: 'unclear',
+      });
+      reviewEvidence(db, 'evidence-challenged', 'challenged');
+      expect(() => completeTask(db, challenged.taskId, 'Done', undefined, undefined, challenged.agentId))
+        .toThrow('requires accepted evidence');
+      expectCompletionRejected(challenged);
+    });
+
+    it('rejects an omitted declared produced artifact', () => {
+      const run = beginRequiredTask({
+        subject: 'Build',
+        role: 'implementer',
+        produces: ['output.json'],
+        evidence_required: false,
+      });
+
+      expect(() => completeTask(db, run.taskId, 'Done', undefined, undefined, run.agentId))
+        .toThrow('requires every declared produced artifact');
+      expectCompletionRejected(run);
+    });
+
+    it('rejects a terminal non-success dispatch outcome', () => {
+      const run = beginRequiredTask({ subject: 'Review', role: 'reviewer' });
+      finalizeAttempt(db, run.attemptId, 'inconclusive', 'delivery could not be proved');
+
+      expect(() => completeTask(db, run.taskId, 'Done', undefined, undefined, run.agentId))
+        .toThrow('is not running');
+      expectCompletionRejected(run);
+    });
+
+    it('atomically succeeds the owning attempt, publishes artifacts, and unblocks dependents', () => {
+      const run = beginRequiredTask({
+        subject: 'Verified build',
+        role: 'implementer',
+        produces: ['output.json'],
+        evidence_required: true,
+        model_requirement: 'observed',
+      }, 'model-b');
+      addEvidence(db, 'evidence-approved', {
+        attempt_id: run.attemptId,
+        type: 'test_result',
+        payload: 'all tests pass',
+      });
+      reviewEvidence(db, 'evidence-approved', 'approved');
+      const filePath = path.join(tmpDir, 'output.json');
+      fs.writeFileSync(filePath, '{"result":"ok"}');
+
+      const result = completeTask(db, run.taskId, 'Verified', [
+        { name: 'output.json', path: filePath },
+      ], tmpDir, run.agentId);
+
+      expect(result.unblocked).toContain(run.dependentId);
+      expect(db.prepare('SELECT status, owner FROM tasks WHERE id = ?').get(run.taskId)).toEqual({
+        status: 'completed',
+        owner: null,
+      });
+      expect(db.prepare('SELECT status, execution_outcome FROM task_attempts WHERE id = ?').get(run.attemptId)).toEqual({
+        status: 'succeeded',
+        execution_outcome: null,
+      });
+      expect(db.prepare('SELECT status FROM tasks WHERE id = ?').get(run.dependentId)).toEqual({ status: 'pending' });
+      expect(findArtifactByName(db, 'output.json')).toEqual(expect.objectContaining({
+        status: 'published',
+        path: filePath,
+        checksum: computeChecksum(filePath),
+      }));
+    });
+
     it('marks task completed with timestamp and summary', () => {
       const id = createTask(db, { subject: 'Test' });
       claimTask(db, 'agent-1');
@@ -372,7 +544,7 @@ describe('task lifecycle', () => {
 
     it('completes task with artifacts — publishes and sets checksum', () => {
       // Create task with a "produces" artifact
-      const id = createTask(db, { subject: 'Build', produces: ['output.json'] });
+      const id = createTask(db, { subject: 'Build', produces: ['output.json'], evidence_required: false });
       claimTask(db, 'agent-1');
 
       // Create the actual file
@@ -395,7 +567,7 @@ describe('task lifecycle', () => {
     });
 
     it('rejects artifact path outside project dir when projectDir provided', () => {
-      const id = createTask(db, { subject: 'Build', produces: ['evil.txt'] });
+      const id = createTask(db, { subject: 'Build', produces: ['evil.txt'], evidence_required: false });
       claimTask(db, 'agent-1');
 
       // Create the file outside the project dir
@@ -415,7 +587,7 @@ describe('task lifecycle', () => {
     });
 
     it('accepts artifact path within project dir when projectDir provided', () => {
-      const id = createTask(db, { subject: 'Build', produces: ['output.json'] });
+      const id = createTask(db, { subject: 'Build', produces: ['output.json'], evidence_required: false });
       claimTask(db, 'agent-1');
 
       const filePath = path.join(tmpDir, 'output.json');
@@ -431,7 +603,7 @@ describe('task lifecycle', () => {
     });
 
     it('skips artifact path validation when projectDir not provided (backward compat)', () => {
-      const id = createTask(db, { subject: 'Build', produces: ['file.txt'] });
+      const id = createTask(db, { subject: 'Build', produces: ['file.txt'], evidence_required: false });
       claimTask(db, 'agent-1');
 
       const filePath = path.join(tmpDir, 'file.txt');
@@ -464,7 +636,7 @@ describe('task lifecycle', () => {
     });
 
     it('rolls back multi-artifact completion when a later artifact is undeclared', () => {
-      const id = createTask(db, { subject: 'Build pair', produces: ['alpha.txt', 'beta.txt'] });
+      const id = createTask(db, { subject: 'Build pair', produces: ['alpha.txt', 'beta.txt'], evidence_required: false });
       claimTask(db, 'agent-1');
 
       const alphaPath = path.join(tmpDir, 'alpha.txt');
@@ -514,6 +686,28 @@ describe('task lifecycle', () => {
   });
 
   describe('failTask', () => {
+    it('finalizes the owning running attempt when the task fails', () => {
+      const taskId = createTask(db, { subject: 'Review', role: 'reviewer', max_retries: 1 });
+      beginDispatch(db, {
+        attempt_id: 'attempt-failed', task_id: taskId, agent_id: 'agent-1', pane_index: 1,
+        role: 'reviewer', selector: 'tmup-policy', requested_model: 'auto',
+        observed_model: 'unknown', fallback_used: null,
+      });
+
+      const result = failTask(db, taskId, 'crash', 'worker exited', 'agent-1');
+
+      expect(result.retrying).toBe(true);
+      expect(db.prepare(`
+        SELECT status, ended_at, failure_reason, result_summary
+        FROM task_attempts WHERE id = 'attempt-failed'
+      `).get()).toEqual({
+        status: 'failed',
+        ended_at: expect.any(String),
+        failure_reason: 'crash',
+        result_summary: 'worker exited',
+      });
+    });
+
     it('retries on crash with correct backoff formula', () => {
       const id = createTask(db, { subject: 'Crashy', max_retries: 3 });
       claimTask(db, 'agent-1');

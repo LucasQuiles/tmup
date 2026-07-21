@@ -27,7 +27,10 @@ function _createTaskInner(db: Database, input: CreateTaskInput): string {
   const roleRequired = input.role_required ?? Boolean(input.role);
   const evidenceRequired = input.evidence_required ?? Boolean(input.produces?.length);
   const modelRequirement = input.model_requirement ?? 'none';
-  if (modelRequirement === 'cross_model' && !input.reference_model) {
+  if (roleRequired && !input.role?.trim()) {
+    throw new Error('role is required when role_required is true');
+  }
+  if (modelRequirement === 'cross_model' && !input.reference_model?.trim()) {
     throw new Error('reference_model is required when model_requirement is cross_model');
   }
 

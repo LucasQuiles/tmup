@@ -4,7 +4,7 @@ export { logEvent, pruneEvents, getRecentEvents } from './event-ops.js';
 export { checkCycle, addDependency, hasUnmetDependencies, findUnblockedDependents, getTransitiveDependents } from './dep-resolver.js';
 export { createArtifact, publishArtifact, verifyArtifact, linkTaskArtifact, computeChecksum, findArtifactByName, validateArtifactPath } from './artifact-ops.js';
 export { createTask, createTaskBatch, updateTask, getActiveTaskForAgent } from './task-ops.js';
-export { claimTask, claimSpecificTask, completeTask, failTask, cancelTask } from './task-lifecycle.js';
+export { claimTask, claimSpecificTask, completeTask, failTask, cancelTask, validateCompletionReceipt } from './task-lifecycle.js';
 export { sendMessage, getInbox, getUnreadCount, postCheckpoint, pruneMessages } from './message-ops.js';
 export { initSession, readRegistry, setCurrentSession, getCurrentSession, removeFromRegistry, getSessionDbPath, getSessionDir, getSessionProjectDir, validateSessionName, isValidSessionId } from './session-ops.js';
 export { registerAgent, updateHeartbeat, getStaleAgents, recoverDeadClaim, getActiveAgents, getAgent, getAgentByPaneIndex } from './agent-ops.js';
@@ -17,7 +17,7 @@ export { readGridState, getGridPaneCount, validatePaneIndexExists } from './grid
 export type { GridState } from './grid-state.js';
 export { getSchemaVersion, runMigrations } from './migrations.js';
 export { createPlan, updatePlanStatus, getPlan, listPlans, addPlanReview, addResearchPacket, getResearchPackets, linkPlanTask, getPlanTaskIds } from './plan-ops.js';
-export { createAttempt, completeAttempt, getTaskAttempts, getLatestAttempt, addEvidence, reviewEvidence, getAttemptEvidence, hasAcceptedEvidence } from './evidence-ops.js';
+export { createAttempt, completeAttempt, getTaskAttempts, getLatestAttempt, addEvidence, reviewEvidence, getAttemptEvidence, hasAcceptedAttemptEvidence, hasAcceptedEvidence } from './evidence-ops.js';
 export { beginDispatch, attestAttempt, finalizeAttempt, getDispatchReceipt, toDispatchReceipt } from './dispatch-ops.js';
 export { createExecutionTarget, getExecutionTarget, listExecutionTargets, findTargetByPaneIndex, getTargetCapabilities, targetHasCapability, ensureTmuxPaneTarget, KNOWN_CAPABILITIES } from './execution-target-ops.js';
 export type { Capability } from './execution-target-ops.js';
