@@ -151,7 +151,12 @@ Relevant code:
 - `mcp-server/src/tools/index.ts:644`
 - `mcp-server/src/tools/index.ts:677`
 
-### Launch failure cleanup does not currently make the task recoverable
+### Historical finding: launch failure cleanup did not make the task recoverable
+
+> **Resolved after this trace.** Current dispatch creates an attempt before launch,
+> records a terminal launch receipt, and returns an unlaunched claim to pending.
+> Verify the current implementation and tests rather than treating the snapshot below
+> as an active defect report.
 
 On shell launch failure, `tmup_dispatch` marks the agent `shutdown`, but stale-claim recovery only scans agents with `status = 'active'`. The current test suite confirms that after launch failure the task stays `claimed` and owned by the shutdown agent.
 
