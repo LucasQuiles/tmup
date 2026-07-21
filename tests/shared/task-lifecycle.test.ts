@@ -81,6 +81,66 @@ describe('task lifecycle', () => {
       expect(task.role).toBeNull();
     });
 
+    it('defaults role and evidence requirements from the task shape', () => {
+      const roleTaskId = createTask(db, { subject: 'Review output', role: 'reviewer' });
+      const artifactTaskId = createTask(db, { subject: 'Build output', produces: ['review.json'] });
+      const plainTaskId = createTask(db, { subject: 'No execution requirements' });
+
+      const selectPolicy = db.prepare(`
+        SELECT role_required, evidence_required, model_requirement, reference_model
+        FROM tasks WHERE id = ?
+      `);
+      expect(selectPolicy.get(roleTaskId)).toEqual({
+        role_required: 1,
+        evidence_required: 0,
+        model_requirement: 'none',
+        reference_model: null,
+      });
+      expect(selectPolicy.get(artifactTaskId)).toEqual({
+        role_required: 0,
+        evidence_required: 1,
+        model_requirement: 'none',
+        reference_model: null,
+      });
+      expect(selectPolicy.get(plainTaskId)).toEqual({
+        role_required: 0,
+        evidence_required: 0,
+        model_requirement: 'none',
+        reference_model: null,
+      });
+    });
+
+    it('persists explicit execution policy through batch creation', () => {
+      const [id] = createTaskBatch(db, [{
+        subject: 'Cross-model review',
+        role: 'reviewer',
+        role_required: true,
+        evidence_required: true,
+        model_requirement: 'cross_model',
+        reference_model: 'model-a',
+      }]);
+
+      expect(db.prepare(`
+        SELECT role_required, evidence_required, model_requirement, reference_model
+        FROM tasks WHERE id = ?
+      `).get(id)).toEqual({
+        role_required: 1,
+        evidence_required: 1,
+        model_requirement: 'cross_model',
+        reference_model: 'model-a',
+      });
+    });
+
+    it('requires a reference model for cross-model tasks without leaving an orphan', () => {
+      expect(() => createTask(db, {
+        subject: 'Cross-model review',
+        role: 'reviewer',
+        model_requirement: 'cross_model',
+      })).toThrow('reference_model is required');
+
+      expect(db.prepare('SELECT COUNT(*) AS count FROM tasks').get()).toEqual({ count: 0 });
+    });
+
     it('allows the first producer and rejects a second producer for the same artifact name', () => {
       const firstId = createTask(db, { subject: 'Build schema', produces: ['schema.sql'] });
       expect(firstId).toBe('001');

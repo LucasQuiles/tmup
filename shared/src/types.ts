@@ -319,6 +319,10 @@ export interface CreateTaskInput {
   subject: string;
   description?: string;
   role?: string;
+  role_required?: boolean;
+  evidence_required?: boolean;
+  model_requirement?: ModelRequirement;
+  reference_model?: string;
   priority?: number;
   max_retries?: number;
   deps?: string[];
