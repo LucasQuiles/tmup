@@ -313,7 +313,7 @@ The redundant `AND status='pending'` ensures the UPDATE fails (changes=0) if a c
 | Tool | Category | Description |
 |------|----------|-------------|
 | `tmup_init` | Session | Initialize/reattach DB and session registry for project_dir (does not create tmux panes) |
-| `tmup_status` | Session | Status summary + dead-claim recovery side-effect |
+| `tmup_status` | Session | Status summary + receipt-aware recovery; verbose returns running/terminal receipts |
 | `tmup_next_action` | Session | Synthesized recommendation (priority-ordered decision tree) |
 | `tmup_pause` | Session | Store pause event/shutdown records; safe-pane delivery is separate |
 | `tmup_resume` | Session | Re-attach session, run dead-claim recovery |
@@ -579,7 +579,7 @@ tmup/
 | `tests/integration/full-lifecycle.test.ts` | 15 | Full workflow create→claim→checkpoint→complete→cascade, concurrent claim, message flow, dead-claim recovery, fail+retry, cascade cancel, broadcast isolation, mixed fail reasons, actor ownership enforcement |
 | `tests/shared/grid-state.test.ts` | 15 | Grid state reading, pane count resolution |
 | `tests/shared/system-inventory-parity.test.ts` | 29 | SYSTEM-INVENTORY.md parity with source (module counts, export lists, table counts) |
-| `tests/mcp/handle-tool-call.test.ts` | 65 | Dispatch receipt enforcement, model attestation, evidence review, resume, actor enforcement, pause/harvest, init/status |
+| `tests/mcp/handle-tool-call.test.ts` | 66 | Dispatch receipt enforcement and terminal retrieval, model attestation, evidence review, resume, actor enforcement, pause/harvest, init/status |
 | `tests/cli/handle-command.test.ts` | 37 | Actor identity, evidence-add ownership, fail validation, exit codes, checkpoints, messaging, heartbeat |
 | `tests/scripts/grid-registry.test.ts` | 8 | Shell registry CRUD, canonical path matching, lock semantics |
 | `tests/scripts/config-shell-boundary.test.ts` | 15 | Session name resolution from current-session pointer, TMUP_SESSION_NAME precedence, validation, state directory derivation |

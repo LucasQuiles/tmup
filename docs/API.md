@@ -11,7 +11,7 @@ These are the tools Claude Code uses to orchestrate. They're exposed via the MCP
 | Tool | What it does | The vibe |
 |------|-------------|----------|
 | `tmup_init` | Initialize session (DB + registry; grid setup is separate) | Opening the office |
-| `tmup_status` | DAG overview + dead claim recovery | Morning standup, but useful |
+| `tmup_status` | DAG overview + receipt-aware claim recovery; verbose includes terminal dispatch receipts | Morning standup, but useful |
 | `tmup_next_action` | "What should I do next?" decision tree | The one coworker who always knows |
 | `tmup_pause` | Record pause event/messages; safe-pane delivery uses reprompt | Fire alarm logbook |
 | `tmup_resume` | Resume paused session | False alarm, back to work |

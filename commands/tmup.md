@@ -68,7 +68,7 @@ Use this command to coordinate Codex CLI workers across a tmux NxM grid (default
 1. Initialize state: call `tmup_init` with the project directory.
 2. Create or verify panes: run `/bin/bash -p scripts/grid-setup.sh --project-dir <absolute-project-dir>` from this plugin.
 3. Plan and execute: create the DAG with `tmup_task_batch`, then dispatch ready tasks with `tmup_dispatch`.
-4. Supervise: loop over `tmup_next_action` and `tmup_harvest`; use `tmup_reprompt` for text that must reach a safe pane.
+4. Supervise: loop over `tmup_next_action`, verbose `tmup_status`, and `tmup_harvest`; use terminal receipts from verbose status and `tmup_reprompt` for text that must reach a safe pane.
 5. Reconcile: after evaluating harvested output, attest the observed model and add/review any required evidence before calling lead-side `tmup_checkpoint`, `tmup_complete`, or `tmup_fail`. Database messages are audit records for safe panes, not delivery.
 6. Shut down: reprompt workers to stop, harvest final output, reconcile every claim, call `tmup_teardown` to record the event, then run `/bin/bash -p scripts/grid-teardown.sh` from this plugin.
 

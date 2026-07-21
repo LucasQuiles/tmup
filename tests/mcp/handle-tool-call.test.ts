@@ -8,6 +8,7 @@ import { claimTask, claimSpecificTask, completeTask, failTask } from '../../shar
 import { registerAgent, getActiveAgents, getAgent } from '../../shared/src/agent-ops.js';
 import { sendMessage, getInbox } from '../../shared/src/message-ops.js';
 import { createAttempt } from '../../shared/src/evidence-ops.js';
+import { beginDispatch, attestAttempt } from '../../shared/src/dispatch-ops.js';
 import { initSession, setCurrentSession, getCurrentSession, getSessionDir } from '../../shared/src/session-ops.js';
 import type { Database, TaskRow } from '../../shared/src/types.js';
 
@@ -1053,6 +1054,45 @@ describe('handleToolCall adapter integration', () => {
   });
 
   describe('tmup_status pane-liveness-aware recovery', () => {
+    it('returns terminal dispatch receipts in verbose status', async () => {
+      const { db } = createAdapterSession();
+      const taskId = createTask(db, {
+        subject: 'Terminal receipt visibility',
+        role: 'specialist',
+        model_requirement: 'observed',
+      });
+      beginDispatch(db, {
+        attempt_id: 'attempt-terminal',
+        task_id: taskId,
+        agent_id: 'agent-terminal',
+        pane_index: 0,
+        role: 'specialist',
+        selector: 'tmup-policy',
+        requested_model: 'auto',
+        observed_model: 'unknown',
+        fallback_used: null,
+      });
+      attestAttempt(db, 'attempt-terminal', {
+        observed_model: 'observed-runtime-model',
+        fallback_used: false,
+      });
+      completeTask(db, taskId, 'verified', undefined, undefined, 'agent-terminal');
+
+      const result = parseToolJson(await handleToolCall('tmup_status', { verbose: true }));
+
+      expect(result.receipts).toEqual([expect.objectContaining({
+        attempt_id: 'attempt-terminal',
+        task_id: taskId,
+        agent_id: 'agent-terminal',
+        role: 'specialist',
+        selector: 'tmup-policy',
+        requested_model: 'auto',
+        observed_model: 'observed-runtime-model',
+        fallback_used: false,
+        terminal_status: 'succeeded',
+      })]);
+    });
+
     it('reports structured missing-receipt reconciliation for a live required role', async () => {
       const { db, projectDir, sessionId } = createAdapterSession();
       writeGridState(sessionId, projectDir, 1);

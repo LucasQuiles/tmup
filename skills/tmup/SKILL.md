@@ -132,7 +132,7 @@ The planning-first behavior is carried by the initial prompt. tmup does not depe
 | Tool | Purpose |
 |------|---------|
 | `tmup_init` | Initialize/reattach session |
-| `tmup_status` | Session overview + dead-claim recovery |
+| `tmup_status` | Session overview + receipt-aware recovery; verbose includes terminal receipts |
 | `tmup_next_action` | Synthesized next step recommendation |
 | `tmup_task_create` | Add a task with optional role/evidence/model gates |
 | `tmup_task_batch` | Create multiple gated tasks atomically |

@@ -10,12 +10,12 @@ import {
   sendMessage, getInbox, getUnreadCount, postCheckpoint,
   registerAgent, updateHeartbeat, getStaleAgents, reconcileClaim, getActiveAgents, getAgentByPaneIndex,
   logEvent, getNextAction, getGridPaneCount, readGridState, validatePaneIndexExists,
-  beginDispatch, attestAttempt, finalizeAttempt, getDispatchReceipt,
+  beginDispatch, attestAttempt, finalizeAttempt, getDispatchReceipt, toDispatchReceipt,
   addEvidence, reviewEvidence,
   STALE_AGENT_THRESHOLD_SECONDS, MIN_PRIORITY, MAX_PRIORITY, TASK_STATUSES, FAILURE_REASONS, MESSAGE_TYPES,
   MODEL_REQUIREMENTS, EVIDENCE_TYPES, REVIEW_DISPOSITIONS,
 } from '@tmup/shared';
-import type { Database, TaskRow, TaskStatus, ModelRequirement, EvidenceType, ReviewDisposition } from '@tmup/shared';
+import type { Database, TaskRow, TaskStatus, TaskAttemptRow, ModelRequirement, EvidenceType, ReviewDisposition } from '@tmup/shared';
 
 interface ExecErrorWithStdout extends Error {
   stdout?: string | Buffer;
@@ -305,7 +305,7 @@ export const toolDefinitions = [
     inputSchema: {
       type: 'object' as const,
       properties: {
-        verbose: { type: 'boolean', description: 'If true, return full DAG details instead of summary' },
+        verbose: { type: 'boolean', description: 'If true, return full DAG details including running and terminal dispatch receipts' },
         dry_run: { type: 'boolean', description: 'Report exact stale-claim decisions without mutating task, attempt, agent, or heartbeat state' },
       },
     },
@@ -674,9 +674,12 @@ export async function handleToolCall(
 
       if (verbose) {
         const tasks = db.prepare('SELECT * FROM tasks ORDER BY CAST(id AS INTEGER)').all() as TaskRow[];
+        const receipts = (db.prepare(
+          'SELECT * FROM task_attempts ORDER BY started_at, rowid'
+        ).all() as TaskAttemptRow[]).map(toDispatchReceipt);
         const agents = getActiveAgents(db);
         const unread = getUnreadCount(db, 'lead');
-        return json({ ok: true, tasks, agents, unread, recovered, reconciliation, dry_run: dryRun });
+        return json({ ok: true, tasks, receipts, agents, unread, recovered, reconciliation, dry_run: dryRun });
       }
 
       // Summary mode

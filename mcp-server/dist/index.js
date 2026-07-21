@@ -16742,7 +16742,7 @@ var toolDefinitions = [
     inputSchema: {
       type: "object",
       properties: {
-        verbose: { type: "boolean", description: "If true, return full DAG details instead of summary" },
+        verbose: { type: "boolean", description: "If true, return full DAG details including running and terminal dispatch receipts" },
         dry_run: { type: "boolean", description: "Report exact stale-claim decisions without mutating task, attempt, agent, or heartbeat state" }
       }
     }
@@ -17088,9 +17088,12 @@ async function handleToolCall(name, args) {
       const recovered = reconciliation.filter((result) => result.mutated && (result.action === "retried" || result.action === "needs_review") && result.task_id !== null).map((result) => result.task_id);
       if (verbose) {
         const tasks = db2.prepare("SELECT * FROM tasks ORDER BY CAST(id AS INTEGER)").all();
+        const receipts = db2.prepare(
+          "SELECT * FROM task_attempts ORDER BY started_at, rowid"
+        ).all().map(toDispatchReceipt);
         const agents = getActiveAgents(db2);
         const unread2 = getUnreadCount(db2, "lead");
-        return json({ ok: true, tasks, agents, unread: unread2, recovered, reconciliation, dry_run: dryRun });
+        return json({ ok: true, tasks, receipts, agents, unread: unread2, recovered, reconciliation, dry_run: dryRun });
       }
       const counts = db2.prepare(`
         SELECT status, COUNT(*) as cnt FROM tasks GROUP BY status

@@ -56,8 +56,9 @@ Initializes or reattaches DB and session registry for a project directory. Does 
 ```json
 {"verbose?": true}
 → "3 pending, 2 claimed, 5 completed. 1 unread messages."
-→ (verbose) {"ok": true, "tasks": [...], "agents": [...], "unread": 1}
+→ (verbose) {"ok": true, "tasks": [...], "receipts": [...], "agents": [...], "unread": 1}
 ```
+Verbose status is the read surface for both running and terminal dispatch receipts. Supervisors must use the matching attempt receipt rather than infer execution from task or agent state.
 
 ### tmup_next_action
 ```json
