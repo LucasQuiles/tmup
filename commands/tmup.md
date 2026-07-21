@@ -17,6 +17,9 @@ allowed-tools:
   - mcp__tmup__tmup_send_message
   - mcp__tmup__tmup_inbox
   - mcp__tmup__tmup_dispatch
+  - mcp__tmup__tmup_attempt_attest
+  - mcp__tmup__tmup_evidence_add
+  - mcp__tmup__tmup_evidence_review
   - mcp__tmup__tmup_harvest
   - mcp__tmup__tmup_pause
   - mcp__tmup__tmup_resume
@@ -37,6 +40,9 @@ allowed-tools:
   - mcp__plugin_tmup_tmup__tmup_send_message
   - mcp__plugin_tmup_tmup__tmup_inbox
   - mcp__plugin_tmup_tmup__tmup_dispatch
+  - mcp__plugin_tmup_tmup__tmup_attempt_attest
+  - mcp__plugin_tmup_tmup__tmup_evidence_add
+  - mcp__plugin_tmup_tmup__tmup_evidence_review
   - mcp__plugin_tmup_tmup__tmup_harvest
   - mcp__plugin_tmup_tmup__tmup_pause
   - mcp__plugin_tmup_tmup__tmup_resume
@@ -63,7 +69,7 @@ Use this command to coordinate Codex CLI workers across a tmux NxM grid (default
 2. Create or verify panes: run `/bin/bash -p scripts/grid-setup.sh --project-dir <absolute-project-dir>` from this plugin.
 3. Plan and execute: create the DAG with `tmup_task_batch`, then dispatch ready tasks with `tmup_dispatch`.
 4. Supervise: loop over `tmup_next_action` and `tmup_harvest`; use `tmup_reprompt` for text that must reach a safe pane.
-5. Reconcile: after evaluating harvested evidence, call lead-side `tmup_checkpoint`, `tmup_complete`, or `tmup_fail`. Database messages are audit records for safe panes, not delivery.
+5. Reconcile: after evaluating harvested output, attest the observed model and add/review any required evidence before calling lead-side `tmup_checkpoint`, `tmup_complete`, or `tmup_fail`. Database messages are audit records for safe panes, not delivery.
 6. Shut down: reprompt workers to stop, harvest final output, reconcile every claim, call `tmup_teardown` to record the event, then run `/bin/bash -p scripts/grid-teardown.sh` from this plugin.
 
 ## Session Model
@@ -111,6 +117,8 @@ Workers are interactive Codex sessions in tmux panes. Use `tmup_dispatch` to sta
 - When named-role selection is available, use only post-canary profiles activated by the lead and backed by a runtime receipt.
 - Without named-role selection, native children are same-model leaves; use a model-explicit Codex/tmup process or lane for a distinct model.
 - Never claim model or tier selection without a runtime receipt.
+- Treat `unavailable`, `skipped`, and `inconclusive` as non-completion outcomes. A required-role failure blocks completion or requires an explicit parent-workflow degradation decision.
+- Completion gates use the current attempt receipt: required role must match, observed/cross-model policy must pass, and evidence-required work needs accepted evidence plus every declared artifact.
 - Native-child admission is pane-local and not shared across panes. Pane and thread settings are configuration bounds, not a measured safe aggregate. Start with the default grid, expand only from observed workload evidence, and treat fanout performance as a pilot.
 
 ## Task DAG

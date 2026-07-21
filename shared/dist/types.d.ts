@@ -11,6 +11,8 @@ export type AutonomyTier = 'checkpoint' | 'full_participant';
 export type PlanStatus = 'proposed' | 'challenged' | 'operational' | 'superseded';
 export type ReviewDisposition = 'approved' | 'challenged' | 'rejected';
 export type AttemptStatus = 'running' | 'succeeded' | 'failed' | 'abandoned';
+export type ModelRequirement = 'none' | 'observed' | 'cross_model';
+export type ExecutionOutcome = 'unavailable' | 'skipped' | 'inconclusive';
 export type EvidenceType = 'diff' | 'test_result' | 'build_log' | 'screenshot' | 'review_comment' | 'artifact_checksum';
 export type ExecutionTargetType = 'tmux_pane' | 'local_shell' | 'codex_cloud';
 export type LifecycleEventType = 'claude_session_start' | 'claude_session_end' | 'claude_precompact' | 'claude_task_completed' | 'claude_subagent_stop';
@@ -42,6 +44,11 @@ export interface TaskRow {
     created_at: string;
     claimed_at: string | null;
     completed_at: string | null;
+    role_required: 0 | 1;
+    evidence_required: 0 | 1;
+    model_requirement: ModelRequirement;
+    reference_model: string | null;
+    execution_outcome: ExecutionOutcome | null;
 }
 export interface MessageRow {
     id: string;
@@ -125,6 +132,27 @@ export interface TaskAttemptRow {
     confidence: number | null;
     started_at: string;
     ended_at: string | null;
+    role: string | null;
+    selector: string | null;
+    requested_model: string;
+    observed_model: string;
+    fallback_used: 0 | 1 | null;
+    fallback_model: string | null;
+    fallback_reason: string | null;
+    execution_outcome: ExecutionOutcome | null;
+}
+export interface DispatchReceipt {
+    attempt_id: string;
+    task_id: string;
+    agent_id: string | null;
+    role: string;
+    selector: string;
+    requested_model: string;
+    observed_model: string;
+    fallback_used: boolean | null;
+    fallback_model: string | null;
+    fallback_reason: string | null;
+    terminal_status: AttemptStatus | ExecutionOutcome;
 }
 export interface EvidencePacketRow {
     id: string;
@@ -155,6 +183,10 @@ export interface CreateTaskInput {
     subject: string;
     description?: string;
     role?: string;
+    role_required?: boolean;
+    evidence_required?: boolean;
+    model_requirement?: ModelRequirement;
+    reference_model?: string;
     priority?: number;
     max_retries?: number;
     deps?: string[];
@@ -211,6 +243,33 @@ export interface CreateAttemptInput {
     agent_id?: string;
     execution_target_id?: string;
     model_family?: string;
+    role?: string;
+    selector?: string;
+    requested_model?: string;
+    observed_model?: string;
+    fallback_used?: boolean | null;
+    fallback_model?: string;
+    fallback_reason?: string;
+}
+export interface BeginDispatchInput {
+    attempt_id: string;
+    task_id: string;
+    agent_id: string;
+    pane_index: number;
+    role: string;
+    selector: string;
+    requested_model: string;
+    observed_model: string;
+    fallback_used: boolean | null;
+    fallback_model?: string;
+    fallback_reason?: string;
+    execution_target_id?: string;
+}
+export interface AttemptAttestationInput {
+    observed_model: string;
+    fallback_used: boolean;
+    fallback_model?: string;
+    fallback_reason?: string;
 }
 export interface CreateEvidenceInput {
     attempt_id: string;

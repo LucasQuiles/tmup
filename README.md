@@ -25,7 +25,7 @@ One Claude Code session makes the plan. A configurable grid of Codex CLI workers
 | | |
 |---|---|
 | **[Architecture](docs/ARCHITECTURE.md)** | How it actually works under the hood |
-| **[API Reference](docs/API.md)** | All 20 MCP tools + 10 CLI commands |
+| **[API Reference](docs/API.md)** | All 23 MCP tools + 11 CLI commands |
 | **[Configuration](docs/CONFIGURATION.md)** | Grid layout, DAG behavior, advisory routing tiers, project structure |
 | **[Development](docs/DEVELOPMENT.md)** | Dev workflow, the cache sync thing that will absolutely trip you up |
 | **[FAQ & Limitations](docs/FAQ.md)** | Honest answers and honest limitations |
@@ -85,6 +85,8 @@ Native-child admission is pane-local and not shared across panes. Configured pan
 ### Safe worker boundary
 
 The default MCP-dispatched worker is a Codex-only, supervisor-owned lane. `codex.model: "auto"` means tmup omits `-m` and lets the installed Codex CLI choose its default; an explicit model pin requires `codex.explicit_model_pins_enabled: true` plus a per-dispatch `--model-validation-receipt`. A requested pin and its receipt are not proof of the model actually served.
+
+Every MCP launch now begins with a persisted attempt receipt and must return exactly one selector/requested-model/observed-model/fallback metadata set. Missing or contradictory metadata is recorded as inconclusive, not completed. Required-role completion additionally enforces the task's observed/cross-model policy, accepted attempt evidence, and declared artifacts.
 
 Safe workers run in `workspace-write` with direct shell network access disabled, while Codex-mediated web search can remain available. Both ambient temp grants are excluded. The only extra `--add-dir` is one exact mode-0700 task temp beneath protected controller state. Beyond Codex's core inherited command environment, tmup explicitly sets only agent ID, pane, working directory, optional task ID, and `TMPDIR`/`TMP`/`TEMP`; it does not set `TMUP_DB` or `TMUP_SESSION_DIR`. The worker prompt does not advertise `tmup-cli`: the supervisor owns claim, lifecycle, message, and harvest operations, while the protected launcher owns background heartbeat. Harvested scrollback is ANSI-stripped, framed with `UNTRUSTED PANE OUTPUT` markers, and returned with an explicit trust label; marker text printed by a worker is neutralized before framing.
 
@@ -160,6 +162,9 @@ If you run Claude Code with `defaultMode: "dontAsk"`, the tmup MCP tools need ex
       "mcp__plugin_tmup_tmup__tmup_send_message",
       "mcp__plugin_tmup_tmup__tmup_inbox",
       "mcp__plugin_tmup_tmup__tmup_dispatch",
+      "mcp__plugin_tmup_tmup__tmup_attempt_attest",
+      "mcp__plugin_tmup_tmup__tmup_evidence_add",
+      "mcp__plugin_tmup_tmup__tmup_evidence_review",
       "mcp__plugin_tmup_tmup__tmup_harvest",
       "mcp__plugin_tmup_tmup__tmup_pause",
       "mcp__plugin_tmup_tmup__tmup_resume",

@@ -19,10 +19,22 @@ function _createTaskInner(db, input) {
     const id = nextTaskId(db);
     const priority = input.priority ?? DEFAULT_PRIORITY;
     const maxRetries = input.max_retries ?? 3;
+    const roleRequired = input.role_required ?? Boolean(input.role);
+    const evidenceRequired = input.evidence_required ?? Boolean(input.produces?.length);
+    const modelRequirement = input.model_requirement ?? 'none';
+    if (roleRequired && !input.role?.trim()) {
+        throw new Error('role is required when role_required is true');
+    }
+    if (modelRequirement === 'cross_model' && !input.reference_model?.trim()) {
+        throw new Error('reference_model is required when model_requirement is cross_model');
+    }
     db.prepare(`
-    INSERT INTO tasks (id, subject, description, role, priority, status, max_retries)
-    VALUES (?, ?, ?, ?, ?, 'pending', ?)
-  `).run(id, input.subject, input.description ?? null, input.role ?? null, priority, maxRetries);
+    INSERT INTO tasks (
+      id, subject, description, role, priority, status, max_retries,
+      role_required, evidence_required, model_requirement, reference_model
+    )
+    VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+  `).run(id, input.subject, input.description ?? null, input.role ?? null, priority, maxRetries, roleRequired ? 1 : 0, evidenceRequired ? 1 : 0, modelRequirement, input.reference_model ?? null);
     if (input.deps) {
         for (const depId of input.deps) {
             addDependency(db, id, depId);

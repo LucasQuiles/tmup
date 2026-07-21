@@ -31,6 +31,7 @@ var EVENT_TYPES = [
   "session_resume",
   "session_teardown"
 ];
+var EVIDENCE_TYPES = ["diff", "test_result", "build_log", "screenshot", "review_comment", "artifact_checksum"];
 var SDLC_LOOP_LEVELS = ["L0", "L1", "L2", "L2.5", "L2.75"];
 var WORKER_TYPES = ["codex", "claude_code"];
 
@@ -254,6 +255,25 @@ var migrations = [
       db.prepare("CREATE INDEX IF NOT EXISTS idx_tasks_bead ON tasks(bead_id) WHERE bead_id IS NOT NULL").run();
       db.prepare("CREATE INDEX IF NOT EXISTS idx_tasks_colony ON tasks(sdlc_loop_level, status) WHERE sdlc_loop_level IS NOT NULL").run();
     }
+  },
+  {
+    version: 5,
+    description: "Add dispatch receipt policy and execution outcome metadata",
+    up: (db) => {
+      db.prepare("ALTER TABLE tasks ADD COLUMN role_required INTEGER NOT NULL DEFAULT 0 CHECK (role_required IN (0,1))").run();
+      db.prepare("ALTER TABLE tasks ADD COLUMN evidence_required INTEGER NOT NULL DEFAULT 0 CHECK (evidence_required IN (0,1))").run();
+      db.prepare("ALTER TABLE tasks ADD COLUMN model_requirement TEXT NOT NULL DEFAULT 'none' CHECK (model_requirement IN ('none','observed','cross_model'))").run();
+      db.prepare("ALTER TABLE tasks ADD COLUMN reference_model TEXT").run();
+      db.prepare("ALTER TABLE tasks ADD COLUMN execution_outcome TEXT CHECK (execution_outcome IS NULL OR execution_outcome IN ('unavailable','skipped','inconclusive'))").run();
+      db.prepare("ALTER TABLE task_attempts ADD COLUMN role TEXT").run();
+      db.prepare("ALTER TABLE task_attempts ADD COLUMN selector TEXT").run();
+      db.prepare("ALTER TABLE task_attempts ADD COLUMN requested_model TEXT NOT NULL DEFAULT 'unknown'").run();
+      db.prepare("ALTER TABLE task_attempts ADD COLUMN observed_model TEXT NOT NULL DEFAULT 'unknown'").run();
+      db.prepare("ALTER TABLE task_attempts ADD COLUMN fallback_used INTEGER CHECK (fallback_used IS NULL OR fallback_used IN (0,1))").run();
+      db.prepare("ALTER TABLE task_attempts ADD COLUMN fallback_model TEXT").run();
+      db.prepare("ALTER TABLE task_attempts ADD COLUMN fallback_reason TEXT").run();
+      db.prepare("ALTER TABLE task_attempts ADD COLUMN execution_outcome TEXT CHECK (execution_outcome IS NULL OR execution_outcome IN ('unavailable','skipped','inconclusive'))").run();
+    }
   }
 ];
 function runMigrations(db) {
@@ -418,8 +438,27 @@ function getActiveTaskForAgent(db, agentId) {
   return db.prepare("SELECT * FROM tasks WHERE owner = ? AND status = 'claimed' LIMIT 1").get(agentId) ?? null;
 }
 
+// ../shared/dist/evidence-ops.js
+function addEvidence(db, evidenceId, input) {
+  db.prepare(`
+    INSERT INTO evidence_packets (id, attempt_id, type, payload, hash)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(evidenceId, input.attempt_id, input.type, input.payload, input.hash ?? null);
+  return db.prepare("SELECT * FROM evidence_packets WHERE id = ?").get(evidenceId);
+}
+function hasAcceptedAttemptEvidence(db, attemptId) {
+  const row = db.prepare(`
+    SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN reviewer_disposition = 'approved' THEN 0 ELSE 1 END) AS unaccepted
+    FROM evidence_packets
+    WHERE attempt_id = ?
+  `).get(attemptId);
+  return row.total > 0 && row.unaccepted === 0;
+}
+
 // ../shared/dist/task-lifecycle.js
-var RETRIABLE_REASONS = ["crash", "timeout"];
+var RETRIABLE_REASONS = ["crash", "timeout", "launch_failed"];
 function claimTask(db, agentId, role) {
   const now = (/* @__PURE__ */ new Date()).toISOString();
   const claimRole = role ?? null;
@@ -450,6 +489,65 @@ function claimTask(db, agentId, role) {
   });
   return claim.immediate();
 }
+function hasAttestedValue(value) {
+  return value !== null && value.trim() !== "" && value !== "unknown";
+}
+function validateCompletionReceipt(task, attempt, acceptedEvidence, suppliedArtifactNames, declaredArtifactNames) {
+  const attemptRequired = task.role_required === 1 || task.evidence_required === 1 || task.model_requirement !== "none";
+  if (attemptRequired && !attempt) {
+    throw new Error(`Task ${task.id} requires a dispatch attempt`);
+  }
+  if (attempt) {
+    if (attempt.agent_id !== task.owner) {
+      throw new Error(`Attempt ${attempt.id} does not belong to the current task owner`);
+    }
+    if (attempt.status !== "running" || attempt.execution_outcome !== null) {
+      throw new Error(`Attempt ${attempt.id} is not running`);
+    }
+  }
+  if (task.role_required === 1) {
+    if (!task.role || !attempt || attempt.role !== task.role) {
+      throw new Error(`Dispatch receipt does not match required role '${task.role ?? "unknown"}'`);
+    }
+    if (!hasAttestedValue(attempt.selector) || !hasAttestedValue(attempt.requested_model)) {
+      throw new Error(`Task ${task.id} requires complete dispatch receipt metadata`);
+    }
+    if (attempt.fallback_used === 1 && (!hasAttestedValue(attempt.fallback_model) || !attempt.fallback_reason?.trim())) {
+      throw new Error(`Attempt ${attempt.id} has incomplete fallback provenance`);
+    }
+    if (attempt.fallback_used !== 1 && (attempt.fallback_model !== null || attempt.fallback_reason !== null)) {
+      throw new Error(`Attempt ${attempt.id} has inconsistent fallback provenance`);
+    }
+  }
+  if (task.model_requirement === "observed") {
+    if (!attempt || !hasAttestedValue(attempt.observed_model)) {
+      throw new Error(`Task ${task.id} requires an observed model`);
+    }
+  }
+  if (task.model_requirement === "cross_model") {
+    if (!attempt || !hasAttestedValue(attempt.observed_model)) {
+      throw new Error(`Task ${task.id} requires an observed model for cross-model work`);
+    }
+    if (!task.reference_model) {
+      throw new Error(`Task ${task.id} requires reference_model for cross-model work`);
+    }
+    if (attempt.observed_model === task.reference_model) {
+      throw new Error(`Observed model must differ from reference_model for task ${task.id}`);
+    }
+  }
+  if (task.evidence_required === 1 && !acceptedEvidence) {
+    throw new Error(`Task ${task.id} requires accepted evidence on its current attempt`);
+  }
+  for (const supplied of suppliedArtifactNames) {
+    if (!declaredArtifactNames.has(supplied)) {
+      throw new Error(`Artifact '${supplied}' not registered as a 'produces' artifact for task ${task.id}`);
+    }
+  }
+  const missingArtifacts = [...declaredArtifactNames].filter((name) => !suppliedArtifactNames.has(name));
+  if (missingArtifacts.length > 0) {
+    throw new Error(`Task ${task.id} requires every declared produced artifact; missing: ${missingArtifacts.join(", ")}`);
+  }
+}
 function completeTask(db, taskId, resultSummary, artifacts, projectDir, actorId) {
   const checksums = [];
   if (artifacts) {
@@ -474,8 +572,23 @@ function completeTask(db, taskId, resultSummary, artifacts, projectDir, actorId)
     if (actorId !== "lead" && task.owner !== actorId) {
       throw new Error(`Task ${taskId} cannot be completed by '${actorId}': not the owning agent`);
     }
+    const attempt = db.prepare(`
+      SELECT * FROM task_attempts
+      WHERE task_id = ?
+      ORDER BY started_at DESC, rowid DESC
+      LIMIT 1
+    `).get(taskId);
+    const acceptedEvidence = attempt ? hasAcceptedAttemptEvidence(db, attempt.id) : false;
+    const declaredArtifacts = db.prepare(`
+      SELECT a.name
+      FROM artifacts a
+      JOIN task_artifacts ta ON ta.artifact_id = a.id
+      WHERE ta.task_id = ? AND ta.direction = 'produces'
+    `).all(taskId);
+    const suppliedArtifactNames = new Set(checksums.map((artifact) => artifact.name));
+    const declaredArtifactNames = new Set(declaredArtifacts.map((artifact) => artifact.name));
+    validateCompletionReceipt(task, attempt, acceptedEvidence, suppliedArtifactNames, declaredArtifactNames);
     const now = (/* @__PURE__ */ new Date()).toISOString();
-    db.prepare("UPDATE tasks SET status = 'completed', completed_at = ?, result_summary = ?, owner = NULL WHERE id = ?").run(now, resultSummary, taskId);
     for (const art of checksums) {
       const artifact = db.prepare("SELECT a.id FROM artifacts a JOIN task_artifacts ta ON a.id = ta.artifact_id WHERE a.name = ? AND ta.task_id = ? AND ta.direction = ?").get(art.name, taskId, "produces");
       if (!artifact) {
@@ -483,6 +596,22 @@ function completeTask(db, taskId, resultSummary, artifacts, projectDir, actorId)
       }
       publishArtifact(db, artifact.id, art.path, art.checksum);
     }
+    if (attempt) {
+      const attemptResult = db.prepare(`
+        UPDATE task_attempts
+        SET status = 'succeeded', ended_at = ?, result_summary = ?, execution_outcome = NULL
+        WHERE id = ? AND status = 'running' AND execution_outcome IS NULL
+      `).run(now, resultSummary, attempt.id);
+      if (attemptResult.changes !== 1) {
+        throw new Error(`Attempt ${attempt.id} changed during completion`);
+      }
+    }
+    db.prepare(`
+      UPDATE tasks
+      SET status = 'completed', completed_at = ?, result_summary = ?, owner = NULL,
+          execution_outcome = NULL
+      WHERE id = ?
+    `).run(now, resultSummary, taskId);
     const unblocked = findUnblockedDependents(db, taskId);
     logEvent(db, actorId, "task_completed", {
       task_id: taskId,
@@ -502,6 +631,19 @@ function failTask(db, taskId, reason, message, actorId) {
     }
     if (actorId !== "lead" && task.owner !== actorId) {
       throw new Error(`Task ${taskId} cannot be failed by '${actorId}': not the owning agent`);
+    }
+    const activeAttempt = db.prepare(`
+      SELECT id FROM task_attempts
+      WHERE task_id = ? AND agent_id = ? AND status = 'running' AND execution_outcome IS NULL
+      ORDER BY started_at DESC, rowid DESC
+      LIMIT 1
+    `).get(taskId, task.owner);
+    if (activeAttempt) {
+      db.prepare(`
+        UPDATE task_attempts
+        SET status = 'failed', ended_at = ?, failure_reason = ?, result_summary = ?
+        WHERE id = ? AND status = 'running' AND execution_outcome IS NULL
+      `).run((/* @__PURE__ */ new Date()).toISOString(), reason, message, activeAttempt.id);
     }
     const isRetriable = RETRIABLE_REASONS.includes(reason);
     const hasRetries = task.retry_count < task.max_retries;
@@ -730,6 +872,9 @@ function validatePaneIndexExists(sessionDir, paneIndex) {
   return { valid: true };
 }
 
+// src/commands/index.ts
+import { randomUUID } from "node:crypto";
+
 // src/arc-health.ts
 import { lstatSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -743,6 +888,7 @@ var TMUP_COMMAND_NAMESPACE = [
   "heartbeat",
   "status",
   "events",
+  "evidence-add",
   "arc-health"
 ];
 function parseStringField(text, name) {
@@ -835,7 +981,9 @@ var FLAGS_WITH_VALUES = /* @__PURE__ */ new Set([
   "--artifact",
   "--codex-session-id",
   "--limit",
-  "--plugin-root"
+  "--plugin-root",
+  "--attempt-id",
+  "--hash"
 ]);
 var COMMAND_FLAGS = {
   claim: { value: /* @__PURE__ */ new Set(["--role"]), boolean: /* @__PURE__ */ new Set() },
@@ -847,6 +995,7 @@ var COMMAND_FLAGS = {
   heartbeat: { value: /* @__PURE__ */ new Set(["--codex-session-id"]), boolean: /* @__PURE__ */ new Set() },
   status: { value: /* @__PURE__ */ new Set(), boolean: /* @__PURE__ */ new Set() },
   events: { value: /* @__PURE__ */ new Set(["--limit", "--type"]), boolean: /* @__PURE__ */ new Set() },
+  "evidence-add": { value: /* @__PURE__ */ new Set(["--attempt-id", "--type", "--hash"]), boolean: /* @__PURE__ */ new Set() },
   "arc-health": { value: /* @__PURE__ */ new Set(["--plugin-root"]), boolean: /* @__PURE__ */ new Set() }
 };
 function validateFlags(command, args) {
@@ -1057,6 +1206,35 @@ async function handleCommand(db, command, args, env) {
       const events = getRecentEvents(db, eventType, limit);
       return { ok: true, events };
     }
+    case "evidence-add": {
+      const agentId = requireAgentId(env);
+      const attemptId = parseFlag(args, "--attempt-id");
+      if (!attemptId) throw new Error("--attempt-id required");
+      const evidenceType = parseFlag(args, "--type");
+      if (!evidenceType || !EVIDENCE_TYPES.includes(evidenceType)) {
+        throw new Error(`--type required (${EVIDENCE_TYPES.join(", ")})`);
+      }
+      const payload = positional(args);
+      if (!payload) throw new Error("Evidence payload required");
+      const attempt = db.prepare("SELECT agent_id FROM task_attempts WHERE id = ?").get(attemptId);
+      if (!attempt) throw new Error(`Attempt ${attemptId} not found`);
+      if (attempt.agent_id !== agentId) {
+        throw new Error(`Attempt ${attemptId} is not owned by agent ${agentId}`);
+      }
+      const evidence = addEvidence(db, randomUUID(), {
+        attempt_id: attemptId,
+        type: evidenceType,
+        payload,
+        hash: parseFlag(args, "--hash")
+      });
+      return {
+        ok: true,
+        evidence_id: evidence.id,
+        attempt_id: evidence.attempt_id,
+        type: evidence.type,
+        reviewer_disposition: evidence.reviewer_disposition
+      };
+    }
     case "arc-health": {
       return buildArcHealth(db, parseFlag(args, "--plugin-root"), env);
     }
@@ -1081,7 +1259,7 @@ function output(data) {
 async function main() {
   const args = process.argv.slice(2);
   if (args.length === 0) {
-    throw new CliError("Usage: tmup-cli <command> [args...]\nCommands: claim, complete, fail, checkpoint, message, inbox, heartbeat, status, events, arc-health");
+    throw new CliError("Usage: tmup-cli <command> [args...]\nCommands: claim, complete, fail, checkpoint, message, inbox, heartbeat, status, events, evidence-add, arc-health");
   }
   const command = args[0];
   const commandArgs = args.slice(1);

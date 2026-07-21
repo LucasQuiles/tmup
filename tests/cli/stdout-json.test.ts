@@ -8,6 +8,7 @@ import { claimTask } from '../../shared/src/task-lifecycle.js';
 import { registerAgent, getAgent } from '../../shared/src/agent-ops.js';
 import { sendMessage } from '../../shared/src/message-ops.js';
 import { logEvent } from '../../shared/src/event-ops.js';
+import { createAttempt } from '../../shared/src/evidence-ops.js';
 import type { Database } from '../../shared/src/types.js';
 import { tmpDbPath, cleanupDb } from '../helpers/db.js';
 
@@ -294,6 +295,39 @@ describe('tmup-cli stdout JSON contract', () => {
         error: 'COMMAND_ERROR',
         message: 'TMUP_AGENT_ID not set',
       });
+    });
+  });
+
+  describe('evidence-add', () => {
+    it('emits JSON and leaves worker evidence unreviewed', () => {
+      const taskId = createTask(db, { subject: 'Evidence JSON' });
+      createAttempt(db, 'attempt-json', { task_id: taskId, agent_id: TEST_AGENT_ID });
+
+      const result = runCli([
+        'evidence-add', '--attempt-id', 'attempt-json', '--type', 'test_result', 'checks passed',
+      ]);
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe('');
+      expect(result.json).toMatchObject({
+        ok: true,
+        attempt_id: 'attempt-json',
+        type: 'test_result',
+        reviewer_disposition: null,
+      });
+    });
+
+    it('rejects evidence for an attempt owned by another worker', () => {
+      const taskId = createTask(db, { subject: 'Foreign evidence JSON' });
+      createAttempt(db, 'attempt-foreign', { task_id: taskId, agent_id: 'another-agent' });
+
+      const result = runCli([
+        'evidence-add', '--attempt-id', 'attempt-foreign', '--type', 'test_result', 'not mine',
+      ]);
+
+      expect(result.status).toBe(1);
+      expect(result.json).toMatchObject({ ok: false, error: 'COMMAND_ERROR' });
+      expect(String(result.json.message)).toMatch(/not owned by agent/);
     });
   });
 

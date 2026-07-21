@@ -1,4 +1,4 @@
-import type { EventType, FailureReason, MessageType, TaskStatus, PlanStatus, ReviewDisposition, AttemptStatus, EvidenceType, ExecutionTargetType, LifecycleEventType, CollaborationPattern, CynefinDomain, SdlcLoopLevel, SdlcPhase, WorkerType } from './types.js';
+import type { EventType, FailureReason, MessageType, TaskStatus, PlanStatus, ReviewDisposition, AttemptStatus, EvidenceType, ExecutionTargetType, LifecycleEventType, CollaborationPattern, CynefinDomain, SdlcLoopLevel, SdlcPhase, WorkerType, ModelRequirement, ExecutionOutcome } from './types.js';
 /** Exponential backoff base for retry delays (seconds). Used by failTask and recoverDeadClaim. */
 export declare const BACKOFF_BASE_SECONDS = 30;
 /** Maximum depth for recursive dependency traversal to prevent DoS on deep DAGs. */
@@ -28,6 +28,8 @@ export declare const REVIEW_DISPOSITIONS: readonly ReviewDisposition[];
 /** Evidence enums (P5.3) */
 export declare const ATTEMPT_STATUSES: readonly AttemptStatus[];
 export declare const EVIDENCE_TYPES: readonly EvidenceType[];
+export declare const MODEL_REQUIREMENTS: readonly ModelRequirement[];
+export declare const EXECUTION_OUTCOMES: readonly ExecutionOutcome[];
 /** Execution target enums (P5.4) */
 export declare const EXECUTION_TARGET_TYPES: readonly ExecutionTargetType[];
 export declare const CYNEFIN_DOMAINS: readonly CynefinDomain[];

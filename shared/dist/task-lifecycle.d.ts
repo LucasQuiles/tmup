@@ -1,4 +1,4 @@
-import type { Database, TaskRow, FailureReason } from './types.js';
+import type { Database, TaskRow, TaskAttemptRow, FailureReason } from './types.js';
 /**
  * Claims the next eligible pending task for an agent, optionally filtered by role.
  *
@@ -16,6 +16,7 @@ export declare function claimSpecificTask(db: Database, taskId: string, agentId:
 export interface CompleteResult {
     unblocked: string[];
 }
+export declare function validateCompletionReceipt(task: TaskRow, attempt: TaskAttemptRow | undefined, acceptedEvidence: boolean, suppliedArtifactNames: Set<string>, declaredArtifactNames: Set<string>): void;
 /**
  * Completes a claimed task, publishes its produced artifacts, and unblocks satisfied dependents.
  *

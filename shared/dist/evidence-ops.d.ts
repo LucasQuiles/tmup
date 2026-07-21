@@ -37,6 +37,11 @@ export declare function reviewEvidence(db: Database, evidenceId: string, disposi
  */
 export declare function getAttemptEvidence(db: Database, attemptId: string): EvidencePacketRow[];
 /**
+ * Return whether an attempt has at least one evidence packet and every packet is approved.
+ * The attempt may still be running; completion promotes it only after this precondition passes.
+ */
+export declare function hasAcceptedAttemptEvidence(db: Database, attemptId: string): boolean;
+/**
  * Check if a task has accepted evidence (at least one attempt with succeeded status
  * and all evidence packets approved).
  */

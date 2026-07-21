@@ -1,6 +1,6 @@
 ---
 name: tmup-reference
-description: Complete reference for all 20 MCP tools and 10 CLI commands
+description: Complete reference for all 23 MCP tools and 11 CLI commands
 ---
 
 # tmup Reference
@@ -67,7 +67,9 @@ Initializes or reattaches DB and session registry for a project directory. Does 
 
 ### tmup_task_create
 ```json
-{"subject": "Define schema", "role?": "implementer", "priority?": 80,
+{"subject": "Define schema", "role?": "implementer", "role_required?": true,
+ "evidence_required?": true, "model_requirement?": "none|observed|cross_model",
+ "reference_model?": "model-a", "priority?": 80,
  "deps?": ["001"], "requires?": ["config"], "produces?": ["schema"]}
 → {"ok": true, "task_id": "003"}
 ```
@@ -100,7 +102,7 @@ Valid transitions: needs_review→pending, pending→cancelled, blocked→pendin
 
 ### tmup_fail
 ```json
-{"task_id": "003", "reason": "crash|timeout|logic_error|artifact_missing|dependency_invalid",
+{"task_id": "003", "reason": "crash|timeout|logic_error|artifact_missing|dependency_invalid|launch_failed",
  "message": "OOM at 4GB"}
 → {"ok": true, "retrying": true, "retry_after": "2026-03-12T10:05:00Z"}
 ```
@@ -126,16 +128,38 @@ Stores a database coordination record. Safe workers do not poll the database, so
 ```
 
 ### tmup_dispatch
-Registers the agent and claims the task on the supervisor side, then launches a safe interactive Codex session in a pane. The session persists until the Codex process exits. Follow-up communication goes through `tmup_reprompt`, and lifecycle updates remain supervisor-owned after harvesting output.
+Atomically registers the agent, claims the task, and creates a running attempt receipt before launching a safe interactive Codex session. The shell must return exactly one selector/requested-model/observed-model/fallback metadata set. Missing, duplicate, or mismatched metadata makes the attempt `inconclusive` and retains ownership for manual reconciliation. Confirmed non-delivery makes it `unavailable` and applies launch retry policy. The session persists until the Codex process exits. Follow-up communication goes through `tmup_reprompt`, and lifecycle updates remain supervisor-owned after harvesting output.
 ```json
 {"task_id": "003", "role": "implementer",
  "pane_index?": 2, "working_dir?": "/path", "resume_session_id?": "codex-session-abc"}
 → {"ok": true, "agent_id": "uuid", "pane_index": 2, "launched": true,
    "session_mode": "interactive", "follow_up_via": "tmup_reprompt",
-   "launch_output": "Dispatched implementer to pane 2 (agent uuid)"}
+   "launch_output": "Dispatched implementer to pane 2 (agent uuid)",
+   "receipt": {"attempt_id": "uuid", "task_id": "003", "agent_id": "uuid",
+     "role": "implementer", "selector": "tmup-policy", "requested_model": "auto",
+     "observed_model": "unknown", "fallback_used": null, "terminal_status": "running"}}
 ```
 
 With `resume_session_id`, resumes the existing Codex session via `codex resume <ID>` internally while reapplying the configured TMUP_CODEX_* runtime contract (model, approval, sandbox, reasoning effort, subagent caps). **Do not run bare `codex resume` — it bypasses the runtime contract.**
+
+### tmup_attempt_attest
+Records the model observed from the live runtime and the source of that observation. A fallback requires both its model and reason.
+```json
+{"attempt_id": "uuid", "observed_model": "model-b",
+ "observation_source": "runtime-session-banner", "fallback_used": false}
+→ {"ok": true, "receipt": {"attempt_id": "uuid", "observed_model": "model-b",
+   "fallback_used": false, "terminal_status": "running"}}
+```
+
+### tmup_evidence_add / tmup_evidence_review
+Evidence is unaccepted until the lead explicitly reviews it. Completion of an evidence-required task needs at least one packet and every packet on the active attempt approved.
+```json
+{"attempt_id": "uuid", "type": "test_result", "payload": "42 checks passed", "hash?": "sha256:..."}
+→ {"ok": true, "evidence": {"id": "uuid", "reviewer_disposition": null}}
+
+{"evidence_id": "uuid", "disposition": "approved|challenged|rejected"}
+→ {"ok": true, "evidence": {"id": "uuid", "reviewer_disposition": "approved"}}
+```
 
 ### tmup_harvest
 ```json
@@ -193,6 +217,9 @@ Controller/trusted env vars: `TMUP_AGENT_ID`, `TMUP_DB`, `TMUP_PANE_INDEX`, `TMU
 | `heartbeat` | `tmup-cli heartbeat [--codex-session-id ID]` |
 | `status` | `tmup-cli status` |
 | `events` | `tmup-cli events [--limit 10] [--type session_init]` |
+| `evidence-add` | `tmup-cli evidence-add --attempt-id ID --type test_result "payload" [--hash HASH]` |
 | `arc-health` | `tmup-cli arc-health [--plugin-root DIR]` |
+
+`evidence-add` is restricted to the attempt's owning worker and always creates unreviewed evidence. Evidence review is lead-only and is not a CLI command.
 
 Exit codes: 0=tool result, 1=CLI error, 2=system error.

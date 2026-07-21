@@ -2,7 +2,8 @@ import { logEvent } from './event-ops.js';
 import { findUnblockedDependents, getTransitiveDependents } from './dep-resolver.js';
 import { publishArtifact, computeChecksum, validateArtifactPath } from './artifact-ops.js';
 import { BACKOFF_BASE_SECONDS } from './constants.js';
-const RETRIABLE_REASONS = ['crash', 'timeout'];
+import { hasAcceptedAttemptEvidence } from './evidence-ops.js';
+const RETRIABLE_REASONS = ['crash', 'timeout', 'launch_failed'];
 /**
  * Claims the next eligible pending task for an agent, optionally filtered by role.
  *
@@ -75,6 +76,69 @@ export function claimSpecificTask(db, taskId, agentId, role) {
     });
     return claim.immediate();
 }
+function hasAttestedValue(value) {
+    return value !== null && value.trim() !== '' && value !== 'unknown';
+}
+export function validateCompletionReceipt(task, attempt, acceptedEvidence, suppliedArtifactNames, declaredArtifactNames) {
+    const attemptRequired = task.role_required === 1
+        || task.evidence_required === 1
+        || task.model_requirement !== 'none';
+    if (attemptRequired && !attempt) {
+        throw new Error(`Task ${task.id} requires a dispatch attempt`);
+    }
+    if (attempt) {
+        if (attempt.agent_id !== task.owner) {
+            throw new Error(`Attempt ${attempt.id} does not belong to the current task owner`);
+        }
+        if (attempt.status !== 'running' || attempt.execution_outcome !== null) {
+            throw new Error(`Attempt ${attempt.id} is not running`);
+        }
+    }
+    if (task.role_required === 1) {
+        if (!task.role || !attempt || attempt.role !== task.role) {
+            throw new Error(`Dispatch receipt does not match required role '${task.role ?? 'unknown'}'`);
+        }
+        if (!hasAttestedValue(attempt.selector) || !hasAttestedValue(attempt.requested_model)) {
+            throw new Error(`Task ${task.id} requires complete dispatch receipt metadata`);
+        }
+        if (attempt.fallback_used === 1
+            && (!hasAttestedValue(attempt.fallback_model) || !attempt.fallback_reason?.trim())) {
+            throw new Error(`Attempt ${attempt.id} has incomplete fallback provenance`);
+        }
+        if (attempt.fallback_used !== 1
+            && (attempt.fallback_model !== null || attempt.fallback_reason !== null)) {
+            throw new Error(`Attempt ${attempt.id} has inconsistent fallback provenance`);
+        }
+    }
+    if (task.model_requirement === 'observed') {
+        if (!attempt || !hasAttestedValue(attempt.observed_model)) {
+            throw new Error(`Task ${task.id} requires an observed model`);
+        }
+    }
+    if (task.model_requirement === 'cross_model') {
+        if (!attempt || !hasAttestedValue(attempt.observed_model)) {
+            throw new Error(`Task ${task.id} requires an observed model for cross-model work`);
+        }
+        if (!task.reference_model) {
+            throw new Error(`Task ${task.id} requires reference_model for cross-model work`);
+        }
+        if (attempt.observed_model === task.reference_model) {
+            throw new Error(`Observed model must differ from reference_model for task ${task.id}`);
+        }
+    }
+    if (task.evidence_required === 1 && !acceptedEvidence) {
+        throw new Error(`Task ${task.id} requires accepted evidence on its current attempt`);
+    }
+    for (const supplied of suppliedArtifactNames) {
+        if (!declaredArtifactNames.has(supplied)) {
+            throw new Error(`Artifact '${supplied}' not registered as a 'produces' artifact for task ${task.id}`);
+        }
+    }
+    const missingArtifacts = [...declaredArtifactNames].filter((name) => !suppliedArtifactNames.has(name));
+    if (missingArtifacts.length > 0) {
+        throw new Error(`Task ${task.id} requires every declared produced artifact; missing: ${missingArtifacts.join(', ')}`);
+    }
+}
 /**
  * Completes a claimed task, publishes its produced artifacts, and unblocks satisfied dependents.
  *
@@ -113,9 +177,23 @@ export function completeTask(db, taskId, resultSummary, artifacts, projectDir, a
         if (actorId !== 'lead' && task.owner !== actorId) {
             throw new Error(`Task ${taskId} cannot be completed by '${actorId}': not the owning agent`);
         }
+        const attempt = db.prepare(`
+      SELECT * FROM task_attempts
+      WHERE task_id = ?
+      ORDER BY started_at DESC, rowid DESC
+      LIMIT 1
+    `).get(taskId);
+        const acceptedEvidence = attempt ? hasAcceptedAttemptEvidence(db, attempt.id) : false;
+        const declaredArtifacts = db.prepare(`
+      SELECT a.name
+      FROM artifacts a
+      JOIN task_artifacts ta ON ta.artifact_id = a.id
+      WHERE ta.task_id = ? AND ta.direction = 'produces'
+    `).all(taskId);
+        const suppliedArtifactNames = new Set(checksums.map((artifact) => artifact.name));
+        const declaredArtifactNames = new Set(declaredArtifacts.map((artifact) => artifact.name));
+        validateCompletionReceipt(task, attempt, acceptedEvidence, suppliedArtifactNames, declaredArtifactNames);
         const now = new Date().toISOString();
-        // Clear owner on completion — completed tasks have no live owner
-        db.prepare("UPDATE tasks SET status = 'completed', completed_at = ?, result_summary = ?, owner = NULL WHERE id = ?").run(now, resultSummary, taskId);
         // Register artifacts with checksums
         for (const art of checksums) {
             const artifact = db.prepare('SELECT a.id FROM artifacts a JOIN task_artifacts ta ON a.id = ta.artifact_id WHERE a.name = ? AND ta.task_id = ? AND ta.direction = ?').get(art.name, taskId, 'produces');
@@ -124,6 +202,23 @@ export function completeTask(db, taskId, resultSummary, artifacts, projectDir, a
             }
             publishArtifact(db, artifact.id, art.path, art.checksum);
         }
+        if (attempt) {
+            const attemptResult = db.prepare(`
+        UPDATE task_attempts
+        SET status = 'succeeded', ended_at = ?, result_summary = ?, execution_outcome = NULL
+        WHERE id = ? AND status = 'running' AND execution_outcome IS NULL
+      `).run(now, resultSummary, attempt.id);
+            if (attemptResult.changes !== 1) {
+                throw new Error(`Attempt ${attempt.id} changed during completion`);
+            }
+        }
+        // Clear owner on completion — completed tasks have no live owner
+        db.prepare(`
+      UPDATE tasks
+      SET status = 'completed', completed_at = ?, result_summary = ?, owner = NULL,
+          execution_outcome = NULL
+      WHERE id = ?
+    `).run(now, resultSummary, taskId);
         // Cascade: find and unblock dependents
         const unblocked = findUnblockedDependents(db, taskId);
         logEvent(db, actorId, 'task_completed', {
@@ -155,6 +250,19 @@ export function failTask(db, taskId, reason, message, actorId) {
         // Enforce actor ownership: only the owning agent (or lead) can fail
         if (actorId !== 'lead' && task.owner !== actorId) {
             throw new Error(`Task ${taskId} cannot be failed by '${actorId}': not the owning agent`);
+        }
+        const activeAttempt = db.prepare(`
+      SELECT id FROM task_attempts
+      WHERE task_id = ? AND agent_id = ? AND status = 'running' AND execution_outcome IS NULL
+      ORDER BY started_at DESC, rowid DESC
+      LIMIT 1
+    `).get(taskId, task.owner);
+        if (activeAttempt) {
+            db.prepare(`
+        UPDATE task_attempts
+        SET status = 'failed', ended_at = ?, failure_reason = ?, result_summary = ?
+        WHERE id = ? AND status = 'running' AND execution_outcome IS NULL
+      `).run(new Date().toISOString(), reason, message, activeAttempt.id);
         }
         const isRetriable = RETRIABLE_REASONS.includes(reason);
         const hasRetries = task.retry_count < task.max_retries;

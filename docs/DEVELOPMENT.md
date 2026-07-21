@@ -47,7 +47,7 @@ Coverage includes:
 - Dead claim recovery (stale heartbeats, task reassignment)
 - Concurrent SQLite access patterns
 - MCP tool handler integration (including dispatch shell boundary)
-- CLI command handling (all 10 commands, error paths, JSON output)
+- CLI command handling (all 11 commands, error paths, JSON output)
 - Shell script boundary conditions (config loading, session resolution)
 - Schema parity between SQL and TypeScript (compile-time safety net)
 - Fuzz edge cases (empty strings, null values, Unicode, injection attempts)

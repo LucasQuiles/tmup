@@ -3,9 +3,15 @@
  */
 export function createAttempt(db, attemptId, input) {
     db.prepare(`
-    INSERT INTO task_attempts (id, task_id, agent_id, execution_target_id, model_family, status)
-    VALUES (?, ?, ?, ?, ?, 'running')
-  `).run(attemptId, input.task_id, input.agent_id ?? null, input.execution_target_id ?? null, input.model_family ?? null);
+    INSERT INTO task_attempts (
+      id, task_id, agent_id, execution_target_id, model_family, status,
+      role, selector, requested_model, observed_model,
+      fallback_used, fallback_model, fallback_reason
+    )
+    VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?)
+  `).run(attemptId, input.task_id, input.agent_id ?? null, input.execution_target_id ?? null, input.model_family ?? null, input.role ?? null, input.selector ?? null, input.requested_model ?? 'unknown', input.observed_model ?? 'unknown', input.fallback_used === undefined || input.fallback_used === null
+        ? null
+        : input.fallback_used ? 1 : 0, input.fallback_model ?? null, input.fallback_reason ?? null);
     return db.prepare('SELECT * FROM task_attempts WHERE id = ?').get(attemptId);
 }
 /**
@@ -60,6 +66,20 @@ export function reviewEvidence(db, evidenceId, disposition) {
  */
 export function getAttemptEvidence(db, attemptId) {
     return db.prepare('SELECT * FROM evidence_packets WHERE attempt_id = ? ORDER BY created_at ASC').all(attemptId);
+}
+/**
+ * Return whether an attempt has at least one evidence packet and every packet is approved.
+ * The attempt may still be running; completion promotes it only after this precondition passes.
+ */
+export function hasAcceptedAttemptEvidence(db, attemptId) {
+    const row = db.prepare(`
+    SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN reviewer_disposition = 'approved' THEN 0 ELSE 1 END) AS unaccepted
+    FROM evidence_packets
+    WHERE attempt_id = ?
+  `).get(attemptId);
+    return row.total > 0 && row.unaccepted === 0;
 }
 /**
  * Check if a task has accepted evidence (at least one attempt with succeeded status

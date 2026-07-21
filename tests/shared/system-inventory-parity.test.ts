@@ -106,7 +106,7 @@ describe('system-inventory-parity', () => {
       const readme = readRepoFile('README.md');
       const reference = readRepoFile('skills/tmup/REFERENCE.md');
 
-      expect(toolNames.length).toBe(20);
+      expect(toolNames.length).toBe(23);
       expect(inventoryDoc).toContain(`${toolNames.length} MCP tools`);
       expect(apiDoc).toContain(`## MCP tools (${toolNames.length})`);
       expect(readme).toContain(`All ${toolNames.length} MCP tools`);

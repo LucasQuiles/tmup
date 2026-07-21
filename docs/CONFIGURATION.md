@@ -50,6 +50,8 @@ Direct dispatch resolves `CODEX_BIN` in this order: explicitly supplied valid ab
 
 The MCP path dispatches only safe Codex lanes. It rejects `claude_code` before agent registration or task claim and strips ambient shell-inheritance, experimental-tier, trust, and shared-state override variables. The safe initial prompt does not advertise `tmup-cli`; the lead owns claim, checkpoint, message, complete, fail, and harvest transitions through supervisor-side APIs, while the protected launcher owns background heartbeat.
 
+Each MCP dispatch atomically stores an attempt receipt before launch: required role, selector, requested model, observed model (initially `unknown`), fallback provenance, attempt ID, and status. The launch script emits one matching metadata set. Missing, duplicate, or mismatched metadata is inconclusive and retains ownership; confirmed non-delivery is unavailable and follows retry policy. Use `tmup_attempt_attest` only with a model observation from the live runtime. Task completion enforces `role_required`, `model_requirement`, `evidence_required`, and declared artifact policy rather than inferring success from the worker role or subprocess exit.
+
 Safe panes use `workspace-write`, `sandbox_workspace_write.network_access=false`, `exclude_slash_tmp=true`, and `exclude_tmpdir_env_var=true`. Direct shell network access is disabled, while mediated Codex web search can remain enabled. The only extra `--add-dir` is an exact mode-0700 task temp beneath protected controller state, outside the working and tmup session roots. `TMPDIR`, `TMP`, and `TEMP` point to that child; the Codex parent retains its ambient temp.
 
 Beyond Codex's core inherited command environment, tmup explicitly sets only `TMUP_AGENT_ID`, `TMUP_PANE_INDEX`, `TMUP_WORKING_DIR`, optional `TMUP_TASK_ID`, and the three temp values. It does not set `TMUP_DB` or `TMUP_SESSION_DIR`. Persistent policy accepts only `shell_env_inherit: "core"` or `"none"`; a one-command `TMUP_CODEX_SHELL_INHERIT_OVERRIDE` is a direct-script option and is stripped by MCP. Shell-snapshot interaction remains runtime-dependent, so command-environment filtering is not a claim of session-wide confidentiality.
@@ -77,7 +79,7 @@ Dormant source metadata defines `tmup-tier1` as the high-reasoning leaf profile 
 ```yaml
 dag:
   default_priority: 50                # default task priority (1-100)
-  max_retries: 3                      # auto-retry on crash/timeout
+  max_retries: 3                      # auto-retry on crash/timeout/launch_failed
   retry_backoff_base_seconds: 30      # first retry after 30s, then 60s, 120s...
   stale_max_age_seconds: 300          # agent is "dead" after 5 min without heartbeat
 ```
@@ -169,7 +171,7 @@ tmup/
 |       +-- REFERENCE.md   Complete API reference
 |
 +-- tests/               # Vitest suite
-|   +-- shared/            Unit tests for all 22 shared modules
+|   +-- shared/            Unit tests for all 23 shared modules
 |   +-- mcp/               MCP tool integration tests
 |   +-- cli/               CLI command tests
 |   +-- scripts/           Shell script boundary tests

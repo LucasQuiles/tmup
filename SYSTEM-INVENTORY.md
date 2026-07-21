@@ -1,8 +1,8 @@
 # tmup System Inventory
 
 > Multi-agent coordination for Claude Code + Codex CLI via SQLite WAL-backed task DAG
-> Version: 0.1.0 | 20 MCP tools | 10 CLI commands | 22 shared modules
-> 44 test files | Verification status is established by the current quality-gate run
+> Version: 0.1.0 | 23 MCP tools | 11 CLI commands | 23 shared modules
+> 45 test files | Verification status is established by the current quality-gate run
 
 ---
 
@@ -33,7 +33,7 @@
 │                     Claude Code (Lead)                          │
 │  ┌─────────────┐   ┌────────────────┐   ┌──────────────────┐   │
 │  │ /tmup       │──▶│ MCP Server     │──▶│ SQLite WAL DB    │   │
-│  │ (command)   │   │ (20 tools)     │   │ (17 tables)      │   │
+│  │ (command)   │   │ (23 tools)     │   │ (17 tables)      │   │
 │  └─────────────┘   └────────┬───────┘   └────────▲─────────┘   │
 │                             │                     │             │
 │                    ┌────────▼────────┐            │             │
@@ -150,7 +150,7 @@ Marketplace manifest for directory-source registration. The `name` field is the 
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
-| `tasks` | Task DAG nodes | `id` (TEXT PK, zero-padded), `status`, `owner`, `priority`, `retry_count`, `failure_reason`, `retry_after` |
+| `tasks` | Task DAG nodes and completion policy | `id`, `status`, `owner`, `role_required`, `evidence_required`, `model_requirement`, `reference_model`, `execution_outcome` |
 | `task_deps` | DAG edges | `(task_id, depends_on_task_id)` composite PK, self-dep CHECK |
 | `task_artifacts` | Task-artifact join | `(task_id, artifact_id, direction)` PK, direction IN (produces, requires) |
 | `artifacts` | File tracking with checksums | `name` UNIQUE, `path`, `status`, `checksum` (SHA-256) |
@@ -172,7 +172,7 @@ Marketplace manifest for directory-source registration. The `name` field is the 
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
-| `task_attempts` | Execution attempts per task | `id`, `task_id`, `agent_id`, `execution_target_id`, `model_family`, `status` (running/succeeded/failed/abandoned), `confidence` (0.0-1.0), `failure_reason`, `result_summary` |
+| `task_attempts` | Execution attempts and dispatch receipts | `id`, `task_id`, `agent_id`, `role`, `selector`, requested/observed model, fallback provenance, `status`, `execution_outcome`, timestamps |
 | `evidence_packets` | Structured evidence per attempt | `id`, `attempt_id`, `type` (diff/test_result/build_log/screenshot/review_comment/artifact_checksum), `payload`, `hash`, `reviewer_disposition` |
 
 #### Execution Target Tables (migration v3)
@@ -192,7 +192,8 @@ Marketplace manifest for directory-source registration. The `name` field is the 
 - Plan: `proposed`, `challenged`, `operational`, `superseded`
 - Attempt: `running`, `succeeded`, `failed`, `abandoned`
 - Message types: `direct`, `broadcast`, `finding`, `blocker`, `checkpoint`, `shutdown`
-- Failure reasons: `crash`, `timeout`, `logic_error`, `artifact_missing`, `dependency_invalid`
+- Failure reasons: `crash`, `timeout`, `logic_error`, `artifact_missing`, `dependency_invalid`, `launch_failed`
+- Dispatch outcomes: `unavailable`, `skipped`, `inconclusive` (distinct from successful completion)
 - Agent status: `active`, `idle`, `shutdown`
 - Evidence types: `diff`, `test_result`, `build_log`, `screenshot`, `review_comment`, `artifact_checksum`
 - Execution target types: `tmux_pane`, `local_shell`, `codex_cloud`
@@ -217,6 +218,7 @@ Marketplace manifest for directory-source registration. The `name` field is the 
 - Migration v2: schema constraints (indexes, triggers, unique constraints with preflight checks)
 - Migration v3: planning domain, evidence records, execution targets, lifecycle bridge (P5)
 - Migration v4: SDLC-OS colony support (bead tracking, loop levels, worker types, corrections)
+- Migration v5: task completion policies plus role/model/fallback/outcome dispatch receipt columns
 
 ### Runtime Contract (`config/runtime-contract.json`)
 
@@ -260,12 +262,13 @@ Applied via **allowlist-validated pragma injection** in `db.ts`. Only the 6 know
 | `dep-resolver.ts` | `checkCycle`, `addDependency`, `hasUnmetDependencies`, `findUnblockedDependents` | 75 | Called within transactions |
 | `artifact-ops.ts` | `createArtifact`, `publishArtifact`, `verifyArtifact`, `linkTaskArtifact`, `computeChecksum`, `findArtifactByName`, `validateArtifactPath` | 101 | TOCTOU-safe (try-catch ENOENT) |
 | `task-ops.ts` | `createTask`, `createTaskBatch`, `updateTask` | 183 | All IMMEDIATE |
-| `task-lifecycle.ts` | `claimTask`, `completeTask`, `failTask`, `cancelTask` | 229 | All IMMEDIATE |
+| `task-lifecycle.ts` | `claimTask`, `completeTask`, `failTask`, `cancelTask` | ~430 | All IMMEDIATE; completion checks current receipt, model policy, accepted evidence, and artifacts |
 | `message-ops.ts` | `sendMessage`, `getInbox`, `getUnreadCount`, `postCheckpoint` | 109 | All IMMEDIATE |
-| `agent-ops.ts` | `registerAgent`, `updateHeartbeat`, `getStaleAgents`, `recoverDeadClaim`, `getActiveAgents`, `getAgent` | 87 | `recoverDeadClaim` IMMEDIATE |
+| `agent-ops.ts` | `registerAgent`, `updateHeartbeat`, `getStaleAgents`, `reconcileClaim`, `recoverDeadClaim`, `getActiveAgents`, `getAgent` | ~230 | Receipt-aware reconciliation is IMMEDIATE |
 | `session-ops.ts` | `initSession`, `readRegistry`, `setCurrentSession`, `getCurrentSession`, `removeFromRegistry`, `getSessionDbPath`, `getSessionDir` | 183 | PID-based file lock |
 | `plan-ops.ts` | `createPlan`, `updatePlanStatus`, `getPlan`, `listPlans`, `addPlanReview`, `addResearchPacket`, `getResearchPackets`, `linkPlanTask`, `getPlanTaskIds` | ~170 | PLAN_TRANSITIONS state machine | **Dormant:** exported, test-covered, not wired into MCP/CLI |
-| `evidence-ops.ts` | `createAttempt`, `completeAttempt`, `getTaskAttempts`, `getLatestAttempt`, `addEvidence`, `reviewEvidence`, `getAttemptEvidence`, `hasAcceptedEvidence` | ~130 | Single-statement | **Dormant:** exported, test-covered, not wired into MCP/CLI |
+| `evidence-ops.ts` | `createAttempt`, `completeAttempt`, `getTaskAttempts`, `getLatestAttempt`, `addEvidence`, `reviewEvidence`, accepted-evidence checks | ~170 | Single-statement; add/review wired to MCP and add wired to CLI |
+| `dispatch-ops.ts` | `beginDispatch`, `attestAttempt`, `finalizeAttempt`, `getDispatchReceipt` | ~190 | Atomic dispatch creation and terminal receipt transitions |
 | `execution-target-ops.ts` | `createExecutionTarget`, `getExecutionTarget`, `listExecutionTargets`, `findTargetByPaneIndex`, `getTargetCapabilities`, `targetHasCapability`, `ensureTmuxPaneTarget` | ~100 | Single-statement | **Dormant:** exported, test-covered, not wired into MCP/CLI |
 | `lifecycle-bridge.ts` | `logLifecycleEvent`, `getLifecycleEvents`, `pruneLifecycleEvents` | ~50 | Single-statement | **Dormant:** exported, test-covered, not wired into MCP/CLI |
 | `collaboration-patterns.ts` | `PATTERN_REGISTRY`, `getPattern`, `validatePatternRoles`, `patternRequiresEvidence`, `listPatterns` | ~100 | N/A (pure functions) | **Dormant:** exported, test-covered, not wired into MCP/CLI |
@@ -286,10 +289,10 @@ The redundant `AND status='pending'` ensures the UPDATE fails (changes=0) if a c
 `completeTask` → `findUnblockedDependents` uses recursive CTE to find all dependents whose dependencies are now fully completed, then transitions them `blocked → pending`.
 
 **Retry backoff:**
-`failTask` computes `retry_after = now + 30 * 2^retry_count` seconds. Retriable reasons: `crash`, `timeout`. Non-retriable: `logic_error`, `artifact_missing`, `dependency_invalid`. Non-retriable failures go directly to `needs_review` without incrementing `retry_count`.
+`failTask` computes `retry_after = now + 30 * 2^retry_count` seconds. Retriable reasons: `crash`, `timeout`, `launch_failed`. Non-retriable: `logic_error`, `artifact_missing`, `dependency_invalid`. Non-retriable failures go directly to `needs_review` without incrementing `retry_count`.
 
-**Dead-claim recovery:**
-`recoverDeadClaim(agentId)` finds all claimed tasks for a stale agent. If `retry_count < max_retries`, sets `status='pending'` and increments `retry_count`. Otherwise sets `status='needs_review'` without incrementing. Always sets `failure_reason='timeout'` and marks agent `'shutdown'`.
+**Claim reconciliation:**
+`reconcileClaim(agentId, inspection, {dryRun})` classifies stale claims using the active attempt receipt plus exact pane inspection. Live workers remain claimed; unknown inspection and missing launch receipts are retained as inconclusive for manual intervention; only a verified shell/dead pane can release or escalate work according to retry policy. `recoverDeadClaim` remains as a compatibility wrapper.
 
 **Broadcast isolation:**
 `getInbox(agent, markRead=true)` only marks `read_at` on messages where `to_agent IS NOT NULL` (direct messages). Broadcasts (`to_agent IS NULL`) are never marked read, so all agents can consume them.
@@ -305,7 +308,7 @@ The redundant `AND status='pending'` ensures the UPDATE fails (changes=0) if a c
 **Dependencies:** `@modelcontextprotocol/sdk`, `zod`, `@tmup/shared`
 **Transport:** stdio (Claude Code spawns as child process)
 
-### 20 MCP Tools
+### 23 MCP Tools
 
 | Tool | Category | Description |
 |------|----------|-------------|
@@ -315,8 +318,8 @@ The redundant `AND status='pending'` ensures the UPDATE fails (changes=0) if a c
 | `tmup_pause` | Session | Store pause event/shutdown records; safe-pane delivery is separate |
 | `tmup_resume` | Session | Re-attach session, run dead-claim recovery |
 | `tmup_teardown` | Session | Store teardown event/optional shutdown records; does not stop panes |
-| `tmup_task_create` | DAG | Create single task with deps/artifacts |
-| `tmup_task_batch` | DAG | Atomic multi-task creation (IMMEDIATE transaction) |
+| `tmup_task_create` | DAG | Create task with deps/artifacts and optional role/evidence/model gates |
+| `tmup_task_batch` | DAG | Atomic multi-task creation with the same gates |
 | `tmup_task_update` | DAG | Lead status transitions (needs_review→pending, etc.) |
 | `tmup_claim` | Lifecycle | Claim highest-priority pending task for agent |
 | `tmup_complete` | Lifecycle | Mark done, cascade unblock dependents |
@@ -325,7 +328,10 @@ The redundant `AND status='pending'` ensures the UPDATE fails (changes=0) if a c
 | `tmup_checkpoint` | Communication | Post progress update, update result_summary |
 | `tmup_send_message` | Communication | Store direct/broadcast/finding/blocker records; safe delivery uses reprompt |
 | `tmup_inbox` | Communication | Check unread count or read messages with framing |
-| `tmup_dispatch` | Execution | Atomic claim+register, launch Codex in pane |
+| `tmup_dispatch` | Execution | Atomic register+claim+attempt receipt, then launch Codex in pane |
+| `tmup_attempt_attest` | Evidence | Record observed model and fallback provenance for a running attempt |
+| `tmup_evidence_add` | Evidence | Add an unreviewed evidence packet to an attempt |
+| `tmup_evidence_review` | Evidence | Lead disposition of an evidence packet |
 | `tmup_harvest` | Monitoring | Capture ANSI-stripped pane scrollback framed/labeled as untrusted |
 | `tmup_reprompt` | Monitoring | Send follow-up text into a live Codex pane |
 | `tmup_heartbeat` | Monitoring | Register agent liveness and optional Codex session ID |
@@ -354,7 +360,7 @@ The redundant `AND status='pending'` ensures the UPDATE fails (changes=0) if a c
 **Package:** `@tmup/cli` | **Binary:** `dist/tmup-cli.js` (esbuild bundle)
 **Environment variables:** `TMUP_AGENT_ID`, `TMUP_DB`, `TMUP_PANE_INDEX`, `TMUP_SESSION_NAME`, `TMUP_SESSION_DIR`, `TMUP_WORKING_DIR`, `TMUP_TASK_ID`
 
-### 10 Commands
+### 11 Commands
 
 | Command | Usage | Notes |
 |---------|-------|-------|
@@ -367,6 +373,7 @@ The redundant `AND status='pending'` ensures the UPDATE fails (changes=0) if a c
 | `heartbeat` | `heartbeat [--codex-session-id ID]` | Auto-registers agent if not exists |
 | `status` | `status` | Current task + unread count |
 | `events` | `events [--limit N] [--type TYPE]` | Query audit event log. Default limit 50. |
+| `evidence-add` | `evidence-add --attempt-id ID --type TYPE "payload" [--hash HASH]` | Owning worker adds unreviewed evidence; approval is not exposed |
 | `arc-health` | `arc-health [--plugin-root DIR]` | ARC runtime-health readback over installed binding and tmup DB context |
 
 ### Exit Codes
@@ -448,7 +455,7 @@ Agent definitions are injected into the Codex worker prompt by `dispatch-agent.s
 
 ### Slash Command (`commands/tmup.md`)
 
-Registered as `/tmup` in Claude Code. Frontmatter declares all 20 MCP tools in `allowed-tools`. Body documents:
+Registered as `/tmup` in Claude Code. Frontmatter declares all 23 MCP tools in `allowed-tools`. Body documents:
 - Usage patterns (`/tmup`, `/tmup init`, `/tmup status`, `/tmup next`, `/tmup teardown`)
 - 6-step workflow (initialize → create grid → plan → supervise → reconcile → explicit teardown)
 - Task DAG semantics
@@ -458,14 +465,14 @@ Registered as `/tmup` in Claude Code. Frontmatter declares all 20 MCP tools in `
 
 Loaded when tmup-related work is detected. Contains:
 - Quick start guide
-- Full 20-tool reference table
+- Full 23-tool reference table
 - Task lifecycle state machine
 - Workflow example with real tool calls
 - Key design decisions
 
 ### Reference (`skills/tmup/REFERENCE.md`)
 
-Complete API reference for all 20 MCP tools and 10 CLI commands with:
+Complete API reference for all 23 MCP tools and 11 CLI commands with:
 - Input/output JSON examples for every tool
 - Valid transition documentation
 - CLI env var requirements
@@ -545,7 +552,7 @@ tmup/
 
 ## 12. Test Suite
 
-**Runner:** Vitest | **Config:** `vitest.config.ts` | **44 test files**
+**Runner:** Vitest | **Config:** `vitest.config.ts` | **45 test files**
 
 | Test File | Tests | Coverage Focus |
 |-----------|-------|---------------|
@@ -553,7 +560,7 @@ tmup/
 | `tests/shared/id.test.ts` | 12 | nextTaskId (empty/increment/gaps/padding/overflow), UUID format + uniqueness |
 | `tests/shared/event-ops.test.ts` | 15 | logEvent fields/null actor/no payload, filter/limit/ordering, pruneEvents boundary, bounded batch pruning |
 | `tests/shared/dep-resolver.test.ts` | 32 | checkCycle (direct/transitive/diamond/self), addDependency (valid/cycle/not-found/idempotent/self/re-block), hasUnmetDependencies, findUnblockedDependents, traversal depth limit, transitive dependents, stress (50-node dense graph) |
-| `tests/shared/task-lifecycle.test.ts` | 81 | createTask (IDs/blocked/pending/limit/defaults), batch (atomic/intra-deps/rollback), claim (priority/FIFO/null/role/retry_after/blocked/concurrent/one-task-per-agent), complete (cascade/wrong-status/blocked/actor-ownership/stale-field-clear), fail (all 5 reasons/backoff/exhausted/actor-enforcement), cancel (cascade/no-cascade/skip-completed/transitive-needs-review), updateTask (all transitions/field updates/max-retries-floor), dispatch-claim integration |
+| `tests/shared/task-lifecycle.test.ts` | 96 | Task creation/claiming plus receipt, role, model, evidence, and artifact completion gates; retry/cancel/update behavior |
 | `tests/shared/message-ops.test.ts` | 33 | sendMessage (direct/broadcast/forced-null/payload-limit/task_id/sender-validation/recipient-validation), getInbox (chrono/mark-read/agent-isolation), postCheckpoint (fields/non-owner/lead-override/active-state-only/overwrite), broadcast isolation, message pruning (batch-limited), global message limits |
 | `tests/shared/agent-ops.test.ts` | 19 | register (fields/no-role/re-register), heartbeat (timestamp/codex-session), stale (selective/shutdown-excluded/two-phase-idle), recoverDeadClaim (retry/needs_review/empty/multi-task), getActiveAgents, getAgent |
 | `tests/shared/artifact-ops.test.ts` | 22 | create/publish/verify (pending/available/missing/stale/ENOENT), link (idempotent), checksum (SHA-256/size-cap), findByName, validateArtifactPath (containment/symlink-escape/device-file/canonical-path) |
@@ -563,14 +570,15 @@ tmup/
 | `tests/shared/fuzz-edges.test.ts` | 15 | Overlong strings, boundary integers, special characters, rapid-fire claim/fail, malformed artifact paths, concurrent message send |
 | `tests/shared/plan-ops.test.ts` | 39 | Plan creation, state transitions (PLAN_TRANSITIONS), reviews with auto-transition, research packets, plan-task linkage |
 | `tests/shared/evidence-ops.test.ts` | 30 | Attempt lifecycle (running→succeeded/failed/abandoned), evidence packets, reviewer disposition, hasAcceptedEvidence |
+| `tests/shared/dispatch-ops.test.ts` | 8 | Atomic dispatch creation, requested/observed model separation, fallback validation, and unavailable/skipped/inconclusive outcomes |
 | `tests/shared/execution-target-ops.test.ts` | 23 | Target CRUD, capability parsing, pane-index lookup, ensureTmuxPaneTarget migration helper |
 | `tests/shared/collaboration-patterns.test.ts` | 57 | Pattern registry (7 patterns), role validation, evidence requirements, pattern properties |
 | `tests/shared/lifecycle-bridge.test.ts` | 13 | Lifecycle event logging/filtering/pruning, session_id association |
 | `tests/integration/full-lifecycle.test.ts` | 15 | Full workflow create→claim→checkpoint→complete→cascade, concurrent claim, message flow, dead-claim recovery, fail+retry, cascade cancel, broadcast isolation, mixed fail reasons, actor ownership enforcement |
 | `tests/shared/grid-state.test.ts` | 15 | Grid state reading, pane count resolution |
 | `tests/shared/system-inventory-parity.test.ts` | 29 | SYSTEM-INVENTORY.md parity with source (module counts, export lists, table counts) |
-| `tests/mcp/handle-tool-call.test.ts` | 28 | Dispatch contract, resume, actor enforcement, input validation, pause/harvest, tmup_init/status |
-| `tests/cli/handle-command.test.ts` | 31 | Actor identity, fail validation, exit codes, checkpoint contract, message routing, heartbeat validation |
+| `tests/mcp/handle-tool-call.test.ts` | 65 | Dispatch receipt enforcement, model attestation, evidence review, resume, actor enforcement, pause/harvest, init/status |
+| `tests/cli/handle-command.test.ts` | 37 | Actor identity, evidence-add ownership, fail validation, exit codes, checkpoints, messaging, heartbeat |
 | `tests/scripts/grid-registry.test.ts` | 8 | Shell registry CRUD, canonical path matching, lock semantics |
 | `tests/scripts/config-shell-boundary.test.ts` | 15 | Session name resolution from current-session pointer, TMUP_SESSION_NAME precedence, validation, state directory derivation |
 | `tests/scripts/control-boundary.test.ts` | 8 | Controller/session/plugin path containment, symlink rejection, and isolated-worktree allowance |
@@ -649,7 +657,7 @@ ${TMUP_STATE_ROOT:-~/.local/state/tmup}/
 
 ## 14. Security Hardening
 
-### Applied Fixes (51 total across 7 rounds)
+### Applied Fixes (60 total across 8 rounds)
 
 **Round 1 (Plan fixes):**
 1. Pragma allowlist validation in `db.ts`
@@ -670,7 +678,7 @@ ${TMUP_STATE_ROOT:-~/.local/state/tmup}/
 14. `sendMessage` wrapped in IMMEDIATE
 15. `postCheckpoint` wrapped in IMMEDIATE (inlined message insert)
 16. `tmup_harvest` pane_index/lines validation (shell injection defense)
-17. `tmup_dispatch` atomic claim+register transaction
+17. `tmup_dispatch` atomic dispatch transaction (extended in Round 8 with attempt receipt creation)
 18. `switchSession` try/catch with state cleanup
 
 **Round 3 (Shell + script hardening):**
@@ -716,6 +724,17 @@ ${TMUP_STATE_ROOT:-~/.local/state/tmup}/
 50. `grid-identity.sh` fails closed on corrupted identity file instead of granting ownership
 51. `completeTask` throws on unregistered artifact instead of silently skipping publication
 
+**Round 8 (Dispatch receipt enforcement):**
+52. Migration v5 adds task role/evidence/model policy and attempt selector/model/fallback/outcome fields
+53. `beginDispatch` atomically registers agent, claims task, and creates the running attempt receipt
+54. Dispatch shell emits exactly one selector/requested/observed/fallback metadata set before launch
+55. Missing, duplicate, mismatched, ambiguous, unavailable, skipped, and inconclusive results cannot masquerade as completion
+56. `completeTask` requires the current successful attempt plus applicable role, model, evidence, and artifact gates
+57. Cross-model policy rejects an observed model equal to the reference model
+58. Stale-claim reconciliation retains live or unproven work and reports receipt-aware decisions
+59. MCP exposes lead attestation/evidence review while worker CLI exposes only owned-attempt evidence addition
+60. Confirmed launch failures terminalize the attempt as unavailable and use bounded retry policy
+
 ### Defense Layers
 
 | Vector | Defense |
@@ -755,7 +774,7 @@ cli/
   src/
     index.ts                     # CLI entry point (CliError, exit codes)
     commands/
-      index.ts                   # 10 CLI command handlers
+      index.ts                   # 11 CLI command handlers
 
 commands/
   tmup.md                        # /tmup slash command definition
@@ -771,7 +790,7 @@ mcp-server/
   src/
     index.ts                     # MCP server lifecycle (lazy DB, WAL timer, crash guard)
     tools/
-      index.ts                   # 20 MCP tool definitions and handlers
+      index.ts                   # 23 MCP tool definitions and handlers
 
 scripts/
   check-shell-syntax.sh          # Parse every repository shell source
@@ -819,10 +838,11 @@ shared/
     constants.ts                 # Runtime constants (enums, defaults, EVENT_TYPES)
     plan-ops.ts                  # Plan CRUD, state machine, reviews, research packets
     evidence-ops.ts              # Task attempts, evidence packets, accepted-evidence checks
+    dispatch-ops.ts              # Atomic dispatch receipts, attestation, terminal outcomes
     execution-target-ops.ts      # Execution target abstraction (tmux_pane, local_shell, codex_cloud)
     lifecycle-bridge.ts          # Claude-native lifecycle event ingress to tmup
     collaboration-patterns.ts    # Reusable workflow pattern registry (7 patterns)
-    migrations.ts                # Schema versioning and migration runner (v1-v3)
+    migrations.ts                # Schema versioning and migration runner (v1-v5)
 
 skills/tmup/
   SKILL.md                       # Skill definition (quick start, tool table)
@@ -841,6 +861,7 @@ tests/
     session-ops.test.ts          # 8 tests — session registry
     plan-ops.test.ts             # Plan ops integration tests
     evidence-ops.test.ts         # Evidence ops integration tests
+    dispatch-ops.test.ts         # Dispatch receipt enforcement tests
     execution-target-ops.test.ts # Execution target integration tests
     collaboration-patterns.test.ts # Pattern registry unit tests
     lifecycle-bridge.test.ts     # Lifecycle bridge integration tests

@@ -45,7 +45,7 @@ Before dispatch, a pane is just a shell. After dispatch, the pane hosts a live C
 - `tmup_reprompt` to continue, redirect, or nudge an existing verified-idle session
 - `tmup_harvest` to inspect pane state or recover a session ID
 - `tmup_dispatch` with `resume_session_id` to relaunch a crashed worker into a resumed Codex session
-- After harvest, use lead-side `tmup_checkpoint`, `tmup_send_message`, `tmup_complete`, or `tmup_fail` as appropriate. Safe worker prompts do not advertise `tmup-cli`.
+- After harvest, attest the observed model, add/review required evidence, then use lead-side `tmup_checkpoint`, `tmup_send_message`, `tmup_complete`, or `tmup_fail` as appropriate. Safe worker prompts do not advertise `tmup-cli`.
 
 ## Grid Supervisor Discipline
 
@@ -134,8 +134,8 @@ The planning-first behavior is carried by the initial prompt. tmup does not depe
 | `tmup_init` | Initialize/reattach session |
 | `tmup_status` | Session overview + dead-claim recovery |
 | `tmup_next_action` | Synthesized next step recommendation |
-| `tmup_task_create` | Add single task to DAG |
-| `tmup_task_batch` | Create multiple tasks atomically |
+| `tmup_task_create` | Add a task with optional role/evidence/model gates |
+| `tmup_task_batch` | Create multiple gated tasks atomically |
 | `tmup_task_update` | Modify task (needs_review->pending, etc.) |
 | `tmup_claim` | Claim task on behalf of agent |
 | `tmup_complete` | Mark task done, cascade unblock |
@@ -144,7 +144,10 @@ The planning-first behavior is carried by the initial prompt. tmup does not depe
 | `tmup_checkpoint` | Post progress update |
 | `tmup_send_message` | Store a coordination/audit message; safe-pane delivery still uses reprompt |
 | `tmup_inbox` | Check unread messages |
-| `tmup_dispatch` | Launch Codex worker in pane |
+| `tmup_dispatch` | Create an attempt receipt and launch a Codex worker in a pane |
+| `tmup_attempt_attest` | Record observed runtime model and fallback provenance |
+| `tmup_evidence_add` | Attach unreviewed evidence to an attempt |
+| `tmup_evidence_review` | Lead approval/challenge/rejection of evidence |
 | `tmup_harvest` | Capture pane scrollback |
 | `tmup_pause` | Record pause intent; explicitly reprompt/harvest safe panes |
 | `tmup_resume` | Resume paused session |
@@ -174,6 +177,9 @@ tmup_task_batch({tasks: [
 tmup_dispatch({task_id: "001", role: "implementer"})
 // Harvest pane evidence, reprompt as needed, then complete/fail task 001 from the lead.
 tmup_harvest({pane_index: 0})
+tmup_attempt_attest({attempt_id: "<dispatch receipt>", observed_model: "<observed>", observation_source: "runtime receipt", fallback_used: false})
+tmup_evidence_add({attempt_id: "<dispatch receipt>", type: "test_result", payload: "Verified checks passed"})
+tmup_evidence_review({evidence_id: "<evidence id>", disposition: "approved"})
 tmup_complete({task_id: "001", result_summary: "Verified result"})
 tmup_teardown()
 // Finally run /bin/bash -p scripts/grid-teardown.sh from the installed plugin.

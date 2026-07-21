@@ -33,6 +33,8 @@ export const REVIEW_DISPOSITIONS = ['approved', 'challenged', 'rejected'];
 /** Evidence enums (P5.3) */
 export const ATTEMPT_STATUSES = ['running', 'succeeded', 'failed', 'abandoned'];
 export const EVIDENCE_TYPES = ['diff', 'test_result', 'build_log', 'screenshot', 'review_comment', 'artifact_checksum'];
+export const MODEL_REQUIREMENTS = ['none', 'observed', 'cross_model'];
+export const EXECUTION_OUTCOMES = ['unavailable', 'skipped', 'inconclusive'];
 /** Execution target enums (P5.4) */
 export const EXECUTION_TARGET_TYPES = ['tmux_pane', 'local_shell', 'codex_cloud'];
 export const CYNEFIN_DOMAINS = ['clear', 'complicated', 'complex', 'chaotic', 'confusion'];

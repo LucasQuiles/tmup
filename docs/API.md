@@ -2,7 +2,7 @@
 
 # API Reference
 
-## MCP tools (20)
+## MCP tools (23)
 
 These are the tools Claude Code uses to orchestrate. They're exposed via the MCP server and Claude calls them like any other tool.
 
@@ -21,8 +21,8 @@ These are the tools Claude Code uses to orchestrate. They're exposed via the MCP
 
 | Tool | What it does | The vibe |
 |------|-------------|----------|
-| `tmup_task_create` | Add one task to the DAG | Sticky note on the board |
-| `tmup_task_batch` | Add multiple tasks atomically with deps | The whole sprint plan at once |
+| `tmup_task_create` | Add one task with optional role, evidence, and model gates | Sticky note on the board |
+| `tmup_task_batch` | Add multiple gated tasks atomically with deps | The whole sprint plan at once |
 | `tmup_task_update` | Modify task status or priority | Reprioritizing mid-sprint |
 | `tmup_claim` | Claim a task for an agent | "I'll take that one" |
 | `tmup_complete` | Mark task done, cascade unblocks | The dopamine hit |
@@ -36,7 +36,10 @@ These are the tools Claude Code uses to orchestrate. They're exposed via the MCP
 | `tmup_checkpoint` | Post progress update | "Still alive, still working" |
 | `tmup_send_message` | Store coordination/audit message; safe-pane delivery uses reprompt | Slack archive for robots |
 | `tmup_inbox` | Check unread messages | The anxiety |
-| `tmup_dispatch` | Launch Codex worker in tmux pane | Hiring |
+| `tmup_dispatch` | Atomically create a dispatch receipt and launch a Codex worker | Hiring with paperwork |
+| `tmup_attempt_attest` | Record the model observed from the live runtime | Check the badge |
+| `tmup_evidence_add` | Attach unreviewed evidence to an attempt | Submit the work |
+| `tmup_evidence_review` | Approve, challenge, or reject attempt evidence | Sign-off |
 | `tmup_harvest` | Capture scrollback, framed and labeled as untrusted worker output | Reading over their shoulder |
 | `tmup_reprompt` | Send follow-up text into a live worker pane | Manager drive-by |
 | `tmup_heartbeat` | Register agent liveness | Pulse check |
@@ -45,7 +48,7 @@ For detailed input/output schemas, see [skills/tmup/REFERENCE.md](../skills/tmup
 
 ---
 
-## CLI commands (10)
+## CLI commands (11)
 
 `tmup-cli` is the low-level controller and trusted-compatibility interface to the SQLite coordination database. Safe MCP-dispatched Codex commands do not receive `TMUP_DB` or `TMUP_SESSION_DIR`, and their prompt does not advertise this CLI. The lead uses MCP tools for claims, checkpoints, messages, completion/failure transitions, and harvesting; the protected launcher invokes the CLI heartbeat with controller-held identity.
 
@@ -61,12 +64,15 @@ tmup-cli inbox [--mark-read]                # Check messages
 tmup-cli heartbeat                          # Register liveness
 tmup-cli status                             # Current assignment
 tmup-cli events [--limit N]                 # Query audit log
+tmup-cli evidence-add --attempt-id ID --type TYPE "payload" [--hash HASH]
 tmup-cli arc-health [--plugin-root DIR]     # ARC runtime-health readback
 ```
 
 All output is JSON to stdout. Errors are `{"ok": false, "error": "CLI_ERROR", "message": "..."}` with exit code 1. System errors (missing env, DB corruption) go to stderr with exit code 2.
 
-**Failure reasons for `fail`:** `crash`, `timeout`, `logic_error`, `artifact_missing`, `dependency_invalid`. The first two are retriable (the task goes back in the queue with backoff). The rest are non-retriable (the lead has to deal with it).
+**Failure reasons for `fail`:** `crash`, `timeout`, `logic_error`, `artifact_missing`, `dependency_invalid`, `launch_failed`. Crash, timeout, and launch failure are retriable (the task goes back in the queue with backoff). The rest are non-retriable (the lead has to deal with it).
+
+Workers may add evidence through the CLI only for attempts they own. Evidence approval is intentionally absent from the worker CLI; the lead uses `tmup_evidence_review`.
 
 ### Environment variables
 

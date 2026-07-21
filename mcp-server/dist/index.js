@@ -6889,7 +6889,7 @@ var require_dist = __commonJS({
 });
 
 // ../shared/dist/constants.js
-var BACKOFF_BASE_SECONDS, MAX_DEPENDENCY_DEPTH, MAX_ARTIFACT_SIZE_BYTES, STALE_AGENT_THRESHOLD_SECONDS, HEARTBEAT_INTERVAL_SECONDS, CLAIMED_DURATION_WARNING_SECONDS, MIN_PRIORITY, MAX_PRIORITY, DEFAULT_PRIORITY, DEFAULT_PANE_COUNT, TASK_STATUSES, FAILURE_REASONS, MESSAGE_TYPES, EVENT_TYPES, PLAN_STATUSES, REVIEW_DISPOSITIONS, ATTEMPT_STATUSES, EVIDENCE_TYPES, EXECUTION_TARGET_TYPES, CYNEFIN_DOMAINS, SDLC_LOOP_LEVELS, SDLC_PHASES, WORKER_TYPES, CONDUCTOR_BUDGET_USD, WORKER_BUDGET_SONNET_USD, WORKER_BUDGET_HAIKU_USD, BEAD_BUDGET_USD, HEARTBEAT_THRESHOLDS, LIFECYCLE_EVENT_TYPES, COLLABORATION_PATTERNS;
+var BACKOFF_BASE_SECONDS, MAX_DEPENDENCY_DEPTH, MAX_ARTIFACT_SIZE_BYTES, STALE_AGENT_THRESHOLD_SECONDS, HEARTBEAT_INTERVAL_SECONDS, CLAIMED_DURATION_WARNING_SECONDS, MIN_PRIORITY, MAX_PRIORITY, DEFAULT_PRIORITY, DEFAULT_PANE_COUNT, TASK_STATUSES, FAILURE_REASONS, MESSAGE_TYPES, EVENT_TYPES, PLAN_STATUSES, REVIEW_DISPOSITIONS, ATTEMPT_STATUSES, EVIDENCE_TYPES, MODEL_REQUIREMENTS, EXECUTION_OUTCOMES, EXECUTION_TARGET_TYPES, CYNEFIN_DOMAINS, SDLC_LOOP_LEVELS, SDLC_PHASES, WORKER_TYPES, CONDUCTOR_BUDGET_USD, WORKER_BUDGET_SONNET_USD, WORKER_BUDGET_HAIKU_USD, BEAD_BUDGET_USD, HEARTBEAT_THRESHOLDS, LIFECYCLE_EVENT_TYPES, COLLABORATION_PATTERNS;
 var init_constants = __esm({
   "../shared/dist/constants.js"() {
     "use strict";
@@ -6929,6 +6929,8 @@ var init_constants = __esm({
     REVIEW_DISPOSITIONS = ["approved", "challenged", "rejected"];
     ATTEMPT_STATUSES = ["running", "succeeded", "failed", "abandoned"];
     EVIDENCE_TYPES = ["diff", "test_result", "build_log", "screenshot", "review_comment", "artifact_checksum"];
+    MODEL_REQUIREMENTS = ["none", "observed", "cross_model"];
+    EXECUTION_OUTCOMES = ["unavailable", "skipped", "inconclusive"];
     EXECUTION_TARGET_TYPES = ["tmux_pane", "local_shell", "codex_cloud"];
     CYNEFIN_DOMAINS = ["clear", "complicated", "complex", "chaotic", "confusion"];
     SDLC_LOOP_LEVELS = ["L0", "L1", "L2", "L2.5", "L2.75"];
@@ -7209,6 +7211,25 @@ var init_migrations = __esm({
       `).run();
           db2.prepare("CREATE INDEX IF NOT EXISTS idx_tasks_bead ON tasks(bead_id) WHERE bead_id IS NOT NULL").run();
           db2.prepare("CREATE INDEX IF NOT EXISTS idx_tasks_colony ON tasks(sdlc_loop_level, status) WHERE sdlc_loop_level IS NOT NULL").run();
+        }
+      },
+      {
+        version: 5,
+        description: "Add dispatch receipt policy and execution outcome metadata",
+        up: (db2) => {
+          db2.prepare("ALTER TABLE tasks ADD COLUMN role_required INTEGER NOT NULL DEFAULT 0 CHECK (role_required IN (0,1))").run();
+          db2.prepare("ALTER TABLE tasks ADD COLUMN evidence_required INTEGER NOT NULL DEFAULT 0 CHECK (evidence_required IN (0,1))").run();
+          db2.prepare("ALTER TABLE tasks ADD COLUMN model_requirement TEXT NOT NULL DEFAULT 'none' CHECK (model_requirement IN ('none','observed','cross_model'))").run();
+          db2.prepare("ALTER TABLE tasks ADD COLUMN reference_model TEXT").run();
+          db2.prepare("ALTER TABLE tasks ADD COLUMN execution_outcome TEXT CHECK (execution_outcome IS NULL OR execution_outcome IN ('unavailable','skipped','inconclusive'))").run();
+          db2.prepare("ALTER TABLE task_attempts ADD COLUMN role TEXT").run();
+          db2.prepare("ALTER TABLE task_attempts ADD COLUMN selector TEXT").run();
+          db2.prepare("ALTER TABLE task_attempts ADD COLUMN requested_model TEXT NOT NULL DEFAULT 'unknown'").run();
+          db2.prepare("ALTER TABLE task_attempts ADD COLUMN observed_model TEXT NOT NULL DEFAULT 'unknown'").run();
+          db2.prepare("ALTER TABLE task_attempts ADD COLUMN fallback_used INTEGER CHECK (fallback_used IS NULL OR fallback_used IN (0,1))").run();
+          db2.prepare("ALTER TABLE task_attempts ADD COLUMN fallback_model TEXT").run();
+          db2.prepare("ALTER TABLE task_attempts ADD COLUMN fallback_reason TEXT").run();
+          db2.prepare("ALTER TABLE task_attempts ADD COLUMN execution_outcome TEXT CHECK (execution_outcome IS NULL OR execution_outcome IN ('unavailable','skipped','inconclusive'))").run();
         }
       }
     ];
@@ -7528,10 +7549,22 @@ function _createTaskInner(db2, input) {
   const id = nextTaskId(db2);
   const priority = input.priority ?? DEFAULT_PRIORITY;
   const maxRetries = input.max_retries ?? 3;
+  const roleRequired = input.role_required ?? Boolean(input.role);
+  const evidenceRequired = input.evidence_required ?? Boolean(input.produces?.length);
+  const modelRequirement = input.model_requirement ?? "none";
+  if (roleRequired && !input.role?.trim()) {
+    throw new Error("role is required when role_required is true");
+  }
+  if (modelRequirement === "cross_model" && !input.reference_model?.trim()) {
+    throw new Error("reference_model is required when model_requirement is cross_model");
+  }
   db2.prepare(`
-    INSERT INTO tasks (id, subject, description, role, priority, status, max_retries)
-    VALUES (?, ?, ?, ?, ?, 'pending', ?)
-  `).run(id, input.subject, input.description ?? null, input.role ?? null, priority, maxRetries);
+    INSERT INTO tasks (
+      id, subject, description, role, priority, status, max_retries,
+      role_required, evidence_required, model_requirement, reference_model
+    )
+    VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+  `).run(id, input.subject, input.description ?? null, input.role ?? null, priority, maxRetries, roleRequired ? 1 : 0, evidenceRequired ? 1 : 0, modelRequirement, input.reference_model ?? null);
   if (input.deps) {
     for (const depId of input.deps) {
       addDependency(db2, id, depId);
@@ -7646,6 +7679,84 @@ var init_task_ops = __esm({
   }
 });
 
+// ../shared/dist/evidence-ops.js
+function createAttempt(db2, attemptId, input) {
+  db2.prepare(`
+    INSERT INTO task_attempts (
+      id, task_id, agent_id, execution_target_id, model_family, status,
+      role, selector, requested_model, observed_model,
+      fallback_used, fallback_model, fallback_reason
+    )
+    VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?)
+  `).run(attemptId, input.task_id, input.agent_id ?? null, input.execution_target_id ?? null, input.model_family ?? null, input.role ?? null, input.selector ?? null, input.requested_model ?? "unknown", input.observed_model ?? "unknown", input.fallback_used === void 0 || input.fallback_used === null ? null : input.fallback_used ? 1 : 0, input.fallback_model ?? null, input.fallback_reason ?? null);
+  return db2.prepare("SELECT * FROM task_attempts WHERE id = ?").get(attemptId);
+}
+function completeAttempt(db2, attemptId, status, resultSummary, confidence, failureReason) {
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  db2.prepare(`
+    UPDATE task_attempts
+    SET status = ?, ended_at = ?, result_summary = ?, confidence = ?, failure_reason = ?
+    WHERE id = ? AND status = 'running'
+  `).run(status, now, resultSummary ?? null, confidence ?? null, failureReason ?? null, attemptId);
+  const attempt = db2.prepare("SELECT * FROM task_attempts WHERE id = ?").get(attemptId);
+  if (!attempt)
+    throw new Error(`Attempt ${attemptId} not found`);
+  return attempt;
+}
+function getTaskAttempts(db2, taskId) {
+  return db2.prepare("SELECT * FROM task_attempts WHERE task_id = ? ORDER BY started_at ASC").all(taskId);
+}
+function getLatestAttempt(db2, taskId) {
+  return db2.prepare("SELECT * FROM task_attempts WHERE task_id = ? ORDER BY started_at DESC, rowid DESC LIMIT 1").get(taskId);
+}
+function addEvidence(db2, evidenceId, input) {
+  db2.prepare(`
+    INSERT INTO evidence_packets (id, attempt_id, type, payload, hash)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(evidenceId, input.attempt_id, input.type, input.payload, input.hash ?? null);
+  return db2.prepare("SELECT * FROM evidence_packets WHERE id = ?").get(evidenceId);
+}
+function reviewEvidence(db2, evidenceId, disposition) {
+  db2.prepare("UPDATE evidence_packets SET reviewer_disposition = ? WHERE id = ?").run(disposition, evidenceId);
+  const packet = db2.prepare("SELECT * FROM evidence_packets WHERE id = ?").get(evidenceId);
+  if (!packet)
+    throw new Error(`Evidence ${evidenceId} not found`);
+  return packet;
+}
+function getAttemptEvidence(db2, attemptId) {
+  return db2.prepare("SELECT * FROM evidence_packets WHERE attempt_id = ? ORDER BY created_at ASC").all(attemptId);
+}
+function hasAcceptedAttemptEvidence(db2, attemptId) {
+  const row = db2.prepare(`
+    SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN reviewer_disposition = 'approved' THEN 0 ELSE 1 END) AS unaccepted
+    FROM evidence_packets
+    WHERE attempt_id = ?
+  `).get(attemptId);
+  return row.total > 0 && row.unaccepted === 0;
+}
+function hasAcceptedEvidence(db2, taskId) {
+  const row = db2.prepare(`
+    SELECT COUNT(*) as cnt FROM task_attempts ta
+    WHERE ta.task_id = ? AND ta.status = 'succeeded'
+    AND NOT EXISTS (
+      SELECT 1 FROM evidence_packets ep
+      WHERE ep.attempt_id = ta.id
+      AND (ep.reviewer_disposition IS NULL OR ep.reviewer_disposition != 'approved')
+    )
+    AND EXISTS (
+      SELECT 1 FROM evidence_packets ep WHERE ep.attempt_id = ta.id
+    )
+  `).get(taskId);
+  return row.cnt > 0;
+}
+var init_evidence_ops = __esm({
+  "../shared/dist/evidence-ops.js"() {
+    "use strict";
+  }
+});
+
 // ../shared/dist/task-lifecycle.js
 function claimTask(db2, agentId, role) {
   const now = (/* @__PURE__ */ new Date()).toISOString();
@@ -7704,6 +7815,65 @@ function claimSpecificTask(db2, taskId, agentId, role) {
   });
   return claim.immediate();
 }
+function hasAttestedValue(value) {
+  return value !== null && value.trim() !== "" && value !== "unknown";
+}
+function validateCompletionReceipt(task, attempt, acceptedEvidence, suppliedArtifactNames, declaredArtifactNames) {
+  const attemptRequired = task.role_required === 1 || task.evidence_required === 1 || task.model_requirement !== "none";
+  if (attemptRequired && !attempt) {
+    throw new Error(`Task ${task.id} requires a dispatch attempt`);
+  }
+  if (attempt) {
+    if (attempt.agent_id !== task.owner) {
+      throw new Error(`Attempt ${attempt.id} does not belong to the current task owner`);
+    }
+    if (attempt.status !== "running" || attempt.execution_outcome !== null) {
+      throw new Error(`Attempt ${attempt.id} is not running`);
+    }
+  }
+  if (task.role_required === 1) {
+    if (!task.role || !attempt || attempt.role !== task.role) {
+      throw new Error(`Dispatch receipt does not match required role '${task.role ?? "unknown"}'`);
+    }
+    if (!hasAttestedValue(attempt.selector) || !hasAttestedValue(attempt.requested_model)) {
+      throw new Error(`Task ${task.id} requires complete dispatch receipt metadata`);
+    }
+    if (attempt.fallback_used === 1 && (!hasAttestedValue(attempt.fallback_model) || !attempt.fallback_reason?.trim())) {
+      throw new Error(`Attempt ${attempt.id} has incomplete fallback provenance`);
+    }
+    if (attempt.fallback_used !== 1 && (attempt.fallback_model !== null || attempt.fallback_reason !== null)) {
+      throw new Error(`Attempt ${attempt.id} has inconsistent fallback provenance`);
+    }
+  }
+  if (task.model_requirement === "observed") {
+    if (!attempt || !hasAttestedValue(attempt.observed_model)) {
+      throw new Error(`Task ${task.id} requires an observed model`);
+    }
+  }
+  if (task.model_requirement === "cross_model") {
+    if (!attempt || !hasAttestedValue(attempt.observed_model)) {
+      throw new Error(`Task ${task.id} requires an observed model for cross-model work`);
+    }
+    if (!task.reference_model) {
+      throw new Error(`Task ${task.id} requires reference_model for cross-model work`);
+    }
+    if (attempt.observed_model === task.reference_model) {
+      throw new Error(`Observed model must differ from reference_model for task ${task.id}`);
+    }
+  }
+  if (task.evidence_required === 1 && !acceptedEvidence) {
+    throw new Error(`Task ${task.id} requires accepted evidence on its current attempt`);
+  }
+  for (const supplied of suppliedArtifactNames) {
+    if (!declaredArtifactNames.has(supplied)) {
+      throw new Error(`Artifact '${supplied}' not registered as a 'produces' artifact for task ${task.id}`);
+    }
+  }
+  const missingArtifacts = [...declaredArtifactNames].filter((name) => !suppliedArtifactNames.has(name));
+  if (missingArtifacts.length > 0) {
+    throw new Error(`Task ${task.id} requires every declared produced artifact; missing: ${missingArtifacts.join(", ")}`);
+  }
+}
 function completeTask(db2, taskId, resultSummary, artifacts, projectDir, actorId) {
   const checksums = [];
   if (artifacts) {
@@ -7728,8 +7898,23 @@ function completeTask(db2, taskId, resultSummary, artifacts, projectDir, actorId
     if (actorId !== "lead" && task.owner !== actorId) {
       throw new Error(`Task ${taskId} cannot be completed by '${actorId}': not the owning agent`);
     }
+    const attempt = db2.prepare(`
+      SELECT * FROM task_attempts
+      WHERE task_id = ?
+      ORDER BY started_at DESC, rowid DESC
+      LIMIT 1
+    `).get(taskId);
+    const acceptedEvidence = attempt ? hasAcceptedAttemptEvidence(db2, attempt.id) : false;
+    const declaredArtifacts = db2.prepare(`
+      SELECT a.name
+      FROM artifacts a
+      JOIN task_artifacts ta ON ta.artifact_id = a.id
+      WHERE ta.task_id = ? AND ta.direction = 'produces'
+    `).all(taskId);
+    const suppliedArtifactNames = new Set(checksums.map((artifact) => artifact.name));
+    const declaredArtifactNames = new Set(declaredArtifacts.map((artifact) => artifact.name));
+    validateCompletionReceipt(task, attempt, acceptedEvidence, suppliedArtifactNames, declaredArtifactNames);
     const now = (/* @__PURE__ */ new Date()).toISOString();
-    db2.prepare("UPDATE tasks SET status = 'completed', completed_at = ?, result_summary = ?, owner = NULL WHERE id = ?").run(now, resultSummary, taskId);
     for (const art of checksums) {
       const artifact = db2.prepare("SELECT a.id FROM artifacts a JOIN task_artifacts ta ON a.id = ta.artifact_id WHERE a.name = ? AND ta.task_id = ? AND ta.direction = ?").get(art.name, taskId, "produces");
       if (!artifact) {
@@ -7737,6 +7922,22 @@ function completeTask(db2, taskId, resultSummary, artifacts, projectDir, actorId
       }
       publishArtifact(db2, artifact.id, art.path, art.checksum);
     }
+    if (attempt) {
+      const attemptResult = db2.prepare(`
+        UPDATE task_attempts
+        SET status = 'succeeded', ended_at = ?, result_summary = ?, execution_outcome = NULL
+        WHERE id = ? AND status = 'running' AND execution_outcome IS NULL
+      `).run(now, resultSummary, attempt.id);
+      if (attemptResult.changes !== 1) {
+        throw new Error(`Attempt ${attempt.id} changed during completion`);
+      }
+    }
+    db2.prepare(`
+      UPDATE tasks
+      SET status = 'completed', completed_at = ?, result_summary = ?, owner = NULL,
+          execution_outcome = NULL
+      WHERE id = ?
+    `).run(now, resultSummary, taskId);
     const unblocked = findUnblockedDependents(db2, taskId);
     logEvent(db2, actorId, "task_completed", {
       task_id: taskId,
@@ -7756,6 +7957,19 @@ function failTask(db2, taskId, reason, message, actorId) {
     }
     if (actorId !== "lead" && task.owner !== actorId) {
       throw new Error(`Task ${taskId} cannot be failed by '${actorId}': not the owning agent`);
+    }
+    const activeAttempt = db2.prepare(`
+      SELECT id FROM task_attempts
+      WHERE task_id = ? AND agent_id = ? AND status = 'running' AND execution_outcome IS NULL
+      ORDER BY started_at DESC, rowid DESC
+      LIMIT 1
+    `).get(taskId, task.owner);
+    if (activeAttempt) {
+      db2.prepare(`
+        UPDATE task_attempts
+        SET status = 'failed', ended_at = ?, failure_reason = ?, result_summary = ?
+        WHERE id = ? AND status = 'running' AND execution_outcome IS NULL
+      `).run((/* @__PURE__ */ new Date()).toISOString(), reason, message, activeAttempt.id);
     }
     const isRetriable = RETRIABLE_REASONS.includes(reason);
     const hasRetries = task.retry_count < task.max_retries;
@@ -7833,7 +8047,8 @@ var init_task_lifecycle = __esm({
     init_dep_resolver();
     init_artifact_ops();
     init_constants();
-    RETRIABLE_REASONS = ["crash", "timeout"];
+    init_evidence_ops();
+    RETRIABLE_REASONS = ["crash", "timeout", "launch_failed"];
   }
 });
 
@@ -8274,48 +8489,149 @@ function getStaleAgents(db2, maxAgeSeconds) {
       AND last_heartbeat_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ? || ' seconds')
   `).all(`-${maxAgeSeconds}`);
 }
-function recoverDeadClaim(db2, agentId, staleThresholdSeconds = STALE_AGENT_THRESHOLD_SECONDS, paneLivenessCallback) {
-  const recover = db2.transaction(() => {
-    const recovered = [];
+function hasValidLaunchReceipt(task, attempt) {
+  if (task.role_required !== 1)
+    return true;
+  return attempt !== void 0 && attempt.task_id === task.id && attempt.agent_id === task.owner && attempt.role === task.role && attempt.status === "running" && attempt.execution_outcome === null && Boolean(attempt.selector?.trim()) && attempt.selector !== "unknown" && Boolean(attempt.requested_model.trim()) && attempt.requested_model !== "unknown";
+}
+function reconcileClaim(db2, agentId, paneLivenessCallback, options = {}) {
+  const staleThresholdSeconds = options.staleThresholdSeconds ?? STALE_AGENT_THRESHOLD_SECONDS;
+  const dryRun = options.dryRun === true;
+  const reconcile = db2.transaction(() => {
     const agent = db2.prepare("SELECT * FROM agents WHERE id = ? AND status = 'active' AND last_heartbeat_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ? || ' seconds')").get(agentId, `-${staleThresholdSeconds}`);
-    if (!agent)
-      return [];
-    if (paneLivenessCallback) {
-      const liveness = paneLivenessCallback(agent.pane_index);
-      if (liveness === "alive") {
-        db2.prepare("UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(agentId);
-        logEvent(db2, agentId, "agent_heartbeat_stale", { action: "refreshed", reason: "pane_alive" });
-        return [];
-      }
-      if (liveness === "unknown") {
-        logEvent(db2, agentId, "agent_heartbeat_stale", { action: "retained", reason: "pane_liveness_unknown" });
-        return [];
-      }
+    if (!agent) {
+      return {
+        agent_id: agentId,
+        task_id: null,
+        attempt_id: null,
+        action: "retained",
+        reason: "agent_not_stale",
+        mutated: false
+      };
     }
-    const tasks = db2.prepare("SELECT * FROM tasks WHERE owner = ? AND status = 'claimed'").all(agentId);
-    for (const task of tasks) {
-      const isRetriable = task.retry_count < task.max_retries;
-      const newStatus = isRetriable ? "pending" : "needs_review";
+    const task = db2.prepare("SELECT * FROM tasks WHERE owner = ? AND status = 'claimed' ORDER BY claimed_at DESC LIMIT 1").get(agentId);
+    const attempt = task ? db2.prepare(`
+          SELECT * FROM task_attempts
+          WHERE task_id = ?
+          ORDER BY started_at DESC, rowid DESC
+          LIMIT 1
+        `).get(task.id) : void 0;
+    if (!task) {
+      if (!dryRun) {
+        db2.prepare("UPDATE agents SET status = 'shutdown' WHERE id = ?").run(agentId);
+        logEvent(db2, agentId, "agent_heartbeat_stale", {
+          action: "shutdown",
+          reason: "stale_agent_without_claim"
+        });
+      }
+      return {
+        agent_id: agentId,
+        task_id: null,
+        attempt_id: attempt?.id ?? null,
+        action: "shutdown",
+        reason: "stale_agent_without_claim",
+        mutated: !dryRun
+      };
+    }
+    const liveness = paneLivenessCallback(agent.pane_index);
+    if (liveness === "alive") {
+      const receiptValid = hasValidLaunchReceipt(task, attempt);
+      if (!dryRun) {
+        db2.prepare("UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(agentId);
+        logEvent(db2, agentId, "agent_heartbeat_stale", {
+          action: "refreshed",
+          reason: receiptValid ? "pane_alive" : "pane_alive_receipt_missing",
+          task_id: task.id,
+          attempt_id: attempt?.id ?? null
+        });
+      }
+      return {
+        agent_id: agentId,
+        task_id: task.id,
+        attempt_id: attempt?.id ?? null,
+        action: "retained",
+        reason: receiptValid ? "pane_alive" : "pane_alive_receipt_missing",
+        mutated: !dryRun
+      };
+    }
+    if (liveness === "unknown") {
+      if (!dryRun) {
+        if (attempt?.status === "running" && attempt.execution_outcome === null) {
+          db2.prepare(`
+            UPDATE task_attempts
+            SET status = 'abandoned', execution_outcome = 'inconclusive',
+                failure_reason = 'pane_liveness_unknown',
+                ended_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+            WHERE id = ? AND status = 'running' AND execution_outcome IS NULL
+          `).run(attempt.id);
+        }
+        db2.prepare("UPDATE tasks SET execution_outcome = 'inconclusive' WHERE id = ?").run(task.id);
+        logEvent(db2, agentId, "agent_heartbeat_stale", {
+          action: "inconclusive",
+          reason: "pane_liveness_unknown",
+          task_id: task.id,
+          attempt_id: attempt?.id ?? null
+        });
+      }
+      return {
+        agent_id: agentId,
+        task_id: task.id,
+        attempt_id: attempt?.id ?? null,
+        action: "inconclusive",
+        reason: "pane_liveness_unknown",
+        mutated: !dryRun
+      };
+    }
+    const isRetriable = task.retry_count < task.max_retries;
+    const action = isRetriable ? "retried" : "needs_review";
+    const reason = liveness === "shell" ? isRetriable ? "pane_shell" : "pane_shell_retries_exhausted" : isRetriable ? "pane_dead" : "pane_dead_retries_exhausted";
+    if (!dryRun) {
+      if (attempt?.status === "running" && attempt.execution_outcome === null) {
+        db2.prepare(`
+          UPDATE task_attempts
+          SET status = 'abandoned', failure_reason = ?,
+              ended_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          WHERE id = ? AND status = 'running' AND execution_outcome IS NULL
+        `).run(reason, attempt.id);
+      }
       if (isRetriable) {
         const backoffSeconds = BACKOFF_BASE_SECONDS * Math.pow(2, task.retry_count);
         const retryAfter = new Date(Date.now() + backoffSeconds * 1e3).toISOString();
         db2.prepare(`
-          UPDATE tasks SET status = ?, owner = NULL, failure_reason = 'timeout', retry_count = retry_count + 1, retry_after = ?
+          UPDATE tasks
+          SET status = 'pending', owner = NULL, failure_reason = 'timeout',
+              retry_count = retry_count + 1, retry_after = ?, execution_outcome = NULL
           WHERE id = ?
-        `).run(newStatus, retryAfter, task.id);
+        `).run(retryAfter, task.id);
       } else {
         db2.prepare(`
-          UPDATE tasks SET status = ?, owner = NULL, failure_reason = 'timeout'
+          UPDATE tasks
+          SET status = 'needs_review', owner = NULL, failure_reason = 'timeout'
           WHERE id = ?
-        `).run(newStatus, task.id);
+        `).run(task.id);
       }
-      recovered.push(task.id);
-      logEvent(db2, agentId, "agent_heartbeat_stale", { task_id: task.id, new_status: newStatus });
+      db2.prepare("UPDATE agents SET status = 'shutdown' WHERE id = ?").run(agentId);
+      logEvent(db2, agentId, "agent_heartbeat_stale", {
+        action,
+        reason,
+        task_id: task.id,
+        attempt_id: attempt?.id ?? null
+      });
     }
-    db2.prepare("UPDATE agents SET status = 'shutdown' WHERE id = ?").run(agentId);
-    return recovered;
+    return {
+      agent_id: agentId,
+      task_id: task.id,
+      attempt_id: attempt?.id ?? null,
+      action,
+      reason,
+      mutated: !dryRun
+    };
   });
-  return recover.immediate();
+  return reconcile.immediate();
+}
+function recoverDeadClaim(db2, agentId, staleThresholdSeconds = STALE_AGENT_THRESHOLD_SECONDS, paneLivenessCallback) {
+  const result = reconcileClaim(db2, agentId, paneLivenessCallback ?? (() => "dead"), { staleThresholdSeconds });
+  return result.task_id && (result.action === "retried" || result.action === "needs_review") ? [result.task_id] : [];
 }
 function getActiveAgents(db2) {
   return db2.prepare("SELECT * FROM agents WHERE status = 'active'").all();
@@ -8600,67 +8916,146 @@ var init_plan_ops = __esm({
   }
 });
 
-// ../shared/dist/evidence-ops.js
-function createAttempt(db2, attemptId, input) {
-  db2.prepare(`
-    INSERT INTO task_attempts (id, task_id, agent_id, execution_target_id, model_family, status)
-    VALUES (?, ?, ?, ?, ?, 'running')
-  `).run(attemptId, input.task_id, input.agent_id ?? null, input.execution_target_id ?? null, input.model_family ?? null);
-  return db2.prepare("SELECT * FROM task_attempts WHERE id = ?").get(attemptId);
+// ../shared/dist/dispatch-ops.js
+function requireNonEmpty(value, field) {
+  if (!value.trim()) {
+    throw new Error(`${field} is required for a dispatch receipt`);
+  }
 }
-function completeAttempt(db2, attemptId, status, resultSummary, confidence, failureReason) {
-  const now = (/* @__PURE__ */ new Date()).toISOString();
-  db2.prepare(`
-    UPDATE task_attempts
-    SET status = ?, ended_at = ?, result_summary = ?, confidence = ?, failure_reason = ?
-    WHERE id = ? AND status = 'running'
-  `).run(status, now, resultSummary ?? null, confidence ?? null, failureReason ?? null, attemptId);
+function validateFallback(fallbackUsed, fallbackModel, fallbackReason) {
+  if (fallbackUsed === true) {
+    if (!fallbackModel?.trim()) {
+      throw new Error("fallback_model is required when fallback_used is true");
+    }
+    if (!fallbackReason?.trim()) {
+      throw new Error("fallback_reason is required when fallback_used is true");
+    }
+    return;
+  }
+  if (fallbackModel !== void 0 || fallbackReason !== void 0) {
+    throw new Error("fallback provenance requires fallback_used to be true");
+  }
+}
+function toDispatchReceipt(row) {
+  return {
+    attempt_id: row.id,
+    task_id: row.task_id,
+    agent_id: row.agent_id,
+    role: row.role ?? "unknown",
+    selector: row.selector ?? "unknown",
+    requested_model: row.requested_model,
+    observed_model: row.observed_model,
+    fallback_used: row.fallback_used === null ? null : row.fallback_used === 1,
+    fallback_model: row.fallback_model,
+    fallback_reason: row.fallback_reason,
+    terminal_status: row.execution_outcome ?? row.status
+  };
+}
+function getDispatchReceipt(db2, attemptId) {
   const attempt = db2.prepare("SELECT * FROM task_attempts WHERE id = ?").get(attemptId);
-  if (!attempt)
+  if (!attempt) {
     throw new Error(`Attempt ${attemptId} not found`);
-  return attempt;
+  }
+  return toDispatchReceipt(attempt);
 }
-function getTaskAttempts(db2, taskId) {
-  return db2.prepare("SELECT * FROM task_attempts WHERE task_id = ? ORDER BY started_at ASC").all(taskId);
+function beginDispatch(db2, input) {
+  requireNonEmpty(input.attempt_id, "attempt_id");
+  requireNonEmpty(input.task_id, "task_id");
+  requireNonEmpty(input.agent_id, "agent_id");
+  requireNonEmpty(input.role, "role");
+  requireNonEmpty(input.selector, "selector");
+  requireNonEmpty(input.requested_model, "requested_model");
+  requireNonEmpty(input.observed_model, "observed_model");
+  validateFallback(input.fallback_used, input.fallback_model, input.fallback_reason);
+  const begin = db2.transaction(() => {
+    registerAgent(db2, input.agent_id, input.pane_index, input.role);
+    const task = claimSpecificTask(db2, input.task_id, input.agent_id, input.role);
+    db2.prepare("UPDATE tasks SET execution_outcome = NULL WHERE id = ?").run(input.task_id);
+    const attempt = createAttempt(db2, input.attempt_id, {
+      task_id: input.task_id,
+      agent_id: input.agent_id,
+      execution_target_id: input.execution_target_id,
+      role: input.role,
+      selector: input.selector,
+      requested_model: input.requested_model,
+      observed_model: input.observed_model,
+      fallback_used: input.fallback_used,
+      fallback_model: input.fallback_model,
+      fallback_reason: input.fallback_reason
+    });
+    const receipt = toDispatchReceipt(attempt);
+    logEvent(db2, input.agent_id, "dispatch", {
+      attempt_id: receipt.attempt_id,
+      task_id: receipt.task_id,
+      role: receipt.role,
+      selector: receipt.selector,
+      requested_model: receipt.requested_model,
+      observed_model: receipt.observed_model,
+      fallback_used: receipt.fallback_used
+    });
+    return { task, receipt };
+  });
+  return begin.immediate();
 }
-function getLatestAttempt(db2, taskId) {
-  return db2.prepare("SELECT * FROM task_attempts WHERE task_id = ? ORDER BY started_at DESC, rowid DESC LIMIT 1").get(taskId);
+function attestAttempt(db2, attemptId, input) {
+  requireNonEmpty(input.observed_model, "observed_model");
+  if (input.observed_model === "unknown") {
+    throw new Error("observed_model attestation must identify the observed model");
+  }
+  validateFallback(input.fallback_used, input.fallback_model, input.fallback_reason);
+  const attest = db2.transaction(() => {
+    const result = db2.prepare(`
+      UPDATE task_attempts
+      SET observed_model = ?, fallback_used = ?, fallback_model = ?, fallback_reason = ?
+      WHERE id = ? AND status = 'running' AND execution_outcome IS NULL
+    `).run(input.observed_model, input.fallback_used ? 1 : 0, input.fallback_model ?? null, input.fallback_reason ?? null, attemptId);
+    if (result.changes === 0) {
+      const existing = db2.prepare("SELECT status, execution_outcome FROM task_attempts WHERE id = ?").get(attemptId);
+      if (!existing)
+        throw new Error(`Attempt ${attemptId} not found`);
+      throw new Error(`Attempt ${attemptId} is already terminal`);
+    }
+    return getDispatchReceipt(db2, attemptId);
+  });
+  return attest.immediate();
 }
-function addEvidence(db2, evidenceId, input) {
-  db2.prepare(`
-    INSERT INTO evidence_packets (id, attempt_id, type, payload, hash)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(evidenceId, input.attempt_id, input.type, input.payload, input.hash ?? null);
-  return db2.prepare("SELECT * FROM evidence_packets WHERE id = ?").get(evidenceId);
+function finalizeAttempt(db2, attemptId, outcome, reason) {
+  requireNonEmpty(reason, "reason");
+  const storageStatus = outcome === "unavailable" ? "failed" : "abandoned";
+  const finalize = db2.transaction(() => {
+    const attempt = db2.prepare("SELECT * FROM task_attempts WHERE id = ?").get(attemptId);
+    if (!attempt)
+      throw new Error(`Attempt ${attemptId} not found`);
+    if (attempt.status !== "running" || attempt.execution_outcome !== null) {
+      throw new Error(`Attempt ${attemptId} is already terminal`);
+    }
+    const endedAt = (/* @__PURE__ */ new Date()).toISOString();
+    db2.prepare(`
+      UPDATE task_attempts
+      SET status = ?, execution_outcome = ?, failure_reason = ?, ended_at = ?
+      WHERE id = ? AND status = 'running' AND execution_outcome IS NULL
+    `).run(storageStatus, outcome, reason, endedAt, attemptId);
+    db2.prepare(`
+      UPDATE tasks SET execution_outcome = ?
+      WHERE id = ? AND status NOT IN ('completed', 'cancelled')
+    `).run(outcome, attempt.task_id);
+    logEvent(db2, attempt.agent_id, "dispatch", {
+      attempt_id: attemptId,
+      task_id: attempt.task_id,
+      terminal_status: outcome,
+      reason
+    });
+    return getDispatchReceipt(db2, attemptId);
+  });
+  return finalize.immediate();
 }
-function reviewEvidence(db2, evidenceId, disposition) {
-  db2.prepare("UPDATE evidence_packets SET reviewer_disposition = ? WHERE id = ?").run(disposition, evidenceId);
-  const packet = db2.prepare("SELECT * FROM evidence_packets WHERE id = ?").get(evidenceId);
-  if (!packet)
-    throw new Error(`Evidence ${evidenceId} not found`);
-  return packet;
-}
-function getAttemptEvidence(db2, attemptId) {
-  return db2.prepare("SELECT * FROM evidence_packets WHERE attempt_id = ? ORDER BY created_at ASC").all(attemptId);
-}
-function hasAcceptedEvidence(db2, taskId) {
-  const row = db2.prepare(`
-    SELECT COUNT(*) as cnt FROM task_attempts ta
-    WHERE ta.task_id = ? AND ta.status = 'succeeded'
-    AND NOT EXISTS (
-      SELECT 1 FROM evidence_packets ep
-      WHERE ep.attempt_id = ta.id
-      AND (ep.reviewer_disposition IS NULL OR ep.reviewer_disposition != 'approved')
-    )
-    AND EXISTS (
-      SELECT 1 FROM evidence_packets ep WHERE ep.attempt_id = ta.id
-    )
-  `).get(taskId);
-  return row.cnt > 0;
-}
-var init_evidence_ops = __esm({
-  "../shared/dist/evidence-ops.js"() {
+var init_dispatch_ops = __esm({
+  "../shared/dist/dispatch-ops.js"() {
     "use strict";
+    init_agent_ops();
+    init_evidence_ops();
+    init_event_ops();
+    init_task_lifecycle();
   }
 });
 
@@ -8859,6 +9254,7 @@ __export(dist_exports, {
   DEFAULT_PRIORITY: () => DEFAULT_PRIORITY,
   EVENT_TYPES: () => EVENT_TYPES,
   EVIDENCE_TYPES: () => EVIDENCE_TYPES,
+  EXECUTION_OUTCOMES: () => EXECUTION_OUTCOMES,
   EXECUTION_TARGET_TYPES: () => EXECUTION_TARGET_TYPES,
   FAILURE_REASONS: () => FAILURE_REASONS,
   HEARTBEAT_INTERVAL_SECONDS: () => HEARTBEAT_INTERVAL_SECONDS,
@@ -8870,6 +9266,7 @@ __export(dist_exports, {
   MAX_PRIORITY: () => MAX_PRIORITY,
   MESSAGE_TYPES: () => MESSAGE_TYPES,
   MIN_PRIORITY: () => MIN_PRIORITY,
+  MODEL_REQUIREMENTS: () => MODEL_REQUIREMENTS,
   PATTERN_REGISTRY: () => PATTERN_REGISTRY,
   PLAN_STATUSES: () => PLAN_STATUSES,
   REVIEW_DISPOSITIONS: () => REVIEW_DISPOSITIONS,
@@ -8884,6 +9281,8 @@ __export(dist_exports, {
   addEvidence: () => addEvidence,
   addPlanReview: () => addPlanReview,
   addResearchPacket: () => addResearchPacket,
+  attestAttempt: () => attestAttempt,
+  beginDispatch: () => beginDispatch,
   cancelTask: () => cancelTask,
   checkCycle: () => checkCycle,
   claimSpecificTask: () => claimSpecificTask,
@@ -8900,6 +9299,7 @@ __export(dist_exports, {
   createTaskBatch: () => createTaskBatch,
   ensureTmuxPaneTarget: () => ensureTmuxPaneTarget,
   failTask: () => failTask,
+  finalizeAttempt: () => finalizeAttempt,
   findArtifactByName: () => findArtifactByName,
   findTargetByPaneIndex: () => findTargetByPaneIndex,
   findUnblockedDependents: () => findUnblockedDependents,
@@ -8912,6 +9312,7 @@ __export(dist_exports, {
   getAgentByPaneIndex: () => getAgentByPaneIndex,
   getAttemptEvidence: () => getAttemptEvidence,
   getCurrentSession: () => getCurrentSession,
+  getDispatchReceipt: () => getDispatchReceipt,
   getExecutionTarget: () => getExecutionTarget,
   getGridPaneCount: () => getGridPaneCount,
   getInbox: () => getInbox,
@@ -8932,6 +9333,7 @@ __export(dist_exports, {
   getTaskAttempts: () => getTaskAttempts,
   getTransitiveDependents: () => getTransitiveDependents,
   getUnreadCount: () => getUnreadCount,
+  hasAcceptedAttemptEvidence: () => hasAcceptedAttemptEvidence,
   hasAcceptedEvidence: () => hasAcceptedEvidence,
   hasUnmetDependencies: () => hasUnmetDependencies,
   initSession: () => initSession,
@@ -8953,6 +9355,7 @@ __export(dist_exports, {
   publishArtifact: () => publishArtifact,
   readGridState: () => readGridState,
   readRegistry: () => readRegistry,
+  reconcileClaim: () => reconcileClaim,
   recoverDeadClaim: () => recoverDeadClaim,
   registerAgent: () => registerAgent,
   removeFromRegistry: () => removeFromRegistry,
@@ -8962,10 +9365,12 @@ __export(dist_exports, {
   sendMessage: () => sendMessage,
   setCurrentSession: () => setCurrentSession,
   targetHasCapability: () => targetHasCapability,
+  toDispatchReceipt: () => toDispatchReceipt,
   updateHeartbeat: () => updateHeartbeat,
   updatePlanStatus: () => updatePlanStatus,
   updateTask: () => updateTask,
   validateArtifactPath: () => validateArtifactPath,
+  validateCompletionReceipt: () => validateCompletionReceipt,
   validatePaneIndexExists: () => validatePaneIndexExists,
   validatePatternRoles: () => validatePatternRoles,
   validateSessionName: () => validateSessionName,
@@ -8991,6 +9396,7 @@ var init_dist = __esm({
     init_migrations();
     init_plan_ops();
     init_evidence_ops();
+    init_dispatch_ops();
     init_execution_target_ops();
     init_lifecycle_bridge();
     init_collaboration_patterns();
@@ -16072,6 +16478,7 @@ init_dist();
 
 // src/tools/index.ts
 import { execFileSync, execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { resolve, dirname, join, delimiter, isAbsolute, relative, sep } from "node:path";
 init_dist();
@@ -16084,6 +16491,18 @@ function validateTaskFields(input, prefix = "") {
   }
   if (input.role !== void 0 && typeof input.role !== "string") {
     throw new Error(`${prefix}role must be a string`);
+  }
+  if (input.role_required !== void 0 && typeof input.role_required !== "boolean") {
+    throw new Error(`${prefix}role_required must be a boolean`);
+  }
+  if (input.evidence_required !== void 0 && typeof input.evidence_required !== "boolean") {
+    throw new Error(`${prefix}evidence_required must be a boolean`);
+  }
+  if (input.model_requirement !== void 0 && (typeof input.model_requirement !== "string" || !MODEL_REQUIREMENTS.includes(input.model_requirement))) {
+    throw new Error(`${prefix}model_requirement must be one of: ${MODEL_REQUIREMENTS.join(", ")}`);
+  }
+  if (input.reference_model !== void 0 && typeof input.reference_model !== "string") {
+    throw new Error(`${prefix}reference_model must be a string`);
   }
   if (input.priority !== void 0 && (typeof input.priority !== "number" || !Number.isFinite(input.priority) || input.priority < MIN_PRIORITY || input.priority > MAX_PRIORITY)) {
     throw new Error(`${prefix}priority must be a number ${MIN_PRIORITY}-${MAX_PRIORITY}`);
@@ -16100,6 +16519,27 @@ function validateTaskFields(input, prefix = "") {
   if (input.produces !== void 0 && (!Array.isArray(input.produces) || !input.produces.every((p) => typeof p === "string"))) {
     throw new Error(`${prefix}produces must be an array of strings`);
   }
+}
+var DISPATCH_RECEIPT_FIELDS = {
+  selector: "TMUP_DISPATCH_SELECTOR",
+  requested_model: "TMUP_DISPATCH_REQUESTED_MODEL",
+  observed_model: "TMUP_DISPATCH_OBSERVED_MODEL",
+  fallback_used: "TMUP_DISPATCH_FALLBACK_USED"
+};
+function parseDispatchMetadata(output) {
+  const values = {};
+  const metadataLines = /* @__PURE__ */ new Set();
+  for (const [field, marker] of Object.entries(DISPATCH_RECEIPT_FIELDS)) {
+    const prefix = `${marker}=`;
+    const matches = output.split(/\r?\n/).filter((line) => line.startsWith(prefix));
+    if (matches.length !== 1 || matches[0].length === prefix.length) {
+      throw new Error(`dispatch receipt requires exactly one non-empty ${marker} field`);
+    }
+    values[field] = matches[0].slice(prefix.length);
+    metadataLines.add(matches[0]);
+  }
+  const launchOutput = output.split(/\r?\n/).filter((line) => !metadataLines.has(line)).join("\n").trim();
+  return { ...values, launch_output: launchOutput };
 }
 function canonicalPluginRoot() {
   const entrypoint = process.argv[1];
@@ -16302,7 +16742,8 @@ var toolDefinitions = [
     inputSchema: {
       type: "object",
       properties: {
-        verbose: { type: "boolean", description: "If true, return full DAG details instead of summary" }
+        verbose: { type: "boolean", description: "If true, return full DAG details instead of summary" },
+        dry_run: { type: "boolean", description: "Report exact stale-claim decisions without mutating task, attempt, agent, or heartbeat state" }
       }
     }
   },
@@ -16320,6 +16761,10 @@ var toolDefinitions = [
         subject: { type: "string", description: "Task title (max 500 chars)" },
         description: { type: "string", description: "Task description" },
         role: { type: "string", description: "Required role (implementer, tester, reviewer, etc.)" },
+        role_required: { type: "boolean", description: "Require a matching dispatched role before completion" },
+        evidence_required: { type: "boolean", description: "Require approved attempt evidence before completion" },
+        model_requirement: { type: "string", enum: ["none", "observed", "cross_model"], description: "Observed-model policy for completion" },
+        reference_model: { type: "string", description: "Reference model that cannot satisfy a cross-model gate" },
         priority: { type: "number", description: "Priority 0-100 (default 50, higher=more urgent)" },
         max_retries: { type: "number", description: "Max retry attempts (default 3)" },
         deps: { type: "array", items: { type: "string" }, description: "Task IDs this depends on" },
@@ -16343,6 +16788,10 @@ var toolDefinitions = [
               subject: { type: "string" },
               description: { type: "string" },
               role: { type: "string" },
+              role_required: { type: "boolean" },
+              evidence_required: { type: "boolean" },
+              model_requirement: { type: "string", enum: ["none", "observed", "cross_model"] },
+              reference_model: { type: "string" },
               priority: { type: "number" },
               max_retries: { type: "number" },
               deps: { type: "array", items: { type: "string" } },
@@ -16489,6 +16938,48 @@ var toolDefinitions = [
     }
   },
   {
+    name: "tmup_attempt_attest",
+    description: "Attach observed runtime model and fallback provenance to a running dispatch attempt.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        attempt_id: { type: "string", description: "Running attempt ID from a dispatch receipt" },
+        observed_model: { type: "string", description: "Model identifier observed from the live runtime" },
+        observation_source: { type: "string", description: "Bounded source of the observation, such as a runtime session banner" },
+        fallback_used: { type: "boolean", description: "Whether the selector fell back from the requested model" },
+        fallback_model: { type: "string", description: "Fallback model identifier when fallback_used is true" },
+        fallback_reason: { type: "string", description: "Fallback reason when fallback_used is true" }
+      },
+      required: ["attempt_id", "observed_model", "observation_source", "fallback_used"]
+    }
+  },
+  {
+    name: "tmup_evidence_add",
+    description: "Add an evidence packet to a dispatch attempt. Evidence remains unaccepted until lead review.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        attempt_id: { type: "string" },
+        type: { type: "string", enum: ["diff", "test_result", "build_log", "screenshot", "review_comment", "artifact_checksum"] },
+        payload: { type: "string" },
+        hash: { type: "string" }
+      },
+      required: ["attempt_id", "type", "payload"]
+    }
+  },
+  {
+    name: "tmup_evidence_review",
+    description: "Lead-only evidence disposition used by completion gates.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        evidence_id: { type: "string" },
+        disposition: { type: "string", enum: ["approved", "challenged", "rejected"] }
+      },
+      required: ["evidence_id", "disposition"]
+    }
+  },
+  {
     name: "tmup_harvest",
     description: "Capture ANSI-stripped terminal scrollback from a live interactive Codex pane, framed and labeled as untrusted worker output, before deciding whether to reprompt, wait, or resume. Direct one-shot lanes do not expose a persistent harvestable pane.",
     inputSchema: {
@@ -16511,7 +17002,8 @@ var toolDefinitions = [
     inputSchema: {
       type: "object",
       properties: {
-        session_id: { type: "string", description: "Session to resume (default: current)" }
+        session_id: { type: "string", description: "Session to resume (default: current)" },
+        dry_run: { type: "boolean", description: "Report stale-claim decisions without applying recovery mutations" }
       }
     }
   },
@@ -16583,18 +17075,22 @@ async function handleToolCall(name, args) {
     case "tmup_status": {
       const db2 = ensureDb();
       const verbose = args.verbose === true;
+      const dryRun = args.dry_run === true;
       const sessionName = getCurrentSessionId() ?? "tmup";
       const paneLivenessCheck = createPaneLivenessChecker(sessionName);
       const staleAgents = getStaleAgents(db2, STALE_AGENT_THRESHOLD_SECONDS);
-      const recovered = [];
-      for (const agent of staleAgents) {
-        recovered.push(...recoverDeadClaim(db2, agent.id, STALE_AGENT_THRESHOLD_SECONDS, paneLivenessCheck));
-      }
+      const reconciliation = staleAgents.map((agent) => reconcileClaim(
+        db2,
+        agent.id,
+        paneLivenessCheck,
+        { staleThresholdSeconds: STALE_AGENT_THRESHOLD_SECONDS, dryRun }
+      ));
+      const recovered = reconciliation.filter((result) => result.mutated && (result.action === "retried" || result.action === "needs_review") && result.task_id !== null).map((result) => result.task_id);
       if (verbose) {
         const tasks = db2.prepare("SELECT * FROM tasks ORDER BY CAST(id AS INTEGER)").all();
         const agents = getActiveAgents(db2);
         const unread2 = getUnreadCount(db2, "lead");
-        return json({ ok: true, tasks, agents, unread: unread2, recovered });
+        return json({ ok: true, tasks, agents, unread: unread2, recovered, reconciliation, dry_run: dryRun });
       }
       const counts = db2.prepare(`
         SELECT status, COUNT(*) as cnt FROM tasks GROUP BY status
@@ -16636,6 +17132,10 @@ async function handleToolCall(name, args) {
         subject: args.subject,
         description: args.description,
         role: args.role,
+        role_required: args.role_required,
+        evidence_required: args.evidence_required,
+        model_requirement: args.model_requirement,
+        reference_model: args.reference_model,
         priority: args.priority,
         max_retries: args.max_retries,
         deps: args.deps,
@@ -16657,6 +17157,10 @@ async function handleToolCall(name, args) {
         subject: t.subject,
         description: t.description,
         role: t.role,
+        role_required: t.role_required,
+        evidence_required: t.evidence_required,
+        model_requirement: t.model_requirement,
+        reference_model: t.reference_model,
         priority: t.priority,
         max_retries: t.max_retries,
         deps: t.deps,
@@ -16886,6 +17390,72 @@ ${neutralizeFramingMarkers(m.payload, "WORKER MESSAGE")}
       }
       throw lastErr;
     }
+    case "tmup_attempt_attest": {
+      const db2 = ensureDb();
+      if (typeof args.attempt_id !== "string" || !args.attempt_id.trim()) {
+        throw new Error("attempt_id must be a non-empty string");
+      }
+      if (typeof args.observed_model !== "string" || !args.observed_model.trim()) {
+        throw new Error("observed_model must be a non-empty string");
+      }
+      if (typeof args.observation_source !== "string" || !args.observation_source.trim()) {
+        throw new Error("observation_source must be a non-empty string");
+      }
+      if (typeof args.fallback_used !== "boolean") {
+        throw new Error("fallback_used must be a boolean");
+      }
+      if (args.fallback_model !== void 0 && typeof args.fallback_model !== "string") {
+        throw new Error("fallback_model must be a string");
+      }
+      if (args.fallback_reason !== void 0 && typeof args.fallback_reason !== "string") {
+        throw new Error("fallback_reason must be a string");
+      }
+      const receipt = attestAttempt(db2, args.attempt_id, {
+        observed_model: args.observed_model,
+        fallback_used: args.fallback_used,
+        fallback_model: args.fallback_model,
+        fallback_reason: args.fallback_reason
+      });
+      logEvent(db2, "lead", "dispatch", {
+        type: "model_attested",
+        attempt_id: args.attempt_id,
+        observation_source: args.observation_source
+      });
+      return json({ ok: true, receipt });
+    }
+    case "tmup_evidence_add": {
+      const db2 = ensureDb();
+      if (typeof args.attempt_id !== "string" || !args.attempt_id.trim()) {
+        throw new Error("attempt_id must be a non-empty string");
+      }
+      if (typeof args.type !== "string" || !EVIDENCE_TYPES.includes(args.type)) {
+        throw new Error(`type must be one of: ${EVIDENCE_TYPES.join(", ")}`);
+      }
+      if (typeof args.payload !== "string" || !args.payload.trim()) {
+        throw new Error("payload must be a non-empty string");
+      }
+      if (args.hash !== void 0 && typeof args.hash !== "string") {
+        throw new Error("hash must be a string");
+      }
+      const evidence = addEvidence(db2, randomUUID(), {
+        attempt_id: args.attempt_id,
+        type: args.type,
+        payload: args.payload,
+        hash: args.hash
+      });
+      return json({ ok: true, evidence });
+    }
+    case "tmup_evidence_review": {
+      const db2 = ensureDb();
+      if (typeof args.evidence_id !== "string" || !args.evidence_id.trim()) {
+        throw new Error("evidence_id must be a non-empty string");
+      }
+      if (typeof args.disposition !== "string" || !REVIEW_DISPOSITIONS.includes(args.disposition)) {
+        throw new Error(`disposition must be one of: ${REVIEW_DISPOSITIONS.join(", ")}`);
+      }
+      const evidence = reviewEvidence(db2, args.evidence_id, args.disposition);
+      return json({ ok: true, evidence });
+    }
     case "tmup_dispatch": {
       const db2 = ensureDb();
       const taskId = args.task_id;
@@ -16923,24 +17493,19 @@ ${neutralizeFramingMarkers(m.payload, "WORKER MESSAGE")}
       }
       const { generateAgentId: generateAgentId2 } = await Promise.resolve().then(() => (init_dist(), dist_exports));
       const agentId = generateAgentId2();
-      registerAgent(db2, agentId, paneIndex ?? -1, role);
-      let task;
-      try {
-        task = claimSpecificTask(db2, taskId, agentId, role);
-      } catch (err) {
-        try {
-          db2.prepare("UPDATE agents SET status = 'shutdown' WHERE id = ?").run(agentId);
-        } catch (cleanupErr) {
-          console.error(`[tmup-mcp] Failed to mark orphaned agent ${agentId} as shutdown: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
-        }
-        throw err;
-      }
-      logEvent(db2, "lead", "dispatch", {
+      const attemptId = randomUUID();
+      const dispatchStart = beginDispatch(db2, {
+        attempt_id: attemptId,
         task_id: taskId,
         agent_id: agentId,
+        pane_index: paneIndex ?? -1,
         role,
-        pane_index: paneIndex
+        selector: "tmup-policy",
+        requested_model: "auto",
+        observed_model: "unknown",
+        fallback_used: null
       });
+      const task = dispatchStart.task;
       const workingDir = args.working_dir ?? getSessionProjectDir(getCurrentSessionId());
       const sessionId = getCurrentSessionId();
       const dbPath = getSessionDbPath(sessionId);
@@ -17023,30 +17588,49 @@ ${neutralizeFramingMarkers(m.payload, "WORKER MESSAGE")}
         const launchWasSent = /^TMUP_DISPATCH_LAUNCH_SENT=1$/m.test(stdoutStr);
         const rollbackReleased = /^TMUP_DISPATCH_ROLLBACK=released$/m.test(stdoutStr);
         const ownershipMustRemain = launchWasSent && !rollbackReleased;
-        try {
-          if (ownershipMustRemain) {
-            db2.prepare("UPDATE tasks SET failure_reason = 'launch_failed' WHERE id = ? AND owner = ?").run(taskId, agentId);
-            logEvent(db2, agentId, "dispatch", { type: "ownership_retained_on_ambiguous_launch", task_id: taskId });
-          } else {
-            db2.prepare("UPDATE agents SET status = 'shutdown' WHERE id = ?").run(agentId);
-            db2.prepare("UPDATE tasks SET status = 'pending', owner = NULL, failure_reason = 'launch_failed' WHERE id = ? AND owner = ?").run(taskId, agentId);
-            logEvent(db2, agentId, "task_unclaimed_on_launch_failure", { task_id: taskId });
+        if (ownershipMustRemain) {
+          finalizeAttempt(db2, attemptId, "inconclusive", `ambiguous launch delivery: ${msg}`);
+          db2.prepare("UPDATE tasks SET failure_reason = 'launch_failed' WHERE id = ? AND owner = ?").run(taskId, agentId);
+          logEvent(db2, agentId, "dispatch", { type: "ownership_retained_on_ambiguous_launch", task_id: taskId, attempt_id: attemptId });
+        } else {
+          finalizeAttempt(db2, attemptId, "unavailable", `launch unavailable: ${msg}`);
+          failTask(db2, taskId, "launch_failed", msg, agentId);
+          db2.prepare("UPDATE agents SET status = 'shutdown' WHERE id = ?").run(agentId);
+          logEvent(db2, agentId, "dispatch", {
+            type: "task_unclaimed_on_launch_failure",
+            task_id: taskId,
+            attempt_id: attemptId
+          });
+        }
+        if (args.clone_isolation === true && stdoutStr) {
+          const cloneMatch = stdoutStr.match(/^CLONE_DIR=(.+)$/m);
+          if (cloneMatch) {
+            db2.prepare("UPDATE tasks SET clone_dir = ? WHERE id = ?").run(cloneMatch[1].trim(), taskId);
           }
-          if (args.clone_isolation === true) {
-            if (stdoutStr) {
-              const cloneMatch = stdoutStr.match(/^CLONE_DIR=(.+)$/m);
-              if (cloneMatch) {
-                db2.prepare("UPDATE tasks SET clone_dir = ? WHERE id = ?").run(cloneMatch[1].trim(), taskId);
-              }
-            }
-          }
-        } catch (_) {
         }
         if (ownershipMustRemain) {
           throw new Error(`Dispatch registered agent ${agentId}, but launch confirmation failed and worker ownership was retained for manual intervention: ${msg}`);
         }
         throw new Error(`Dispatch registered agent ${agentId} but launch failed: ${msg}`);
       }
+      let metadata;
+      try {
+        metadata = parseDispatchMetadata(launchResult);
+        if (metadata.selector !== dispatchStart.receipt.selector || metadata.requested_model !== dispatchStart.receipt.requested_model || metadata.observed_model !== dispatchStart.receipt.observed_model || metadata.fallback_used !== "unknown") {
+          throw new Error("dispatch receipt metadata does not match the persisted pre-launch receipt");
+        }
+      } catch (receiptError) {
+        const reason = receiptError instanceof Error ? receiptError.message : String(receiptError);
+        finalizeAttempt(db2, attemptId, "inconclusive", `invalid dispatch receipt: ${reason}`);
+        db2.prepare("UPDATE tasks SET failure_reason = 'launch_failed' WHERE id = ? AND owner = ?").run(taskId, agentId);
+        logEvent(db2, agentId, "dispatch", {
+          type: "ownership_retained_on_invalid_receipt",
+          task_id: taskId,
+          attempt_id: attemptId
+        });
+        throw new Error(`Dispatch receipt validation failed; worker ownership was retained for manual intervention: ${reason}`);
+      }
+      launchResult = metadata.launch_output;
       let resolvedPane = paneIndex ?? "auto";
       if (resolvedPane === "auto") {
         const paneMatch = launchResult.match(/to pane (\d+)/);
@@ -17073,7 +17657,8 @@ ${neutralizeFramingMarkers(m.payload, "WORKER MESSAGE")}
         worker_type: workerType,
         session_mode: "interactive",
         follow_up_via: "tmup_reprompt",
-        launch_output: launchResult
+        launch_output: launchResult,
+        receipt: getDispatchReceipt(db2, attemptId)
       });
     }
     case "tmup_harvest": {
@@ -17169,11 +17754,12 @@ ${neutralizeFramingMarkers(m.payload, "WORKER MESSAGE")}
         throw new Error("session_id must be a non-empty string");
       }
       const sessionId = rawSessionId ?? getCurrentSessionId();
+      const dryRun = args.dry_run === true;
       if (!sessionId) throw new Error("No session to resume");
       const dbPath = getSessionDbPath(sessionId);
       if (!dbPath) throw new Error(`Session ${sessionId} not found`);
       switchSession(sessionId, dbPath);
-      setCurrentSession(sessionId);
+      if (!dryRun) setCurrentSession(sessionId);
       const db2 = ensureDb();
       const stale = getStaleAgents(db2, STALE_AGENT_THRESHOLD_SECONDS);
       const agentResumeInfo = /* @__PURE__ */ new Map();
@@ -17189,12 +17775,16 @@ ${neutralizeFramingMarkers(m.payload, "WORKER MESSAGE")}
         agentOwnedTasks.set(agent.id, owned.map((t) => t.id));
       }
       const paneLivenessCheck = createPaneLivenessChecker(sessionId);
-      const recovered = [];
-      for (const agent of stale) {
-        recovered.push(...recoverDeadClaim(db2, agent.id, STALE_AGENT_THRESHOLD_SECONDS, paneLivenessCheck));
-      }
+      const reconciliation = stale.map((agent) => reconcileClaim(
+        db2,
+        agent.id,
+        paneLivenessCheck,
+        { staleThresholdSeconds: STALE_AGENT_THRESHOLD_SECONDS, dryRun }
+      ));
+      const actionableTaskIds = reconciliation.filter((result) => (result.action === "retried" || result.action === "needs_review") && result.task_id !== null).map((result) => result.task_id);
+      const recovered = reconciliation.filter((result) => result.mutated && (result.action === "retried" || result.action === "needs_review") && result.task_id !== null).map((result) => result.task_id);
       const resumeCommands = [];
-      for (const taskId of recovered) {
+      for (const taskId of actionableTaskIds) {
         for (const [agentId, ownedTaskIds] of agentOwnedTasks) {
           if (ownedTaskIds.includes(taskId)) {
             const info = agentResumeInfo.get(agentId);
@@ -17210,8 +17800,17 @@ ${neutralizeFramingMarkers(m.payload, "WORKER MESSAGE")}
           }
         }
       }
-      logEvent(db2, "lead", "session_resume", { recovered, resume_commands: resumeCommands.length });
-      return json({ ok: true, session_id: sessionId, recovered, resume_commands: resumeCommands });
+      if (!dryRun) {
+        logEvent(db2, "lead", "session_resume", { recovered, resume_commands: resumeCommands.length });
+      }
+      return json({
+        ok: true,
+        session_id: sessionId,
+        recovered,
+        reconciliation,
+        dry_run: dryRun,
+        resume_commands: resumeCommands
+      });
     }
     case "tmup_teardown": {
       const db2 = ensureDb();
