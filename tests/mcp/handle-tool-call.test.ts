@@ -5,7 +5,7 @@ import os from 'node:os';
 import { openDatabase, closeDatabase } from '../../shared/src/db.js';
 import { createTask, updateTask } from '../../shared/src/task-ops.js';
 import { claimTask, claimSpecificTask, completeTask, failTask } from '../../shared/src/task-lifecycle.js';
-import { registerAgent, getActiveAgents } from '../../shared/src/agent-ops.js';
+import { registerAgent, getActiveAgents, getAgent } from '../../shared/src/agent-ops.js';
 import { sendMessage, getInbox } from '../../shared/src/message-ops.js';
 import { initSession, setCurrentSession, getCurrentSession, getSessionDir } from '../../shared/src/session-ops.js';
 import type { Database, TaskRow } from '../../shared/src/types.js';
@@ -890,6 +890,60 @@ describe('handleToolCall adapter integration', () => {
   });
 
   describe('tmup_status pane-liveness-aware recovery', () => {
+    it('reports structured missing-receipt reconciliation for a live required role', async () => {
+      const { db, projectDir, sessionId } = createAdapterSession();
+      writeGridState(sessionId, projectDir, 1);
+      registerAgent(db, 'agent-live-legacy', 0, 'reviewer');
+      const taskId = createTask(db, { subject: 'Legacy review', role: 'reviewer' });
+      claimSpecificTask(db, taskId, 'agent-live-legacy', 'reviewer');
+      db.prepare(
+        "UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-600 seconds') WHERE id = 'agent-live-legacy'"
+      ).run();
+      childProcessMock.execFileSync.mockReturnValue(`${sessionId}\t0\tcodex\n`);
+
+      const result = parseToolJson(await handleToolCall('tmup_status', { verbose: true }));
+
+      expect(result.reconciliation).toEqual([{
+        agent_id: 'agent-live-legacy',
+        task_id: taskId,
+        attempt_id: null,
+        action: 'retained',
+        reason: 'pane_alive_receipt_missing',
+        mutated: true,
+      }]);
+    });
+
+    it('supports dry-run reconciliation without releasing an exact shell claim', async () => {
+      const { db, projectDir, sessionId } = createAdapterSession();
+      writeGridState(sessionId, projectDir, 1);
+      registerAgent(db, 'agent-dry-run', 0, 'reviewer');
+      const taskId = createTask(db, { subject: 'Dry-run review', role: 'reviewer' });
+      claimSpecificTask(db, taskId, 'agent-dry-run', 'reviewer');
+      db.prepare(
+        "UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-600 seconds') WHERE id = 'agent-dry-run'"
+      ).run();
+      childProcessMock.execFileSync.mockReturnValue(`${sessionId}\t0\tbash\n`);
+
+      const result = parseToolJson(await handleToolCall('tmup_status', {
+        verbose: true,
+        dry_run: true,
+      }));
+
+      expect(result.recovered).toEqual([]);
+      expect(result.reconciliation).toEqual([{
+        agent_id: 'agent-dry-run',
+        task_id: taskId,
+        attempt_id: null,
+        action: 'retried',
+        reason: 'pane_shell',
+        mutated: false,
+      }]);
+      expect(db.prepare('SELECT status, owner FROM tasks WHERE id = ?').get(taskId)).toEqual({
+        status: 'claimed', owner: 'agent-dry-run',
+      });
+      expect(getAgent(db, 'agent-dry-run')?.status).toBe('active');
+    });
+
     it('skips recovery for stale agent when pane process is alive', async () => {
       const { db, projectDir, sessionId } = createAdapterSession();
       writeGridState(sessionId, projectDir, 1);

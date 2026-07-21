@@ -7,7 +7,7 @@ import {
   createTask, createTaskBatch, updateTask,
   claimTask, claimSpecificTask, completeTask, failTask, cancelTask,
   sendMessage, getInbox, getUnreadCount, postCheckpoint,
-  registerAgent, updateHeartbeat, getStaleAgents, recoverDeadClaim, getActiveAgents, getAgentByPaneIndex,
+  registerAgent, updateHeartbeat, getStaleAgents, reconcileClaim, getActiveAgents, getAgentByPaneIndex,
   logEvent, getNextAction, getGridPaneCount, readGridState, validatePaneIndexExists,
   STALE_AGENT_THRESHOLD_SECONDS, MIN_PRIORITY, MAX_PRIORITY, TASK_STATUSES, FAILURE_REASONS, MESSAGE_TYPES,
 } from '@tmup/shared';
@@ -252,6 +252,7 @@ export const toolDefinitions = [
       type: 'object' as const,
       properties: {
         verbose: { type: 'boolean', description: 'If true, return full DAG details instead of summary' },
+        dry_run: { type: 'boolean', description: 'Report exact stale-claim decisions without mutating task, attempt, agent, or heartbeat state' },
       },
     },
   },
@@ -461,6 +462,7 @@ export const toolDefinitions = [
       type: 'object' as const,
       properties: {
         session_id: { type: 'string', description: 'Session to resume (default: current)' },
+        dry_run: { type: 'boolean', description: 'Report stale-claim decisions without applying recovery mutations' },
       },
     },
   },
@@ -548,21 +550,29 @@ export async function handleToolCall(
     case 'tmup_status': {
       const db = ensureDb();
       const verbose = args.verbose === true;
+      const dryRun = args.dry_run === true;
 
       // Side-effect: dead-claim recovery with pane-liveness check
       const sessionName = getCurrentSessionId() ?? 'tmup';
       const paneLivenessCheck = createPaneLivenessChecker(sessionName);
       const staleAgents = getStaleAgents(db, STALE_AGENT_THRESHOLD_SECONDS);
-      const recovered: string[] = [];
-      for (const agent of staleAgents) {
-        recovered.push(...recoverDeadClaim(db, agent.id, STALE_AGENT_THRESHOLD_SECONDS, paneLivenessCheck));
-      }
+      const reconciliation = staleAgents.map((agent) => reconcileClaim(
+        db,
+        agent.id,
+        paneLivenessCheck,
+        { staleThresholdSeconds: STALE_AGENT_THRESHOLD_SECONDS, dryRun },
+      ));
+      const recovered = reconciliation
+        .filter((result) => result.mutated
+          && (result.action === 'retried' || result.action === 'needs_review')
+          && result.task_id !== null)
+        .map((result) => result.task_id as string);
 
       if (verbose) {
         const tasks = db.prepare('SELECT * FROM tasks ORDER BY CAST(id AS INTEGER)').all() as TaskRow[];
         const agents = getActiveAgents(db);
         const unread = getUnreadCount(db, 'lead');
-        return json({ ok: true, tasks, agents, unread, recovered });
+        return json({ ok: true, tasks, agents, unread, recovered, reconciliation, dry_run: dryRun });
       }
 
       // Summary mode
@@ -1221,12 +1231,13 @@ export async function handleToolCall(
         throw new Error('session_id must be a non-empty string');
       }
       const sessionId = (rawSessionId as string | undefined) ?? getCurrentSessionId();
+      const dryRun = args.dry_run === true;
       if (!sessionId) throw new Error('No session to resume');
       const dbPath = getSessionDbPath(sessionId);
       if (!dbPath) throw new Error(`Session ${sessionId} not found`);
 
       switchSession(sessionId, dbPath);
-      setCurrentSession(sessionId);
+      if (!dryRun) setCurrentSession(sessionId);
 
       const db = ensureDb();
 
@@ -1248,14 +1259,25 @@ export async function handleToolCall(
       }
 
       const paneLivenessCheck = createPaneLivenessChecker(sessionId);
-      const recovered: string[] = [];
-      for (const agent of stale) {
-        recovered.push(...recoverDeadClaim(db, agent.id, STALE_AGENT_THRESHOLD_SECONDS, paneLivenessCheck));
-      }
+      const reconciliation = stale.map((agent) => reconcileClaim(
+        db,
+        agent.id,
+        paneLivenessCheck,
+        { staleThresholdSeconds: STALE_AGENT_THRESHOLD_SECONDS, dryRun },
+      ));
+      const actionableTaskIds = reconciliation
+        .filter((result) => (result.action === 'retried' || result.action === 'needs_review')
+          && result.task_id !== null)
+        .map((result) => result.task_id as string);
+      const recovered = reconciliation
+        .filter((result) => result.mutated
+          && (result.action === 'retried' || result.action === 'needs_review')
+          && result.task_id !== null)
+        .map((result) => result.task_id as string);
 
       // Build resume commands — map each recovered task to its owning agent's session
       const resumeCommands: Array<{ task_id: string; codex_session_id: string; command: string; pane_index: number }> = [];
-      for (const taskId of recovered) {
+      for (const taskId of actionableTaskIds) {
         for (const [agentId, ownedTaskIds] of agentOwnedTasks) {
           if (ownedTaskIds.includes(taskId)) {
             const info = agentResumeInfo.get(agentId);
@@ -1272,8 +1294,17 @@ export async function handleToolCall(
         }
       }
 
-      logEvent(db, 'lead', 'session_resume', { recovered, resume_commands: resumeCommands.length });
-      return json({ ok: true, session_id: sessionId, recovered, resume_commands: resumeCommands });
+      if (!dryRun) {
+        logEvent(db, 'lead', 'session_resume', { recovered, resume_commands: resumeCommands.length });
+      }
+      return json({
+        ok: true,
+        session_id: sessionId,
+        recovered,
+        reconciliation,
+        dry_run: dryRun,
+        resume_commands: resumeCommands,
+      });
     }
 
     case 'tmup_teardown': {

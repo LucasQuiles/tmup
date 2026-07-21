@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { openDatabase, closeDatabase } from '../../shared/src/db.js';
-import { registerAgent, recoverDeadClaim, getAgent } from '../../shared/src/agent-ops.js';
+import { registerAgent, recoverDeadClaim, reconcileClaim, getAgent } from '../../shared/src/agent-ops.js';
 import { getAgentByPaneIndex } from '../../shared/src/agent-ops.js';
 import { createTask } from '../../shared/src/task-ops.js';
 import { claimTask } from '../../shared/src/task-lifecycle.js';
+import { claimSpecificTask } from '../../shared/src/task-lifecycle.js';
+import { beginDispatch, getDispatchReceipt } from '../../shared/src/dispatch-ops.js';
 import type { Database, TaskRow, AgentRow } from '../../shared/src/types.js';
 import { tmpDbPath, cleanupDb } from '../helpers/db.js';
 
@@ -166,7 +168,7 @@ describe('recoverDeadClaim with paneLivenessCallback', () => {
     expect(agent.status).toBe('shutdown');
   });
 
-  it('unknown callback: retains the stale claim without refreshing heartbeat', () => {
+  it('unknown callback: retains ownership but records an inconclusive outcome', () => {
     const taskId = setupStaleAgentWithTask('agent-unknown', 0);
     const before = getAgent(db, 'agent-unknown')!.last_heartbeat_at;
 
@@ -179,11 +181,17 @@ describe('recoverDeadClaim with paneLivenessCallback', () => {
     const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as TaskRow;
     expect(task.status).toBe('claimed');
     expect(task.owner).toBe('agent-unknown');
+    expect(task.execution_outcome).toBe('inconclusive');
 
     const event = db.prepare(
       "SELECT payload FROM events WHERE event_type = 'agent_heartbeat_stale' AND actor = 'agent-unknown' ORDER BY id DESC LIMIT 1"
     ).get() as { payload: string };
-    expect(JSON.parse(event.payload)).toEqual({ action: 'retained', reason: 'pane_liveness_unknown' });
+    expect(JSON.parse(event.payload)).toEqual({
+      action: 'inconclusive',
+      reason: 'pane_liveness_unknown',
+      task_id: taskId,
+      attempt_id: null,
+    });
   });
 
   it('no callback (backward compat): recovers task with full state mutation', () => {
@@ -232,5 +240,132 @@ describe('recoverDeadClaim with paneLivenessCallback', () => {
     const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as TaskRow;
     expect(task.status).toBe('claimed');
     expect(task.owner).toBe('agent-alive-nr');
+  });
+});
+
+describe('reconcileClaim receipt-aware recovery', () => {
+  let db: Database;
+  let dbPath: string;
+
+  beforeEach(() => {
+    dbPath = tmpDbPath();
+    db = openDatabase(dbPath);
+  });
+
+  afterEach(() => {
+    closeDatabase(db);
+    cleanupDb(dbPath);
+  });
+
+  function backdate(agentId: string): void {
+    db.prepare(
+      "UPDATE agents SET last_heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-600 seconds') WHERE id = ?"
+    ).run(agentId);
+  }
+
+  function setupLegacyClaim(agentId: string, maxRetries = 3): string {
+    registerAgent(db, agentId, 0, 'reviewer');
+    const taskId = createTask(db, { subject: 'Legacy review', role: 'reviewer', max_retries: maxRetries });
+    claimSpecificTask(db, taskId, agentId, 'reviewer');
+    backdate(agentId);
+    return taskId;
+  }
+
+  function setupReceiptedClaim(agentId: string, maxRetries = 3): { taskId: string; attemptId: string } {
+    const taskId = createTask(db, { subject: 'Receipted review', role: 'reviewer', max_retries: maxRetries });
+    const attemptId = `attempt-${agentId}`;
+    beginDispatch(db, {
+      attempt_id: attemptId, task_id: taskId, agent_id: agentId, pane_index: 0,
+      role: 'reviewer', selector: 'tmup-policy', requested_model: 'auto',
+      observed_model: 'unknown', fallback_used: null,
+    });
+    backdate(agentId);
+    return { taskId, attemptId };
+  }
+
+  it('retains a positively live legacy claim and reports its missing receipt', () => {
+    const taskId = setupLegacyClaim('agent-live');
+
+    expect(reconcileClaim(db, 'agent-live', () => 'alive')).toEqual({
+      agent_id: 'agent-live',
+      task_id: taskId,
+      attempt_id: null,
+      action: 'retained',
+      reason: 'pane_alive_receipt_missing',
+      mutated: true,
+    });
+    expect(db.prepare('SELECT status, owner FROM tasks WHERE id = ?').get(taskId)).toEqual({
+      status: 'claimed', owner: 'agent-live',
+    });
+  });
+
+  it('marks unknown liveness inconclusive without releasing ownership', () => {
+    const { taskId, attemptId } = setupReceiptedClaim('agent-unknown');
+
+    expect(reconcileClaim(db, 'agent-unknown', () => 'unknown')).toEqual({
+      agent_id: 'agent-unknown',
+      task_id: taskId,
+      attempt_id: attemptId,
+      action: 'inconclusive',
+      reason: 'pane_liveness_unknown',
+      mutated: true,
+    });
+    expect(db.prepare('SELECT status, owner, execution_outcome FROM tasks WHERE id = ?').get(taskId)).toEqual({
+      status: 'claimed', owner: 'agent-unknown', execution_outcome: 'inconclusive',
+    });
+    expect(getDispatchReceipt(db, attemptId).terminal_status).toBe('inconclusive');
+  });
+
+  it('abandons the attempt and retries when the exact pane is dead', () => {
+    const { taskId, attemptId } = setupReceiptedClaim('agent-dead');
+
+    expect(reconcileClaim(db, 'agent-dead', () => 'dead')).toEqual({
+      agent_id: 'agent-dead',
+      task_id: taskId,
+      attempt_id: attemptId,
+      action: 'retried',
+      reason: 'pane_dead',
+      mutated: true,
+    });
+    expect(db.prepare('SELECT status, owner, retry_count FROM tasks WHERE id = ?').get(taskId)).toEqual({
+      status: 'pending', owner: null, retry_count: 1,
+    });
+    expect(db.prepare('SELECT status FROM task_attempts WHERE id = ?').get(attemptId)).toEqual({ status: 'abandoned' });
+    expect(getAgent(db, 'agent-dead')?.status).toBe('shutdown');
+  });
+
+  it('reports a dry-run retry without mutating task, attempt, agent, or heartbeat', () => {
+    const { taskId, attemptId } = setupReceiptedClaim('agent-dry-run');
+    const heartbeat = getAgent(db, 'agent-dry-run')!.last_heartbeat_at;
+
+    expect(reconcileClaim(db, 'agent-dry-run', () => 'shell', { dryRun: true })).toEqual({
+      agent_id: 'agent-dry-run',
+      task_id: taskId,
+      attempt_id: attemptId,
+      action: 'retried',
+      reason: 'pane_shell',
+      mutated: false,
+    });
+    expect(db.prepare('SELECT status, owner, retry_count FROM tasks WHERE id = ?').get(taskId)).toEqual({
+      status: 'claimed', owner: 'agent-dry-run', retry_count: 0,
+    });
+    expect(db.prepare('SELECT status FROM task_attempts WHERE id = ?').get(attemptId)).toEqual({ status: 'running' });
+    expect(getAgent(db, 'agent-dry-run')).toEqual(expect.objectContaining({
+      status: 'active', last_heartbeat_at: heartbeat,
+    }));
+  });
+
+  it('sends an exhausted dead claim to review', () => {
+    const { taskId, attemptId } = setupReceiptedClaim('agent-exhausted', 0);
+
+    expect(reconcileClaim(db, 'agent-exhausted', () => 'shell')).toEqual({
+      agent_id: 'agent-exhausted',
+      task_id: taskId,
+      attempt_id: attemptId,
+      action: 'needs_review',
+      reason: 'pane_shell_retries_exhausted',
+      mutated: true,
+    });
+    expect(db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskId)).toEqual({ status: 'needs_review' });
   });
 });
