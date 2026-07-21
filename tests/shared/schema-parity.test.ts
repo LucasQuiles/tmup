@@ -129,6 +129,16 @@ describe('schema-parity', () => {
       const { EVENT_TYPES } = await import('../../shared/src/constants.js');
       expect(new Set(EVENT_TYPES as readonly string[])).toEqual(new Set(TS_ENUMS.EventType));
     });
+
+    it('MODEL_REQUIREMENTS exposes only enforceable model policies', async () => {
+      const { MODEL_REQUIREMENTS } = await import('../../shared/src/constants.js');
+      expect(MODEL_REQUIREMENTS).toEqual(['none', 'observed', 'cross_model']);
+    });
+
+    it('EXECUTION_OUTCOMES keeps incomplete terminal outcomes distinct', async () => {
+      const { EXECUTION_OUTCOMES } = await import('../../shared/src/constants.js');
+      expect(EXECUTION_OUTCOMES).toEqual(['unavailable', 'skipped', 'inconclusive']);
+    });
   });
 
   describe('dead state removal', () => {
@@ -206,7 +216,7 @@ describe('schema-parity', () => {
 
     it('schema_version table records applied migrations', () => {
       const versions = db.prepare('SELECT version, description FROM schema_version ORDER BY version').all() as Array<{ version: number; description: string }>;
-      expect(versions.length).toBe(4);
+      expect(versions.length).toBe(5);
       expect(versions[0].version).toBe(1);
       expect(versions[0].description).toContain('dead states');
       expect(versions[1].version).toBe(2);
@@ -215,6 +225,28 @@ describe('schema-parity', () => {
       expect(versions[2].description).toContain('P5');
       expect(versions[3].version).toBe(4);
       expect(versions[3].description).toContain('colony');
+      expect(versions[4].version).toBe(5);
+      expect(versions[4].description).toContain('dispatch receipt');
+    });
+  });
+
+  describe('dispatch receipt schema', () => {
+    it('adds task policy columns and attempt provenance columns', () => {
+      const taskColumns = new Set(
+        (db.prepare('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).map((column) => column.name)
+      );
+      const attemptColumns = new Set(
+        (db.prepare('PRAGMA table_info(task_attempts)').all() as Array<{ name: string }>).map((column) => column.name)
+      );
+
+      expect([...taskColumns]).toEqual(expect.arrayContaining([
+        'role_required', 'evidence_required', 'model_requirement',
+        'reference_model', 'execution_outcome',
+      ]));
+      expect([...attemptColumns]).toEqual(expect.arrayContaining([
+        'role', 'selector', 'requested_model', 'observed_model', 'fallback_used',
+        'fallback_model', 'fallback_reason', 'execution_outcome',
+      ]));
     });
   });
 

@@ -77,6 +77,16 @@ export type AttemptStatus =
   | 'failed'
   | 'abandoned';
 
+export type ModelRequirement =
+  | 'none'
+  | 'observed'
+  | 'cross_model';
+
+export type ExecutionOutcome =
+  | 'unavailable'
+  | 'skipped'
+  | 'inconclusive';
+
 export type EvidenceType =
   | 'diff'
   | 'test_result'
@@ -145,6 +155,11 @@ export interface TaskRow {
   created_at: string;
   claimed_at: string | null;
   completed_at: string | null;
+  role_required: 0 | 1;
+  evidence_required: 0 | 1;
+  model_requirement: ModelRequirement;
+  reference_model: string | null;
+  execution_outcome: ExecutionOutcome | null;
 }
 
 export interface MessageRow {
@@ -242,6 +257,28 @@ export interface TaskAttemptRow {
   confidence: number | null;
   started_at: string;
   ended_at: string | null;
+  role: string | null;
+  selector: string | null;
+  requested_model: string;
+  observed_model: string;
+  fallback_used: 0 | 1 | null;
+  fallback_model: string | null;
+  fallback_reason: string | null;
+  execution_outcome: ExecutionOutcome | null;
+}
+
+export interface DispatchReceipt {
+  attempt_id: string;
+  task_id: string;
+  agent_id: string | null;
+  role: string;
+  selector: string;
+  requested_model: string;
+  observed_model: string;
+  fallback_used: boolean | null;
+  fallback_model: string | null;
+  fallback_reason: string | null;
+  terminal_status: AttemptStatus | ExecutionOutcome;
 }
 
 export interface EvidencePacketRow {

@@ -3,6 +3,7 @@ import type {
   PlanStatus, ReviewDisposition, AttemptStatus, EvidenceType,
   ExecutionTargetType, LifecycleEventType, CollaborationPattern,
   CynefinDomain, SdlcLoopLevel, SdlcPhase, WorkerType,
+  ModelRequirement, ExecutionOutcome,
 } from './types.js';
 
 /** Exponential backoff base for retry delays (seconds). Used by failTask and recoverDeadClaim. */
@@ -50,6 +51,8 @@ export const REVIEW_DISPOSITIONS: readonly ReviewDisposition[] = ['approved', 'c
 /** Evidence enums (P5.3) */
 export const ATTEMPT_STATUSES: readonly AttemptStatus[] = ['running', 'succeeded', 'failed', 'abandoned'] as const;
 export const EVIDENCE_TYPES: readonly EvidenceType[] = ['diff', 'test_result', 'build_log', 'screenshot', 'review_comment', 'artifact_checksum'] as const;
+export const MODEL_REQUIREMENTS: readonly ModelRequirement[] = ['none', 'observed', 'cross_model'] as const;
+export const EXECUTION_OUTCOMES: readonly ExecutionOutcome[] = ['unavailable', 'skipped', 'inconclusive'] as const;
 
 /** Execution target enums (P5.4) */
 export const EXECUTION_TARGET_TYPES: readonly ExecutionTargetType[] = ['tmux_pane', 'local_shell', 'codex_cloud'] as const;

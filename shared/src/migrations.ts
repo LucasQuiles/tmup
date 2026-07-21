@@ -294,6 +294,26 @@ export const migrations: Migration[] = [
       db.prepare('CREATE INDEX IF NOT EXISTS idx_tasks_colony ON tasks(sdlc_loop_level, status) WHERE sdlc_loop_level IS NOT NULL').run();
     },
   },
+  {
+    version: 5,
+    description: 'Add dispatch receipt policy and execution outcome metadata',
+    up: (db: Database) => {
+      db.prepare("ALTER TABLE tasks ADD COLUMN role_required INTEGER NOT NULL DEFAULT 0 CHECK (role_required IN (0,1))").run();
+      db.prepare("ALTER TABLE tasks ADD COLUMN evidence_required INTEGER NOT NULL DEFAULT 0 CHECK (evidence_required IN (0,1))").run();
+      db.prepare("ALTER TABLE tasks ADD COLUMN model_requirement TEXT NOT NULL DEFAULT 'none' CHECK (model_requirement IN ('none','observed','cross_model'))").run();
+      db.prepare('ALTER TABLE tasks ADD COLUMN reference_model TEXT').run();
+      db.prepare("ALTER TABLE tasks ADD COLUMN execution_outcome TEXT CHECK (execution_outcome IS NULL OR execution_outcome IN ('unavailable','skipped','inconclusive'))").run();
+
+      db.prepare('ALTER TABLE task_attempts ADD COLUMN role TEXT').run();
+      db.prepare('ALTER TABLE task_attempts ADD COLUMN selector TEXT').run();
+      db.prepare("ALTER TABLE task_attempts ADD COLUMN requested_model TEXT NOT NULL DEFAULT 'unknown'").run();
+      db.prepare("ALTER TABLE task_attempts ADD COLUMN observed_model TEXT NOT NULL DEFAULT 'unknown'").run();
+      db.prepare('ALTER TABLE task_attempts ADD COLUMN fallback_used INTEGER CHECK (fallback_used IS NULL OR fallback_used IN (0,1))').run();
+      db.prepare('ALTER TABLE task_attempts ADD COLUMN fallback_model TEXT').run();
+      db.prepare('ALTER TABLE task_attempts ADD COLUMN fallback_reason TEXT').run();
+      db.prepare("ALTER TABLE task_attempts ADD COLUMN execution_outcome TEXT CHECK (execution_outcome IS NULL OR execution_outcome IN ('unavailable','skipped','inconclusive'))").run();
+    },
+  },
 ];
 
 /**
