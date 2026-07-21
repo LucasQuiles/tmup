@@ -7,6 +7,7 @@ import { createTask, updateTask } from '../../shared/src/task-ops.js';
 import { claimTask, claimSpecificTask, completeTask, failTask } from '../../shared/src/task-lifecycle.js';
 import { registerAgent, getActiveAgents, getAgent } from '../../shared/src/agent-ops.js';
 import { sendMessage, getInbox } from '../../shared/src/message-ops.js';
+import { createAttempt } from '../../shared/src/evidence-ops.js';
 import { initSession, setCurrentSession, getCurrentSession, getSessionDir } from '../../shared/src/session-ops.js';
 import type { Database, TaskRow } from '../../shared/src/types.js';
 
@@ -47,6 +48,16 @@ function parseToolJson(result: ToolCallResult): Record<string, unknown> {
   expect(result.content).toHaveLength(1);
   expect(result.content[0]?.type).toBe('text');
   return JSON.parse(result.content[0]?.text ?? '{}') as Record<string, unknown>;
+}
+
+function dispatchOutput(body: string, overrides: Partial<Record<'selector' | 'requested_model' | 'observed_model' | 'fallback_used', string>> = {}): string {
+  return [
+    body,
+    `TMUP_DISPATCH_SELECTOR=${overrides.selector ?? 'tmup-policy'}`,
+    `TMUP_DISPATCH_REQUESTED_MODEL=${overrides.requested_model ?? 'auto'}`,
+    `TMUP_DISPATCH_OBSERVED_MODEL=${overrides.observed_model ?? 'unknown'}`,
+    `TMUP_DISPATCH_FALLBACK_USED=${overrides.fallback_used ?? 'unknown'}`,
+  ].join('\n') + '\n';
 }
 
 function writeGridState(sessionId: string, projectDir: string, paneCount: number): void {
@@ -150,6 +161,100 @@ describe('handleToolCall adapter integration', () => {
     process.argv[1] = originalArgv1;
   });
 
+  describe('dispatch policy and evidence tools', () => {
+    it('persists explicit task dispatch requirements', async () => {
+      const { db } = createAdapterSession();
+
+      const result = parseToolJson(await handleToolCall('tmup_task_create', {
+        subject: 'Cross-model evaluator',
+        role: 'evaluator',
+        role_required: true,
+        evidence_required: true,
+        model_requirement: 'cross_model',
+        reference_model: 'model-a',
+      }));
+
+      expect(db.prepare(`
+        SELECT role_required, evidence_required, model_requirement, reference_model
+        FROM tasks WHERE id = ?
+      `).get(result.task_id)).toEqual({
+        role_required: 1,
+        evidence_required: 1,
+        model_requirement: 'cross_model',
+        reference_model: 'model-a',
+      });
+    });
+
+    it('attests observed model provenance and supports lead evidence review', async () => {
+      const { db } = createAdapterSession();
+      const taskId = createTask(db, { subject: 'Receipt tools' });
+      createAttempt(db, 'attempt-tools', {
+        task_id: taskId,
+        agent_id: 'agent-tools',
+        role: 'specialist',
+        selector: 'tmup-policy',
+        requested_model: 'auto',
+        observed_model: 'unknown',
+        fallback_used: null,
+      });
+
+      const attested = parseToolJson(await handleToolCall('tmup_attempt_attest', {
+        attempt_id: 'attempt-tools',
+        observed_model: 'model-b',
+        observation_source: 'runtime-session-banner',
+        fallback_used: false,
+      }));
+      expect(attested.receipt).toEqual(expect.objectContaining({
+        observed_model: 'model-b',
+        fallback_used: false,
+      }));
+      const event = db.prepare(
+        "SELECT payload FROM events WHERE event_type = 'dispatch' ORDER BY id DESC LIMIT 1"
+      ).get() as { payload: string };
+      expect(JSON.parse(event.payload)).toEqual(expect.objectContaining({
+        attempt_id: 'attempt-tools',
+        observation_source: 'runtime-session-banner',
+      }));
+
+      const added = parseToolJson(await handleToolCall('tmup_evidence_add', {
+        attempt_id: 'attempt-tools',
+        type: 'test_result',
+        payload: '42 checks passed',
+        hash: 'sha256:test',
+      }));
+      expect(added.evidence).toEqual(expect.objectContaining({
+        attempt_id: 'attempt-tools',
+        type: 'test_result',
+        reviewer_disposition: null,
+      }));
+
+      const evidence = added.evidence as Record<string, unknown>;
+      const reviewed = parseToolJson(await handleToolCall('tmup_evidence_review', {
+        evidence_id: evidence.id,
+        disposition: 'approved',
+      }));
+      expect(reviewed.evidence).toEqual(expect.objectContaining({
+        id: evidence.id,
+        reviewer_disposition: 'approved',
+      }));
+    });
+
+    it('advertises task policy, attestation, and lead evidence review schemas', () => {
+      const create = toolDefinitions.find((tool) => tool.name === 'tmup_task_create');
+      expect(create?.inputSchema?.properties).toEqual(expect.objectContaining({
+        role_required: expect.any(Object),
+        evidence_required: expect.any(Object),
+        model_requirement: expect.objectContaining({ enum: ['none', 'observed', 'cross_model'] }),
+        reference_model: expect.any(Object),
+      }));
+      expect(toolDefinitions.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+        'tmup_attempt_attest',
+        'tmup_evidence_add',
+        'tmup_evidence_review',
+      ]));
+    });
+  });
+
   describe('tmup_dispatch', () => {
     it('advertises the MCP dispatch surface as Codex-only', () => {
       const dispatch = toolDefinitions.find((tool) => tool.name === 'tmup_dispatch');
@@ -182,7 +287,7 @@ describe('handleToolCall adapter integration', () => {
 
       childProcessMock.execFile.mockImplementation(
         (_cmd: string, _args: string[], _opts: object, callback: Function) => {
-          callback(null, 'launched pane 2\n', '');
+          callback(null, dispatchOutput('launched pane 2'), '');
         }
       );
 
@@ -205,6 +310,20 @@ describe('handleToolCall adapter integration', () => {
         launch_output: 'launched pane 2',
       }));
       expect(typeof result.agent_id).toBe('string');
+      expect(result.receipt).toEqual(expect.objectContaining({
+        task_id: taskId,
+        agent_id: result.agent_id,
+        role: 'tester',
+        selector: 'tmup-policy',
+        requested_model: 'auto',
+        observed_model: 'unknown',
+        fallback_used: null,
+        terminal_status: 'running',
+      }));
+      const receipt = result.receipt as Record<string, unknown>;
+      expect(db.prepare('SELECT id FROM task_attempts WHERE id = ?').get(receipt.attempt_id)).toEqual({
+        id: receipt.attempt_id,
+      });
 
       expect(childProcessMock.execFile).toHaveBeenCalledTimes(1);
       const [cmd, args, opts] = childProcessMock.execFile.mock.calls[0];
@@ -270,7 +389,7 @@ describe('handleToolCall adapter integration', () => {
       process.env.PATH = `${resolverBin}${path.delimiter}${previousPath ?? ''}`;
       childProcessMock.execFile.mockImplementation(
         (_cmd: string, _args: string[], _opts: object, callback: Function) => {
-          callback(null, 'launched pane 0\n', '');
+          callback(null, dispatchOutput('launched pane 0'), '');
         },
       );
 
@@ -318,7 +437,7 @@ describe('handleToolCall adapter integration', () => {
       process.argv[1] = linkedEntrypoint;
       childProcessMock.execFile.mockImplementation(
         (_cmd: string, _args: string[], _opts: object, callback: Function) => {
-          callback(null, 'launched pane 0\n', '');
+          callback(null, dispatchOutput('launched pane 0'), '');
         },
       );
 
@@ -335,7 +454,7 @@ describe('handleToolCall adapter integration', () => {
       }
     });
 
-    it('marks the registered agent as shutdown when claimSpecificTask fails', async () => {
+    it('rolls back agent registration when the atomic claim fails', async () => {
       const { db } = createAdapterSession();
       const taskId = createTask(db, { subject: 'Already claimed', role: 'tester' });
 
@@ -348,16 +467,11 @@ describe('handleToolCall adapter integration', () => {
         pane_index: 1,
       })).rejects.toThrow('could not be claimed');
 
-      const shutdownAgents = db.prepare(
-        "SELECT id, status, pane_index, role FROM agents WHERE status = 'shutdown'"
-      ).all() as Array<{ id: string; status: string; pane_index: number; role: string | null }>;
-
-      expect(shutdownAgents).toHaveLength(1);
-      expect(shutdownAgents[0]).toEqual(expect.objectContaining({
-        status: 'shutdown',
-        pane_index: 1,
-        role: 'tester',
-      }));
+      const dispatchAgents = db.prepare(
+        "SELECT id FROM agents WHERE id != 'existing-agent'"
+      ).all();
+      expect(dispatchAgents).toHaveLength(0);
+      expect(db.prepare('SELECT id FROM task_attempts WHERE task_id = ?').all(taskId)).toHaveLength(0);
       expect(childProcessMock.execFileSync).not.toHaveBeenCalled();
       expect(childProcessMock.execFile).not.toHaveBeenCalled();
     });
@@ -388,10 +502,19 @@ describe('handleToolCall adapter integration', () => {
       expect(agent).toBeDefined();
       expect(agent?.status).toBe('shutdown');
 
-      const task = db.prepare('SELECT status, owner, failure_reason FROM tasks WHERE id = ?').get(taskId) as TaskRow & { failure_reason: string | null };
+      const task = db.prepare('SELECT status, owner, failure_reason, execution_outcome FROM tasks WHERE id = ?').get(taskId) as TaskRow & { failure_reason: string | null };
       expect(task.status).toBe('pending');
       expect(task.owner).toBeNull();
       expect(task.failure_reason).toBe('launch_failed');
+      expect(task.execution_outcome).toBe('unavailable');
+      const attempt = db.prepare(
+        'SELECT status, execution_outcome, failure_reason FROM task_attempts WHERE task_id = ?'
+      ).get(taskId) as { status: string; execution_outcome: string; failure_reason: string };
+      expect(attempt).toEqual({
+        status: 'failed',
+        execution_outcome: 'unavailable',
+        failure_reason: expect.stringMatching(/launch/i),
+      });
     });
 
     it('retains ownership when a launched worker could not be stopped safely', async () => {
@@ -417,7 +540,7 @@ describe('handleToolCall adapter integration', () => {
       })).rejects.toThrow(/ownership retained|manual intervention/i);
 
       const task = db.prepare(
-        'SELECT status, owner, failure_reason FROM tasks WHERE id = ?'
+        'SELECT status, owner, failure_reason, execution_outcome FROM tasks WHERE id = ?'
       ).get(taskId) as TaskRow & { failure_reason: string | null };
       expect(task.status).toBe('claimed');
       expect(task.owner).toBeTruthy();
@@ -425,6 +548,46 @@ describe('handleToolCall adapter integration', () => {
 
       const agent = db.prepare('SELECT status FROM agents WHERE id = ?').get(task.owner) as { status: string };
       expect(agent.status).not.toBe('shutdown');
+      expect(task.execution_outcome).toBe('inconclusive');
+      const attempt = db.prepare(
+        'SELECT status, execution_outcome, failure_reason FROM task_attempts WHERE task_id = ?'
+      ).get(taskId) as { status: string; execution_outcome: string; failure_reason: string };
+      expect(attempt).toEqual({
+        status: 'abandoned',
+        execution_outcome: 'inconclusive',
+        failure_reason: expect.stringMatching(/ambiguous/i),
+      });
+    });
+
+    it.each([
+      ['missing', 'launched pane 0\n'],
+      ['duplicate', dispatchOutput('launched pane 0') + 'TMUP_DISPATCH_SELECTOR=tmup-policy\n'],
+    ])('retains ownership and marks the attempt inconclusive for %s selector metadata', async (_kind, stdout) => {
+      const { db, projectDir } = createAdapterSession();
+      writeGridState(mcpServerState.sessionId!, projectDir, 1);
+      const taskId = createTask(db, { subject: 'Receipt validation', role: 'tester' });
+
+      childProcessMock.execFile.mockImplementation(
+        (_cmd: string, _args: string[], _opts: object, callback: Function) => {
+          callback(null, stdout, '');
+        },
+      );
+
+      await expect(handleToolCall('tmup_dispatch', {
+        task_id: taskId,
+        role: 'tester',
+        pane_index: 0,
+      })).rejects.toThrow(/receipt.*manual intervention/i);
+
+      const task = db.prepare(
+        'SELECT status, owner, execution_outcome FROM tasks WHERE id = ?'
+      ).get(taskId) as TaskRow;
+      expect(task.status).toBe('claimed');
+      expect(task.owner).toBeTruthy();
+      expect(task.execution_outcome).toBe('inconclusive');
+      expect(db.prepare(
+        'SELECT status, execution_outcome FROM task_attempts WHERE task_id = ?'
+      ).get(taskId)).toEqual({ status: 'abandoned', execution_outcome: 'inconclusive' });
     });
 
     it('rejects trusted unsandboxed claude_code lanes before registration or claim', async () => {
@@ -784,7 +947,7 @@ describe('handleToolCall adapter integration', () => {
 
       childProcessMock.execFile.mockImplementation(
         (_cmd: string, _args: string[], _opts: object, callback: Function) => {
-          callback(null, 'Dispatched implementer to pane 0\n', '');
+          callback(null, dispatchOutput('Dispatched implementer to pane 0'), '');
         }
       );
 

@@ -3,6 +3,7 @@ import { openDatabase, closeDatabase } from '../../shared/src/db.js';
 import { createTask } from '../../shared/src/task-ops.js';
 import { claimTask } from '../../shared/src/task-lifecycle.js';
 import { registerAgent } from '../../shared/src/agent-ops.js';
+import { createAttempt } from '../../shared/src/evidence-ops.js';
 import { handleCommand } from '../../cli/src/commands/index.js';
 import type { Database, TaskRow } from '../../shared/src/types.js';
 import { tmpDbPath, cleanupDb } from '../helpers/db.js';
@@ -116,6 +117,45 @@ describe('CLI handleCommand', () => {
       const result = await handleCommand(db, 'claim', [], { agentId: 'test-agent' });
       expect(result.ok).toBe(true);
       expect(result.task).toBeNull();
+    });
+  });
+
+  describe('attempt evidence boundary', () => {
+    it('lets a worker add unreviewed evidence to an existing attempt', async () => {
+      const taskId = createTask(db, { subject: 'Evidence task' });
+      createAttempt(db, 'attempt-cli', { task_id: taskId, agent_id: 'agent-evidence' });
+
+      const result = await handleCommand(db, 'evidence-add', [
+        '42 checks passed',
+        '--attempt-id', 'attempt-cli',
+        '--type', 'test_result',
+        '--hash', 'sha256:test',
+      ], { agentId: 'agent-evidence' });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        attempt_id: 'attempt-cli',
+        type: 'test_result',
+        reviewer_disposition: null,
+      }));
+      expect(db.prepare(`
+        SELECT attempt_id, type, payload, hash, reviewer_disposition
+        FROM evidence_packets WHERE id = ?
+      `).get(result.evidence_id)).toEqual({
+        attempt_id: 'attempt-cli',
+        type: 'test_result',
+        payload: '42 checks passed',
+        hash: 'sha256:test',
+        reviewer_disposition: null,
+      });
+    });
+
+    it('does not expose evidence review or approval flags to workers', async () => {
+      await expect(handleCommand(db, 'evidence-review', [], { agentId: 'agent-evidence' }))
+        .rejects.toThrow(/Unknown command/);
+      await expect(handleCommand(db, 'evidence-add', [
+        'proof', '--attempt-id', 'attempt-cli', '--type', 'test_result', '--disposition', 'approved',
+      ], { agentId: 'agent-evidence' })).rejects.toThrow(/Unknown flag/);
     });
   });
 

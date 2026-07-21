@@ -5,7 +5,7 @@ import { publishArtifact, computeChecksum, validateArtifactPath } from './artifa
 import { BACKOFF_BASE_SECONDS } from './constants.js';
 import { hasAcceptedAttemptEvidence } from './evidence-ops.js';
 
-const RETRIABLE_REASONS: FailureReason[] = ['crash', 'timeout'];
+const RETRIABLE_REASONS: FailureReason[] = ['crash', 'timeout', 'launch_failed'];
 
 /**
  * Claims the next eligible pending task for an agent, optionally filtered by role.

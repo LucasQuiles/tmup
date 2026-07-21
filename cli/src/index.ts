@@ -21,7 +21,7 @@ function output(data: Record<string, unknown>): void {
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args.length === 0) {
-    throw new CliError('Usage: tmup-cli <command> [args...]\nCommands: claim, complete, fail, checkpoint, message, inbox, heartbeat, status, events, arc-health');
+    throw new CliError('Usage: tmup-cli <command> [args...]\nCommands: claim, complete, fail, checkpoint, message, inbox, heartbeat, status, events, evidence-add, arc-health');
   }
 
   const command = args[0];

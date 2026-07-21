@@ -13,6 +13,7 @@ export const TMUP_COMMAND_NAMESPACE = [
   'heartbeat',
   'status',
   'events',
+  'evidence-add',
   'arc-health',
 ] as const;
 

@@ -1,4 +1,5 @@
 import { execFileSync, execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import { resolve, dirname, join, delimiter, isAbsolute, relative, sep } from 'node:path';
 import { ensureDb, switchSession, getCurrentSessionId } from '../index.js';
@@ -9,9 +10,12 @@ import {
   sendMessage, getInbox, getUnreadCount, postCheckpoint,
   registerAgent, updateHeartbeat, getStaleAgents, reconcileClaim, getActiveAgents, getAgentByPaneIndex,
   logEvent, getNextAction, getGridPaneCount, readGridState, validatePaneIndexExists,
+  beginDispatch, attestAttempt, finalizeAttempt, getDispatchReceipt,
+  addEvidence, reviewEvidence,
   STALE_AGENT_THRESHOLD_SECONDS, MIN_PRIORITY, MAX_PRIORITY, TASK_STATUSES, FAILURE_REASONS, MESSAGE_TYPES,
+  MODEL_REQUIREMENTS, EVIDENCE_TYPES, REVIEW_DISPOSITIONS,
 } from '@tmup/shared';
-import type { Database, TaskRow, TaskStatus } from '@tmup/shared';
+import type { Database, TaskRow, TaskStatus, ModelRequirement, EvidenceType, ReviewDisposition } from '@tmup/shared';
 
 interface ExecErrorWithStdout extends Error {
   stdout?: string | Buffer;
@@ -29,6 +33,21 @@ function validateTaskFields(input: Record<string, unknown>, prefix: string = '')
   if (input.role !== undefined && typeof input.role !== 'string') {
     throw new Error(`${prefix}role must be a string`);
   }
+  if (input.role_required !== undefined && typeof input.role_required !== 'boolean') {
+    throw new Error(`${prefix}role_required must be a boolean`);
+  }
+  if (input.evidence_required !== undefined && typeof input.evidence_required !== 'boolean') {
+    throw new Error(`${prefix}evidence_required must be a boolean`);
+  }
+  if (input.model_requirement !== undefined && (
+    typeof input.model_requirement !== 'string'
+    || !(MODEL_REQUIREMENTS as readonly string[]).includes(input.model_requirement)
+  )) {
+    throw new Error(`${prefix}model_requirement must be one of: ${MODEL_REQUIREMENTS.join(', ')}`);
+  }
+  if (input.reference_model !== undefined && typeof input.reference_model !== 'string') {
+    throw new Error(`${prefix}reference_model must be a string`);
+  }
   if (input.priority !== undefined && (typeof input.priority !== 'number' || !Number.isFinite(input.priority) || input.priority < MIN_PRIORITY || input.priority > MAX_PRIORITY)) {
     throw new Error(`${prefix}priority must be a number ${MIN_PRIORITY}-${MAX_PRIORITY}`);
   }
@@ -44,6 +63,41 @@ function validateTaskFields(input: Record<string, unknown>, prefix: string = '')
   if (input.produces !== undefined && (!Array.isArray(input.produces) || !input.produces.every((p: unknown) => typeof p === 'string'))) {
     throw new Error(`${prefix}produces must be an array of strings`);
   }
+}
+
+const DISPATCH_RECEIPT_FIELDS = {
+  selector: 'TMUP_DISPATCH_SELECTOR',
+  requested_model: 'TMUP_DISPATCH_REQUESTED_MODEL',
+  observed_model: 'TMUP_DISPATCH_OBSERVED_MODEL',
+  fallback_used: 'TMUP_DISPATCH_FALLBACK_USED',
+} as const;
+
+function parseDispatchMetadata(output: string): {
+  selector: string;
+  requested_model: string;
+  observed_model: string;
+  fallback_used: string;
+  launch_output: string;
+} {
+  const values = {} as Record<keyof typeof DISPATCH_RECEIPT_FIELDS, string>;
+  const metadataLines = new Set<string>();
+  for (const [field, marker] of Object.entries(DISPATCH_RECEIPT_FIELDS) as Array<[
+    keyof typeof DISPATCH_RECEIPT_FIELDS,
+    string,
+  ]>) {
+    const prefix = `${marker}=`;
+    const matches = output.split(/\r?\n/).filter((line) => line.startsWith(prefix));
+    if (matches.length !== 1 || matches[0].length === prefix.length) {
+      throw new Error(`dispatch receipt requires exactly one non-empty ${marker} field`);
+    }
+    values[field] = matches[0].slice(prefix.length);
+    metadataLines.add(matches[0]);
+  }
+  const launchOutput = output.split(/\r?\n/)
+    .filter((line) => !metadataLines.has(line))
+    .join('\n')
+    .trim();
+  return { ...values, launch_output: launchOutput };
 }
 
 function canonicalPluginRoot(): string {
@@ -270,6 +324,10 @@ export const toolDefinitions = [
         subject: { type: 'string', description: 'Task title (max 500 chars)' },
         description: { type: 'string', description: 'Task description' },
         role: { type: 'string', description: 'Required role (implementer, tester, reviewer, etc.)' },
+        role_required: { type: 'boolean', description: 'Require a matching dispatched role before completion' },
+        evidence_required: { type: 'boolean', description: 'Require approved attempt evidence before completion' },
+        model_requirement: { type: 'string', enum: ['none', 'observed', 'cross_model'], description: 'Observed-model policy for completion' },
+        reference_model: { type: 'string', description: 'Reference model that cannot satisfy a cross-model gate' },
         priority: { type: 'number', description: 'Priority 0-100 (default 50, higher=more urgent)' },
         max_retries: { type: 'number', description: 'Max retry attempts (default 3)' },
         deps: { type: 'array', items: { type: 'string' }, description: 'Task IDs this depends on' },
@@ -293,6 +351,10 @@ export const toolDefinitions = [
               subject: { type: 'string' },
               description: { type: 'string' },
               role: { type: 'string' },
+              role_required: { type: 'boolean' },
+              evidence_required: { type: 'boolean' },
+              model_requirement: { type: 'string', enum: ['none', 'observed', 'cross_model'] },
+              reference_model: { type: 'string' },
               priority: { type: 'number' },
               max_retries: { type: 'number' },
               deps: { type: 'array', items: { type: 'string' } },
@@ -436,6 +498,48 @@ export const toolDefinitions = [
         clone_isolation: { type: 'boolean', description: 'If true, dispatch worker into an isolated git clone (colony clone isolation)' },
       },
       required: ['task_id', 'role'],
+    },
+  },
+  {
+    name: 'tmup_attempt_attest',
+    description: 'Attach observed runtime model and fallback provenance to a running dispatch attempt.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        attempt_id: { type: 'string', description: 'Running attempt ID from a dispatch receipt' },
+        observed_model: { type: 'string', description: 'Model identifier observed from the live runtime' },
+        observation_source: { type: 'string', description: 'Bounded source of the observation, such as a runtime session banner' },
+        fallback_used: { type: 'boolean', description: 'Whether the selector fell back from the requested model' },
+        fallback_model: { type: 'string', description: 'Fallback model identifier when fallback_used is true' },
+        fallback_reason: { type: 'string', description: 'Fallback reason when fallback_used is true' },
+      },
+      required: ['attempt_id', 'observed_model', 'observation_source', 'fallback_used'],
+    },
+  },
+  {
+    name: 'tmup_evidence_add',
+    description: 'Add an evidence packet to a dispatch attempt. Evidence remains unaccepted until lead review.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        attempt_id: { type: 'string' },
+        type: { type: 'string', enum: ['diff', 'test_result', 'build_log', 'screenshot', 'review_comment', 'artifact_checksum'] },
+        payload: { type: 'string' },
+        hash: { type: 'string' },
+      },
+      required: ['attempt_id', 'type', 'payload'],
+    },
+  },
+  {
+    name: 'tmup_evidence_review',
+    description: 'Lead-only evidence disposition used by completion gates.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        evidence_id: { type: 'string' },
+        disposition: { type: 'string', enum: ['approved', 'challenged', 'rejected'] },
+      },
+      required: ['evidence_id', 'disposition'],
     },
   },
   {
@@ -621,6 +725,10 @@ export async function handleToolCall(
         subject: args.subject as string,
         description: args.description as string | undefined,
         role: args.role as string | undefined,
+        role_required: args.role_required as boolean | undefined,
+        evidence_required: args.evidence_required as boolean | undefined,
+        model_requirement: args.model_requirement as ModelRequirement | undefined,
+        reference_model: args.reference_model as string | undefined,
         priority: args.priority as number | undefined,
         max_retries: args.max_retries as number | undefined,
         deps: args.deps as string[] | undefined,
@@ -643,6 +751,10 @@ export async function handleToolCall(
         subject: t.subject as string,
         description: t.description as string | undefined,
         role: t.role as string | undefined,
+        role_required: t.role_required as boolean | undefined,
+        evidence_required: t.evidence_required as boolean | undefined,
+        model_requirement: t.model_requirement as ModelRequirement | undefined,
+        reference_model: t.reference_model as string | undefined,
         priority: t.priority as number | undefined,
         max_retries: t.max_retries as number | undefined,
         deps: t.deps as string[] | undefined,
@@ -892,6 +1004,75 @@ export async function handleToolCall(
       throw lastErr;
     }
 
+    case 'tmup_attempt_attest': {
+      const db = ensureDb();
+      if (typeof args.attempt_id !== 'string' || !args.attempt_id.trim()) {
+        throw new Error('attempt_id must be a non-empty string');
+      }
+      if (typeof args.observed_model !== 'string' || !args.observed_model.trim()) {
+        throw new Error('observed_model must be a non-empty string');
+      }
+      if (typeof args.observation_source !== 'string' || !args.observation_source.trim()) {
+        throw new Error('observation_source must be a non-empty string');
+      }
+      if (typeof args.fallback_used !== 'boolean') {
+        throw new Error('fallback_used must be a boolean');
+      }
+      if (args.fallback_model !== undefined && typeof args.fallback_model !== 'string') {
+        throw new Error('fallback_model must be a string');
+      }
+      if (args.fallback_reason !== undefined && typeof args.fallback_reason !== 'string') {
+        throw new Error('fallback_reason must be a string');
+      }
+      const receipt = attestAttempt(db, args.attempt_id, {
+        observed_model: args.observed_model,
+        fallback_used: args.fallback_used,
+        fallback_model: args.fallback_model as string | undefined,
+        fallback_reason: args.fallback_reason as string | undefined,
+      });
+      logEvent(db, 'lead', 'dispatch', {
+        type: 'model_attested',
+        attempt_id: args.attempt_id,
+        observation_source: args.observation_source,
+      });
+      return json({ ok: true, receipt });
+    }
+
+    case 'tmup_evidence_add': {
+      const db = ensureDb();
+      if (typeof args.attempt_id !== 'string' || !args.attempt_id.trim()) {
+        throw new Error('attempt_id must be a non-empty string');
+      }
+      if (typeof args.type !== 'string' || !(EVIDENCE_TYPES as readonly string[]).includes(args.type)) {
+        throw new Error(`type must be one of: ${EVIDENCE_TYPES.join(', ')}`);
+      }
+      if (typeof args.payload !== 'string' || !args.payload.trim()) {
+        throw new Error('payload must be a non-empty string');
+      }
+      if (args.hash !== undefined && typeof args.hash !== 'string') {
+        throw new Error('hash must be a string');
+      }
+      const evidence = addEvidence(db, randomUUID(), {
+        attempt_id: args.attempt_id,
+        type: args.type as EvidenceType,
+        payload: args.payload,
+        hash: args.hash as string | undefined,
+      });
+      return json({ ok: true, evidence });
+    }
+
+    case 'tmup_evidence_review': {
+      const db = ensureDb();
+      if (typeof args.evidence_id !== 'string' || !args.evidence_id.trim()) {
+        throw new Error('evidence_id must be a non-empty string');
+      }
+      if (typeof args.disposition !== 'string' || !(REVIEW_DISPOSITIONS as readonly string[]).includes(args.disposition)) {
+        throw new Error(`disposition must be one of: ${REVIEW_DISPOSITIONS.join(', ')}`);
+      }
+      const evidence = reviewEvidence(db, args.evidence_id, args.disposition as ReviewDisposition);
+      return json({ ok: true, evidence });
+    }
+
     case 'tmup_dispatch': {
       const db = ensureDb();
 
@@ -933,31 +1114,19 @@ export async function handleToolCall(
 
       const { generateAgentId } = await import('@tmup/shared');
       const agentId = generateAgentId();
-
-      // Register agent BEFORE claiming — if crash between register and claim,
-      // dead-claim recovery can find the agent row. Reverse order would orphan the claim.
-      registerAgent(db, agentId, paneIndex ?? -1, role);
-
-      // Use shared claim logic with role validation.
-      // If claim fails, mark agent shutdown so it doesn't linger as a phantom active agent.
-      let task: { id: string; subject: string; description: string | null };
-      try {
-        task = claimSpecificTask(db, taskId, agentId, role);
-      } catch (err) {
-        try {
-          db.prepare("UPDATE agents SET status = 'shutdown' WHERE id = ?").run(agentId);
-        } catch (cleanupErr) {
-          console.error(`[tmup-mcp] Failed to mark orphaned agent ${agentId} as shutdown: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
-        }
-        throw err;
-      }
-
-      logEvent(db, 'lead', 'dispatch', {
+      const attemptId = randomUUID();
+      const dispatchStart = beginDispatch(db, {
+        attempt_id: attemptId,
         task_id: taskId,
         agent_id: agentId,
+        pane_index: paneIndex ?? -1,
         role,
-        pane_index: paneIndex,
+        selector: 'tmup-policy',
+        requested_model: 'auto',
+        observed_model: 'unknown',
+        fallback_used: null,
       });
+      const task = dispatchStart.task;
 
       // Launch the Codex worker via dispatch-agent.sh
       // MCP servers can't rely on the caller to do shell boundary work —
@@ -1065,29 +1234,55 @@ export async function handleToolCall(
         // stdout so the task row still records where the isolated work
         // started, even if dispatch ultimately failed. This gives operators
         // a cleanup trail for orphaned clones.
-        try {
-          if (ownershipMustRemain) {
-            db.prepare("UPDATE tasks SET failure_reason = 'launch_failed' WHERE id = ? AND owner = ?").run(taskId, agentId);
-            logEvent(db, agentId, 'dispatch', { type: 'ownership_retained_on_ambiguous_launch', task_id: taskId });
-          } else {
-            db.prepare("UPDATE agents SET status = 'shutdown' WHERE id = ?").run(agentId);
-            db.prepare("UPDATE tasks SET status = 'pending', owner = NULL, failure_reason = 'launch_failed' WHERE id = ? AND owner = ?").run(taskId, agentId);
-            logEvent(db, agentId, 'task_unclaimed_on_launch_failure', { task_id: taskId });
+        if (ownershipMustRemain) {
+          finalizeAttempt(db, attemptId, 'inconclusive', `ambiguous launch delivery: ${msg}`);
+          db.prepare("UPDATE tasks SET failure_reason = 'launch_failed' WHERE id = ? AND owner = ?").run(taskId, agentId);
+          logEvent(db, agentId, 'dispatch', { type: 'ownership_retained_on_ambiguous_launch', task_id: taskId, attempt_id: attemptId });
+        } else {
+          finalizeAttempt(db, attemptId, 'unavailable', `launch unavailable: ${msg}`);
+          failTask(db, taskId, 'launch_failed', msg, agentId);
+          db.prepare("UPDATE agents SET status = 'shutdown' WHERE id = ?").run(agentId);
+          logEvent(db, agentId, 'dispatch', {
+            type: 'task_unclaimed_on_launch_failure',
+            task_id: taskId,
+            attempt_id: attemptId,
+          });
+        }
+        if (args.clone_isolation === true && stdoutStr) {
+          const cloneMatch = stdoutStr.match(/^CLONE_DIR=(.+)$/m);
+          if (cloneMatch) {
+            db.prepare('UPDATE tasks SET clone_dir = ? WHERE id = ?').run(cloneMatch[1].trim(), taskId);
           }
-          if (args.clone_isolation === true) {
-            if (stdoutStr) {
-              const cloneMatch = stdoutStr.match(/^CLONE_DIR=(.+)$/m);
-              if (cloneMatch) {
-                db.prepare('UPDATE tasks SET clone_dir = ? WHERE id = ?').run(cloneMatch[1].trim(), taskId);
-              }
-            }
-          }
-        } catch (_) { /* best effort */ }
+        }
         if (ownershipMustRemain) {
           throw new Error(`Dispatch registered agent ${agentId}, but launch confirmation failed and worker ownership was retained for manual intervention: ${msg}`);
         }
         throw new Error(`Dispatch registered agent ${agentId} but launch failed: ${msg}`);
       }
+
+      let metadata: ReturnType<typeof parseDispatchMetadata>;
+      try {
+        metadata = parseDispatchMetadata(launchResult);
+        if (
+          metadata.selector !== dispatchStart.receipt.selector
+          || metadata.requested_model !== dispatchStart.receipt.requested_model
+          || metadata.observed_model !== dispatchStart.receipt.observed_model
+          || metadata.fallback_used !== 'unknown'
+        ) {
+          throw new Error('dispatch receipt metadata does not match the persisted pre-launch receipt');
+        }
+      } catch (receiptError) {
+        const reason = receiptError instanceof Error ? receiptError.message : String(receiptError);
+        finalizeAttempt(db, attemptId, 'inconclusive', `invalid dispatch receipt: ${reason}`);
+        db.prepare("UPDATE tasks SET failure_reason = 'launch_failed' WHERE id = ? AND owner = ?").run(taskId, agentId);
+        logEvent(db, agentId, 'dispatch', {
+          type: 'ownership_retained_on_invalid_receipt',
+          task_id: taskId,
+          attempt_id: attemptId,
+        });
+        throw new Error(`Dispatch receipt validation failed; worker ownership was retained for manual intervention: ${reason}`);
+      }
+      launchResult = metadata.launch_output;
 
       // Extract resolved metadata from dispatch output and persist:
       // (a) actual pane_index — auto-selected workers register with -1,
@@ -1128,6 +1323,7 @@ export async function handleToolCall(
         session_mode: 'interactive',
         follow_up_via: 'tmup_reprompt',
         launch_output: launchResult,
+        receipt: getDispatchReceipt(db, attemptId),
       });
     }
 

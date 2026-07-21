@@ -119,6 +119,23 @@ exit 0
     expect(readLauncher()).toContain(`export CODEX_BIN=${pathCodex}`);
   });
 
+  it('emits one complete dispatch selector receipt before returning success', () => {
+    writeExecutable('codex', `#!/bin/bash
+exit 0
+`);
+
+    const output = runDispatch('agent-receipt');
+
+    for (const line of [
+      'TMUP_DISPATCH_SELECTOR=tmup-policy',
+      'TMUP_DISPATCH_REQUESTED_MODEL=auto',
+      'TMUP_DISPATCH_OBSERVED_MODEL=unknown',
+      'TMUP_DISPATCH_FALLBACK_USED=unknown',
+    ]) {
+      expect(output.split('\n').filter((candidate) => candidate === line)).toHaveLength(1);
+    }
+  });
+
   it('falls back to an executable $HOME/.local/bin/codex when PATH lookup fails', () => {
     const homeCodexDir = path.join(tmpHome, '.local/bin');
     fs.mkdirSync(homeCodexDir, { recursive: true });

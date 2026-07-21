@@ -1,12 +1,14 @@
 import type { Database } from '@tmup/shared';
+import { randomUUID } from 'node:crypto';
 import {
   claimTask, completeTask, failTask,
   sendMessage, getInbox, getUnreadCount, postCheckpoint,
   registerAgent, updateHeartbeat, getAgent,
   getActiveTaskForAgent, getRecentEvents, getGridPaneCount, validatePaneIndexExists,
-  FAILURE_REASONS, MESSAGE_TYPES, EVENT_TYPES,
+  addEvidence,
+  FAILURE_REASONS, MESSAGE_TYPES, EVENT_TYPES, EVIDENCE_TYPES,
 } from '@tmup/shared';
-import type { FailureReason, EventType } from '@tmup/shared';
+import type { FailureReason, EventType, EvidenceType } from '@tmup/shared';
 import { buildArcHealth, TMUP_COMMAND_NAMESPACE } from '../arc-health.js';
 
 interface EnvContext {
@@ -42,7 +44,7 @@ function hasFlag(args: string[], flag: string): boolean {
 /** Flags that consume a following value argument. */
 const FLAGS_WITH_VALUES = new Set([
   '--role', '--reason', '--task-id', '--to', '--type',
-  '--artifact', '--codex-session-id', '--limit', '--plugin-root',
+  '--artifact', '--codex-session-id', '--limit', '--plugin-root', '--attempt-id', '--hash',
 ]);
 
 const COMMAND_FLAGS: Record<string, { value: Set<string>; boolean: Set<string> }> = {
@@ -55,6 +57,7 @@ const COMMAND_FLAGS: Record<string, { value: Set<string>; boolean: Set<string> }
   heartbeat: { value: new Set(['--codex-session-id']), boolean: new Set() },
   status: { value: new Set(), boolean: new Set() },
   events: { value: new Set(['--limit', '--type']), boolean: new Set() },
+  'evidence-add': { value: new Set(['--attempt-id', '--type', '--hash']), boolean: new Set() },
   'arc-health': { value: new Set(['--plugin-root']), boolean: new Set() },
 };
 
@@ -303,6 +306,37 @@ export async function handleCommand(
       }
       const events = getRecentEvents(db, eventType, limit);
       return { ok: true, events };
+    }
+
+    case 'evidence-add': {
+      const agentId = requireAgentId(env);
+      const attemptId = parseFlag(args, '--attempt-id');
+      if (!attemptId) throw new Error('--attempt-id required');
+      const evidenceType = parseFlag(args, '--type');
+      if (!evidenceType || !(EVIDENCE_TYPES as readonly string[]).includes(evidenceType)) {
+        throw new Error(`--type required (${EVIDENCE_TYPES.join(', ')})`);
+      }
+      const payload = positional(args);
+      if (!payload) throw new Error('Evidence payload required');
+      const attempt = db.prepare('SELECT agent_id FROM task_attempts WHERE id = ?').get(attemptId) as
+        { agent_id: string | null } | undefined;
+      if (!attempt) throw new Error(`Attempt ${attemptId} not found`);
+      if (attempt.agent_id !== agentId) {
+        throw new Error(`Attempt ${attemptId} is not owned by agent ${agentId}`);
+      }
+      const evidence = addEvidence(db, randomUUID(), {
+        attempt_id: attemptId,
+        type: evidenceType as EvidenceType,
+        payload,
+        hash: parseFlag(args, '--hash'),
+      });
+      return {
+        ok: true,
+        evidence_id: evidence.id,
+        attempt_id: evidence.attempt_id,
+        type: evidence.type,
+        reviewer_disposition: evidence.reviewer_disposition,
+      };
     }
 
     case 'arc-health': {

@@ -1065,6 +1065,14 @@ sleep 0.1
 tmux send-keys -t "$PANE_TARGET" C-u 2>/dev/null || true
 sleep 0.1
 
+# Machine-readable selector receipt. These fields are emitted exactly once
+# before the asynchronous launch boundary so the controller can verify what
+# was requested without inferring a model from the worker role.
+echo "TMUP_DISPATCH_SELECTOR=tmup-policy"
+echo "TMUP_DISPATCH_REQUESTED_MODEL=$CFG_CODEX_MODEL"
+echo "TMUP_DISPATCH_OBSERVED_MODEL=unknown"
+echo "TMUP_DISPATCH_FALLBACK_USED=unknown"
+
 printf -v _launch_command '/bin/bash -p %q' "$LAUNCHER"
 # send-keys is an asynchronous launch boundary. From this point onward,
 # failure or interruption is treated as possibly delivered until respawn and
